@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+.impeccable/
+*.log
+.DS_Store
+
+# Visual QA captures. Regenerate with tools/shoot.mjs --canvas-out.
+design/shots/
+
+# Scratch output from the browser tooling.
+.playwright-mcp/

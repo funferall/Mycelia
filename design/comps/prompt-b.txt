@@ -1,0 +1,15 @@
+A game interface rendered as a dark archival herbarium plate series, 1536x1024, landscape.
+
+THE SHEET: heavy cotton-rag mounting paper aged to a very deep warm near-black, with visible fibrous grain and a few dull foxed stains, lit by raking museum light. The sheet is the entire frame. No browser chrome, no window furniture.
+
+THE PLATES: five rectangular specimen plates of different sizes are mounted down the sheet as a magnified series, the way a scientific monograph prints a sequence of views. Each plate is a window onto the same living mycelial network at a different scale, and the same warm amber network appears in every plate, resolving from a wide map into individual glowing strands. The largest plate, lower centre, is the live one: a pressed, flattened cross-section of forest soil with fine bioluminescent amber and gold hyphae branching organically, drifting motes of light travelling along the thicker cords, dark stone and root shapes in relief behind them. The smaller plates above show progressively tighter views — a single strand, a growing tip, a bonded tree root tip — until the topmost plate is an almost abstract field of glowing filaments. Each plate is held down by narrow strips of translucent gummed paper tape at its corners, and each carries a one-line ruled caption in very small type beneath it.
+
+THE RECORD: along the left edge, a fine ruled vertical graduation ruler with tick marks and small numerals, reading like a depth or magnification scale. In the lower right corner, a dense ruled typographic label block with a strict field structure: a dozen very short ruled lines of tiny serif and monospace type headed by a bold species line, enclosed by hairline rules. Precise archival record; need not be legible.
+
+THE MARKS: a violet rubber-stamp accession mark in the upper right corner, slightly under-inked, and a small printed barcode beside it.
+
+EVERYTHING ELSE IS QUIET: large empty tracts of the dark sheet between the plates, and the only light is the amber network and the fine type.
+
+PALETTE: deep warm near-black ground; warm amber and gold as the single dominant light, appearing in every plate; a trace of sickly pale green-white in the smallest plate where a rival filament crosses. No cyan, no magenta, no neon.
+
+LIGHT: soft, directional, museum-quality. Documentary, precise, quiet, expensive — the beauty of a BBC nature film and the authority of a scientific plate monograph. Photographic realism, no illustration, no vector flatness, no lens flare.

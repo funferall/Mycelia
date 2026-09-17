@@ -1,0 +1,680 @@
+/*
+ * Mycelia — the sheet.
+ *
+ * Everything here is printing on paper: hairlines, ruled fields, letterspaced
+ * caps. There are no cards, no panels, no shadows, and no border radius
+ * anywhere in this file. Depth comes from the paper being dark and the network
+ * being bright; the interface has no z-axis.
+ */
+
+:root {
+  --sheet: #141110;
+  --sheet-deep: #0b0908;
+  --ink: #cbbfa4;
+  --ink-dim: rgb(203 191 164 / 62%);
+  --ink-faint: rgb(203 191 164 / 38%);
+  --rule: rgb(203 191 164 / 22%);
+  --rule-strong: rgb(203 191 164 / 40%);
+  --amber: #ffb347;
+  --ember: #ff8a1e;
+  --pallor: #c9e6b4;
+  --violet: #7d6ba0;
+  --paper: #e8dcc0;
+
+  --serif: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  --mono: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+
+  /* One spacing rhythm for the whole sheet, in whole pixels. */
+  --unit: 8px;
+  /* The only radius in the game: the surface of the spore heap. */
+  --radius-heap: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sheet-deep);
+  color: var(--ink);
+  font-family: var(--serif);
+  -webkit-font-smoothing: antialiased;
+}
+
+#gl {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#sheet {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#sheet button,
+#sheet a {
+  pointer-events: auto;
+}
+
+/* A drifting spec of dust over the whole sheet, as if photographing paper. */
+#sheet::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgb(232 220 192 / 5%) 1px, transparent 0);
+  background-size: 3px 3px;
+  mix-blend-mode: screen;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.field-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.field-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------------- rail ---- */
+
+.rail {
+  position: absolute;
+  left: 26px;
+  top: 206px;
+  bottom: 96px;
+  width: 104px;
+}
+
+.rail-scale {
+  position: relative;
+  height: 100%;
+  border-left: 1px solid var(--rule);
+}
+
+.rail-tick {
+  position: absolute;
+  left: 0;
+  width: 9px;
+  border-top: 1px solid var(--rule);
+}
+
+.rail-tick.is-major {
+  width: 16px;
+  border-top-color: var(--rule-strong);
+}
+
+.rail-numeral {
+  position: absolute;
+  left: 20px;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.rail-horizon {
+  position: absolute;
+  left: 60px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+}
+
+.rail-title {
+  position: absolute;
+  left: 0;
+  top: -30px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* --------------------------------------------------------------- stamp ---- */
+
+.stamp {
+  position: absolute;
+  left: 30px;
+  top: 26px;
+  width: 210px;
+}
+
+.stamp-mark {
+  border: 1px solid rgb(125 107 160 / 55%);
+  color: rgb(125 107 160 / 78%);
+  padding: 10px 12px 8px;
+  transform: rotate(-1.2deg);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 1.35;
+  opacity: 0.86;
+}
+
+.stamp-mark span {
+  display: block;
+}
+
+.stamp-small {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  opacity: 0.8;
+  padding-left: 2px;
+}
+
+.stamp-accession {
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: rgb(125 107 160 / 72%);
+  text-transform: uppercase;
+}
+
+.barcode {
+  margin-top: 8px;
+  height: 34px;
+  width: 100%;
+  opacity: 0.5;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--ink) 0 1px,
+    transparent 1px 3px,
+    var(--ink) 3px 5px,
+    transparent 5px 6px,
+    var(--ink) 6px 8px,
+    transparent 8px 11px
+  );
+}
+
+.barcode-caption {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: var(--ink-faint);
+  text-align: center;
+  padding-top: 2px;
+}
+
+/* -------------------------------------------------------------- season ---- */
+
+.season {
+  position: absolute;
+  right: 34px;
+  top: 30px;
+  width: 216px;
+  text-align: right;
+}
+
+.season-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 5px;
+}
+
+.season-meter {
+  margin-top: 7px;
+  height: 2px;
+  background: var(--rule);
+}
+
+.season-meter i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: var(--amber);
+  /* transform, not width: the meter updates several times a second and must
+     not force layout on every tick. */
+  transition: transform 240ms linear;
+}
+
+.speed-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.speed-row button {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--rule);
+  border-right-width: 0;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 5px 10px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.speed-row button:last-child {
+  border-right-width: 1px;
+}
+
+.speed-row button:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+.speed-row button.is-on {
+  color: var(--sheet-deep);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+/* -------------------------------------------------------------- orders ---- */
+
+.orders {
+  position: absolute;
+  left: 30px;
+  bottom: 34px;
+  width: 250px;
+}
+
+.orders-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+#order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.order {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 7px 2px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease, transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.order:hover {
+  transform: translateX(6px);
+}
+
+.order-key {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.order-name {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink-dim);
+  letter-spacing: 0.02em;
+}
+
+.order-hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.order:hover .order-name {
+  color: var(--ink);
+}
+
+.order.is-on {
+  border-bottom-color: var(--amber);
+}
+
+.order.is-on .order-name {
+  color: var(--amber);
+}
+
+.order.is-on .order-key {
+  color: var(--amber);
+}
+
+.orders-note {
+  margin: 12px 0 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  line-height: 1.6;
+  min-height: 2.4em;
+}
+
+/* ----------------------------------------------------------- catalogue ---- */
+
+.catalogue {
+  position: absolute;
+  right: 154px;
+  bottom: 34px;
+  width: 336px;
+  padding: 18px 20px 16px;
+  /* Reads as the sheet falling into shadow, not as a panel. */
+  background: radial-gradient(130% 120% at 100% 100%, rgb(10 8 7 / 94%), rgb(10 8 7 / 0%) 76%);
+}
+
+.catalogue-head {
+  border-bottom: 1px solid var(--rule-strong);
+  padding-bottom: 8px;
+}
+
+.specimen-line {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.specimen-line em {
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--ink-dim);
+  padding-left: 6px;
+}
+
+.specimen-sub {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.record {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0;
+}
+
+.record dt {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  padding: 5px 14px 5px 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.record dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  padding: 4px 0 4px 0;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.record dd.is-amber {
+  color: var(--amber);
+}
+
+.record dd.is-pallor {
+  color: var(--pallor);
+}
+
+.record dd.is-violet {
+  color: var(--violet);
+}
+
+/* A bar built from printed blocks — used for surplus and fruiting progress. */
+.blocks {
+  display: inline-flex;
+  gap: 2px;
+  vertical-align: middle;
+}
+
+.blocks i {
+  display: block;
+  width: 7px;
+  height: 9px;
+  border: 1px solid var(--rule-strong);
+}
+
+.blocks i.on {
+  background: currentColor;
+  border-color: currentColor;
+}
+
+.notes {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.notes p {
+  margin: 5px 0 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  min-height: 2.6em;
+}
+
+/* -------------------------------------------------------------- packet ---- */
+
+.packet {
+  position: absolute;
+  right: 34px;
+  bottom: 34px;
+  width: 104px;
+  height: 162px;
+  border: 1px solid var(--rule-strong);
+  background: linear-gradient(168deg, rgb(232 220 192 / 9%), rgb(232 220 192 / 3%));
+  overflow: hidden;
+}
+
+.packet-fold {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 34px;
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(180deg, rgb(232 220 192 / 12%), rgb(232 220 192 / 2%));
+}
+
+.packet-fill {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: 44px;
+  height: 84px;
+  transform: scaleY(0);
+  transform-origin: 50% 100%;
+  background: linear-gradient(180deg, rgb(40 30 20 / 95%), rgb(20 15 10 / 95%));
+  border-top: 1px solid rgb(203 191 164 / 30%);
+  /* The one curve in the interface: a poured heap of spores, not a shape. */
+  border-radius: 42% 42% 0 0 / var(--radius-heap) var(--radius-heap) 0 0;
+  /* transform, not height: the packet fills on a slow beat and must not
+     reflow the sheet when it does. */
+  transition: transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.packet-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+
+.packet-caption b {
+  font-size: 12px;
+  color: var(--ink);
+  letter-spacing: 0.08em;
+}
+
+/* ------------------------------------------------------------- outcome ---- */
+
+.outcome {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 78vw);
+  text-align: center;
+  padding: 32px 36px;
+  background: radial-gradient(80% 120% at 50% 50%, rgb(10 8 7 / 96%), rgb(10 8 7 / 0%) 78%);
+  pointer-events: auto;
+}
+
+.outcome h2 {
+  margin: 0 0 10px;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.outcome p {
+  margin: 0 0 22px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+
+.outcome button {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 10px 26px;
+  cursor: pointer;
+}
+
+.outcome button:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.noscript {
+  position: absolute;
+  inset: auto 0 50% 0;
+  text-align: center;
+  font-size: 15px;
+  color: var(--ink-dim);
+  padding: 0 20vw;
+}
+
+/* --------------------------------------------------------- responsive ---- */
+
+@media (max-width: 1180px) {
+  .rail {
+    left: 12px;
+    width: 66px;
+  }
+  .rail-numeral {
+    display: none;
+  }
+  .catalogue {
+    right: 150px;
+    width: 330px;
+  }
+  .packet {
+    width: 104px;
+  }
+}
+
+@media (max-width: 900px) {
+  .stamp,
+  .season {
+    transform: scale(0.86);
+    transform-origin: top left;
+  }
+  .season {
+    transform-origin: top right;
+  }
+  .rail {
+    top: 76px;
+    bottom: 220px;
+  }
+  .orders {
+    bottom: 12px;
+    width: 210px;
+  }
+  .catalogue {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    padding: 12px 14px;
+  }
+  .packet {
+    display: none;
+  }
+  .record {
+    grid-template-columns: auto 1fr auto 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "title": "Approve the soil sheet",
+  "question": "I pulled seven visual systems out of your subject's world — dark-field micrography, the soil-horizon profile chart, forest belt transects, herbarium sheets, dendrochronology cores, nature-documentary broadcast grammar, and the ant-farm observation box — and the roll landed on the herbarium sheet: a dark archival mounting paper with the living network pressed flat and pinned to it, a ruled catalogue label block carrying the numbers, an accession stamp, a spore fragment packet, and a scale bar. That world is the one I've rendered three ways. All three keep the art direction your spec pins: near-black soil, warm amber bioluminescence, sickly pale green for the rival, deep violet for the truffle nodes. The label block is the only chrome in the game — everything else is quiet paper.",
+  "options": [
+    {
+      "id": "transect",
+      "label": "Full Transect",
+      "kicker": "MY PICK",
+      "lineage": "Vertical monolith mount · depth ruler in cm with real soil-horizon letters (Oi, A, E, B, BC, C)",
+      "body": "The mount runs the whole depth of one sheet: thin trunks and canopy at the top, then litter, then soil, then clay and stone. The battlefield is the mounted column; the wide empty paper either side is where the interface lives.\n\nWhy it's my pick: it's the only one of the three where the sheet IS the game. Depth becomes a real axis — you can grow down to the water table and the ruler already measures it. The horizon letters are genuine soil science, so they read as notation rather than decoration, and they give you named strata to fight over (litter income, clay water, bedrock).\n\nRisk: a tall narrow playfield means the camera lives at a fixed vertical, and horizontal expansion has to happen by scrolling along the sheet — I'd widen the mount to roughly 2:1 for real matches.",
+      "hero": "design/comps/comp-c.png"
+    },
+    {
+      "id": "plates",
+      "label": "Plate Series",
+      "kicker": "THE RANGE",
+      "lineage": "Five plates at rising magnification · one ruler carrying centimetres AND powers of ten",
+      "body": "A scientific monograph plate series: the same network shown at 10²×, 10³×, 10⁴× and 10⁵×, stacked down one sheet with a two-scale ruler down the left edge — depth in centimetres against magnification in powers of ten.\n\nThis is the most beautiful artifact of the three, and it solves the zoom problem in a way nothing else does: magnification is not a slider here, it's a printed scale you can read. The tightest plate is an almost abstract field of filaments, which is exactly what the camera should find when you dive to a single strand.\n\nRisk: it's a poster, not a game. Five panes means five views, and only one can be live. I'd have to build the rest as dead specimens of a finished match — which is lovely, but it's a title screen, not a battlefield.",
+      "hero": "design/comps/comp-b.png"
+    },
+    {
+      "id": "block",
+      "label": "Pressed Block",
+      "kicker": "THE DARKEST",
+      "lineage": "One soil clump lifted whole · the label block carries the entire economy",
+      "body": "One block of soil lifted whole and pinned to the sheet, ringed by a lot of empty paper. The network sprawls across the clump like a lichen on a rock, the rival's pale filaments intrude from a corner, and the ruled label block in the lower right carries every number in the game.\n\nThis is the quietest and most confident of the three. The proportion of light to darkness is extreme — the network is the only bright thing on a very large dark sheet — and the label block is close to a perfect HUD: dense, ruled, unbordered, no panels floating over the battlefield.\n\nRisk: the mount reads as a specimen object rather than a place. There's no terrain axis — no depth ruler, no horizons — so the soil strata your spec needs would have to be implied rather than measured, and dead margins would eat a third of the screen.",
+      "hero": "design/comps/comp-a.png"
+    }
+  ],
+  "reroll": true,
+  "canon": true,
+  "steer": true
+}

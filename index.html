@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mycelia — Forest Transect Specimen</title>
+    <meta
+      name="description"
+      content="An ecological real-time strategy game. Grow a mycelial network through living forest soil, bond with tree roots, and fruit before the forest fails."
+    />
+    <meta name="color-scheme" content="dark" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Courier+Prime:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <!--
+      DIRECTION CONTRACT — The Mounted Specimen
+
+      THESIS: The game is one sheet of dark archival mounting paper. The forest
+      transect is pressed onto it and pinned down; the player's network is the
+      only light. It refuses the category default of a dark battlefield under a
+      floating neon HUD — here there is no HUD at all, only printing on paper.
+
+      OWN-WORLD: Warm near-black sheet (#141110) with fibre grain and foxing;
+      hyphal amber (#ffb347) as the single light; saprotroph pallor (#c9e6b4)
+      for the rival; accession violet (#7d6ba0) used twice per screen; hairline
+      rules, zero border radius, EB Garamond for the specimen line and Courier
+      Prime for every field of data.
+
+      STORY: The visitor understands that they are growing a living network in
+      soil they can measure, that trees are partners with demands, and that the
+      forest itself is the scoreboard. They grow, bond, trade, and fruit.
+
+      FIRST VIEWPORT: A full-height transect mount centred on the sheet, pinned
+      with gummed tape, canopy breaking the top edge. Depth rail down the left
+      with real soil-horizon letters. Accession stamp and barcode upper left.
+      Catalogue block lower right carrying every number. Empty paper between
+      them, and the network glowing in the middle of it.
+
+      FORM: Transect mount — the third of three rendered compositions, chosen
+      from the direction roll key "mycelia-v1" (candidate 5 of 7, the herbarium
+      sheet world).
+    -->
+
+    <canvas id="gl" aria-hidden="true"></canvas>
+
+    <main id="sheet">
+      <!-- Depth rail: a real soil-survey scale, generated from the map itself. -->
+      <section class="rail" aria-label="Depth scale">
+        <div class="rail-scale" id="rail-scale"></div>
+      </section>
+
+      <!-- Accession stamp and barcode: the collection's paperwork. -->
+      <section class="stamp" aria-hidden="true">
+        <div class="stamp-mark">
+          <span>Royal Botanic Archives</span>
+          <span class="stamp-small">Fungi Division</span>
+        </div>
+        <div class="stamp-accession">Accession no. <b id="accession">F.48219</b></div>
+        <div class="barcode" id="barcode"></div>
+        <div class="barcode-caption" id="barcode-caption">MYC 48219</div>
+      </section>
+
+      <!-- Season and pacing. Printed, not chromed. -->
+      <section class="season" aria-label="Season">
+        <div class="season-line">
+          <span class="field-label">Season</span>
+          <span class="field-value" id="season-name">Spring flush</span>
+        </div>
+        <div class="season-meter" aria-hidden="true"><i id="season-meter"></i></div>
+        <div class="speed-row" role="group" aria-label="Simulation speed">
+          <button type="button" data-speed="0" id="btn-pause">Pause</button>
+          <button type="button" data-speed="1" class="is-on">1×</button>
+          <button type="button" data-speed="2">2×</button>
+          <button type="button" data-speed="4">4×</button>
+        </div>
+      </section>
+
+      <!-- Orders. Ruled rows you click, not buttons in a bar. -->
+      <section class="orders" aria-label="Orders">
+        <h2 class="orders-title">Orders</h2>
+        <ul id="order-list">
+          <li>
+            <button type="button" class="order is-on" data-order="grow">
+              <span class="order-key">1</span>
+              <span class="order-name">Grow</span>
+              <span class="order-hint">send the frontier</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="order" data-order="bond">
+              <span class="order-key">2</span>
+              <span class="order-name">Bond</span>
+              <span class="order-hint">mycorrhiza</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="order" data-order="cord">
+              <span class="order-key">3</span>
+              <span class="order-name">Cord</span>
+              <span class="order-hint">thicken a strand</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="order" data-order="fruit">
+              <span class="order-key">4</span>
+              <span class="order-name">Fruit</span>
+              <span class="order-hint">spend the surplus</span>
+            </button>
+          </li>
+        </ul>
+        <p class="orders-note" id="order-note">Drag to pan · scroll to zoom · shift-drag to tilt</p>
+      </section>
+
+      <!-- The catalogue record. Every number in the game lives here. -->
+      <section class="catalogue" aria-label="Specimen record">
+        <header class="catalogue-head">
+          <h1 class="specimen-line">Mycelium lucidus</h1>
+          <p class="specimen-sub">Forest transect specimen</p>
+        </header>
+        <dl class="record" id="record"></dl>
+        <div class="notes">
+          <span class="field-label">Notes</span>
+          <p id="notes">Living network in situ. Handle with moisture.</p>
+        </div>
+      </section>
+
+      <!-- Spore fragment packet: fills as spores are banked. -->
+      <section class="packet" aria-label="Spore packet">
+        <div class="packet-fold"></div>
+        <div class="packet-fill" id="packet-fill"></div>
+        <div class="packet-caption">Spore fragment<br /><b id="packet-count">0</b></div>
+      </section>
+
+      <div class="outcome" id="outcome" hidden>
+        <h2 id="outcome-title"></h2>
+        <p id="outcome-body"></p>
+      </div>
+
+      <noscript>
+        <p class="noscript">
+          Mycelia is a WebGL simulation and needs JavaScript. Everything runs in
+          your browser; nothing is sent anywhere.
+        </p>
+      </noscript>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

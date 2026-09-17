@@ -1,0 +1,15 @@
+A game interface rendered as a dark archival transect specimen sheet, 1536x1024, landscape.
+
+THE SHEET: heavy cotton-rag mounting paper aged to a very deep warm near-black, fibrous grain visible under raking museum light, a few foxed stains, a subtly deckled right edge. The sheet fills the frame entirely. No browser chrome, no window, no page furniture.
+
+THE MOUNT: a single tall specimen mounted down the centre of the sheet as a full vertical transect of a forest — thin silhouetted tree trunks and a soft dark canopy at the very top, then a band of leaf litter, then a deep column of forest soil, resolving at the bottom into clay and stone. Woven through the soil column, pressed flat and pinned under narrow strips of translucent gummed tape, a living mycelial network glows in warm amber and gold: fine branching hyphae spreading outward from a central cord, thicker cords pulsing with tiny drifting motes of light that read as material moving through the network. Root tips descend from the trunks above into the soil and meet the network, and at those junctions the glow is brightest, like points of contact. A rival network of sickly pale green-white filaments creeps in from the left across the litter layer, colder and thinner.
+
+THE RECORD: down the left edge of the sheet, a fine ruled depth ruler with tick marks and small numerals marking the soil horizons — the numerals sit just outside the mount in the empty paper. In the lower right, a dense ruled typographic label block with a strict field structure, a dozen very short ruled lines of tiny serif and monospace type headed by a bold species line and enclosed by hairline rules. Beside it, glued flat to the sheet and slightly lifted at one corner, a small folded paper fragment packet holding a pinch of dark spores.
+
+THE MARKS: a violet rubber-stamp accession mark in the upper left, slightly under-inked, with a small printed barcode beneath it.
+
+EVERYTHING ELSE IS QUIET: wide empty tracts of dark paper on either side of the mounted column. The only light is the amber network and the fine type.
+
+PALETTE: deep warm near-black ground; warm amber and gold as the only dominant light; sickly pale green-white for the rival; deep violet used only at the stamp.
+
+LIGHT: soft, directional, museum-quality. Documentary, precise, quiet, expensive — a BBC nature film crossed with a natural history archive. Photographic realism, no illustration, no vector flatness, no neon, no lens flare.

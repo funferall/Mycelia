@@ -1,0 +1,323 @@
+---
+name: Mycelia
+description: An ecological real-time strategy game played on a dark herbarium specimen sheet.
+colors:
+  sheet-ground: "#141110"
+  mount-shadow: "#0b0908"
+  pinned-paper: "#e8dcc0"
+  label-ink: "#cbbfa4"
+  hyphal-amber: "#ffb347"
+  ember-glow: "#ff8a1e"
+  saprotroph-pallor: "#c9e6b4"
+  accession-violet: "#7d6ba0"
+typography:
+  outcome:
+    fontFamily: "EB Garamond, Georgia, serif"
+    fontSize: "20px"
+    fontWeight: 400
+    letterSpacing: "0.16em"
+  specimen-line:
+    fontFamily: "EB Garamond, Georgia, serif"
+    fontSize: "17px"
+    fontWeight: 400
+    lineHeight: 1.2
+    letterSpacing: "0.2em"
+  order:
+    fontFamily: "EB Garamond, Georgia, serif"
+    fontSize: "15px"
+    fontWeight: 400
+    lineHeight: 1.4
+  annotation:
+    fontFamily: "EB Garamond, Georgia, serif"
+    fontSize: "12.5px"
+    fontWeight: 400
+    lineHeight: 1.5
+  field-value:
+    fontFamily: "Courier Prime, Courier New, monospace"
+    fontSize: "12px"
+    fontWeight: 400
+    lineHeight: 1.4
+  horizon-letter:
+    fontFamily: "Courier Prime, Courier New, monospace"
+    fontSize: "11px"
+    fontWeight: 400
+    letterSpacing: "0.2em"
+  field-label:
+    fontFamily: "Courier Prime, Courier New, monospace"
+    fontSize: "10px"
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: "0.14em"
+  ruler-numeral:
+    fontFamily: "Courier Prime, Courier New, monospace"
+    fontSize: "10px"
+    fontWeight: 400
+    lineHeight: 1.4
+  micro:
+    fontFamily: "Courier Prime, Courier New, monospace"
+    fontSize: "9px"
+    fontWeight: 400
+    letterSpacing: "0.14em"
+rounded:
+  none: "0"
+  # The one permitted curve: the poured surface of the spore heap.
+  heap: "14px"
+spacing:
+  unit: "8px"
+components:
+  order-row:
+    backgroundColor: "transparent"
+    textColor: "#cbbfa4"
+    rounded: "{rounded.none}"
+    padding: "7px 2px"
+  order-row-active:
+    textColor: "{colors.hyphal-amber}"
+  speed-toggle:
+    backgroundColor: "transparent"
+    textColor: "{colors.label-ink}"
+    rounded: "{rounded.none}"
+    padding: "5px 10px"
+  speed-toggle-active:
+    backgroundColor: "{colors.label-ink}"
+    textColor: "{colors.mount-shadow}"
+---
+
+# Design System: Mycelia
+
+## Overview
+
+**Creative North Star: "The Mounted Specimen"**
+
+The whole game is one sheet of dark archival mounting paper. A living forest
+transect — canopy, litter, soil, clay, stone — is pressed flat onto it and pinned
+down under strips of gummed tape. The player's mycelial network glows inside the
+mount in warm amber; it is the only light in the world. Everything a game
+normally puts on screen is instead printed onto the paper the way a herbarium
+label is printed: a ruled depth ruler down the left edge with real soil-horizon
+letters, an accession stamp and barcode in a corner, a folded fragment packet
+holding spores, and one dense ruled catalogue block in the lower right that
+carries every number in the game.
+
+This is the refusal: no HUD panels, no floating chrome, no minimap, no resource
+bar, and no glowing outline around anything. Nothing is drawn on top of the
+world. The interface is paper and ink living at the edges of the mount, and the
+only saturated colour anywhere is bioluminescence — light the simulation
+actually produced. If a number needs to be on screen it takes its place in the
+ruled block like a field in a catalogue record.
+
+The mood is documentary rather than dramatic. The sheet is old, foxed and quiet,
+lit by one raking museum light. The drama comes from watching something alive
+and fragile do well or badly inside it.
+
+**Key Characteristics:**
+
+- A warm near-black ground; the network is the only bright thing on it.
+- Every interface element is printed onto the sheet — ruled, never floated,
+  never boxed.
+- Depth is a real spatial axis, measured in centimetres on a printed ruler.
+- Amber is the player; sickly pale green is the rival; violet is truffle and
+  officialdom, and appears roughly twice per screen.
+- Motion belongs to the specimen. The paper never moves.
+
+**The Light Is Earned Rule.** Colour is never applied as decoration. Any warm
+pixel on screen must correspond to living network, and any cold pixel to a
+rival, a parasite, or an accession mark. A frame with no network in it is
+essentially monochrome.
+
+**The Two Violet Rule.** Violet is the rarest colour in the game: the accession
+stamp and the truffle nodes, nothing else. More than two violet elements on a
+screen means something has gone wrong.
+
+## Colors
+
+### Primary
+
+- **Hyphal Amber** (#ffb347): the player's network — the bright centre of a cord,
+  a growing tip, a bonded root junction. The only large-area warm colour.
+- **Ember Glow** (#ff8a1e): the outward bloom around amber filaments and the
+  colour of motes travelling along a cord. Never flat, always falloff.
+
+### Secondary
+
+- **Saprotroph Pallor** (#c9e6b4): the rival network. Cold, thin and sickly
+  against the amber, and deliberately less luminous, so a contested frame reads
+  as warmth losing to pallor.
+
+### Tertiary
+
+- **Accession Violet** (#7d6ba0): the rubber-stamp mark and the truffle nodes.
+  Under-inked, never crisp, never glowing.
+
+### Neutral
+
+- **Sheet Ground** (#141110): the mounting paper, and the dominant colour of the
+  game by area.
+- **Mount Shadow** (#0b0908): the deepest soil in the transect, the backing
+  behind the specimen, and the vignette at the sheet's edges.
+- **Pinned Paper** (#e8dcc0): the gummed tape and the spore packet. In the
+  render the tape sits at 14% opacity over a #8d8266 base, so it reads as
+  translucent gum rather than as a white card.
+- **Label Ink** (#cbbfa4): all printed text. Warm bone, never pure white, and
+  never above 80% opacity for body fields.
+
+Soil material colours are a separate, darker register, read as albedo and then
+lit: litter #4a3620, humus #3a2814, loam #2f2317, clay #332a23, sand #3c3220,
+stone #37332c, bedrock #22201b. Each is multiplied by moisture, organic content
+and depth falloff, and never allowed below 60% of its base value — a true black
+rectangle reads as a hole in the sheet rather than as deep soil.
+
+## Typography
+
+**Display Font:** EB Garamond (with Georgia, serif)
+**Body Font:** EB Garamond (with Georgia, serif)
+**Label / Data Font:** Courier Prime (with Courier New, monospace)
+
+**Character:** A botanical-publication roman paired with a typewriter face —
+the historical pairing of an actual herbarium sheet. The printed monograph gives
+the species its dignity; the typewritten label gives the collection its record.
+The monospace is never atmospheric, only ever used for data a person would have
+typed into a field.
+
+### Hierarchy
+
+- **Outcome** (400, 20px, 0.16em tracking, uppercase, EB Garamond): the result
+  of a finished match, and the only thing in the game permitted above the
+  specimen line. See the One Announcement Rule below.
+- **Specimen Line** (400, 17px, 0.2em tracking, uppercase, EB Garamond): the
+  species name heading the catalogue block. The largest type in the game, and
+  there is exactly one per screen.
+- **Order** (400, 15px, EB Garamond): the four acts in the orders list — Grow,
+  Bond, Cord, Fruit. The largest body type, because these are the verbs.
+- **Annotation** (400, 12.5px, italic, EB Garamond, 70% opacity): the map's own
+  voice — notes, season remarks, event announcements. A curator's aside, never
+  a system message.
+- **Field Value** (400, 12px, Courier Prime, tabular numerals): the right column
+  of the catalogue block, always right-aligned so it scans vertically.
+- **Horizon Letter** (400, 11px, 0.2em tracking, Courier Prime, 62% opacity):
+  the soil-horizon designations on the depth rail.
+- **Field Label** (400, 10px, 0.14em tracking, uppercase, Courier Prime, 62%
+  opacity): the left column of the catalogue block — CARBON, WATER, SUBSTRATE.
+- **Ruler Numeral** (400, 10px, Courier Prime, 38% opacity): depth marks and the
+  horizon letters beside them.
+- **Micro** (400, 9px, Courier Prime, 0.14–0.3em tracking, 38% opacity): the
+  smallest printed matter — the stamp's division line, the barcode caption, the
+  section heading over the orders list, and the spore packet's label.
+
+**The No Display Type Rule.** There is no headline face and no large type. Every
+size in the game sits between 9px and 17px. Nothing shouts.
+
+**The One Announcement Rule.** The finished-match outcome is the single
+permitted exception, at 20px. It appears once, at the end, and then the sheet is
+closed. Nothing else in this world is ever allowed to be louder than the
+specimen line.
+
+## Layout
+
+The viewport is the sheet. Three regions, all printed onto the same ground, none
+of them boxed:
+
+- **Depth rail** — left, at `left: 26px; top: 206px; bottom: 96px; width: 104px`.
+  A ruled scale from 0 to −112cm, a tick every 5cm, a numeral every 10cm, and
+  the soil-horizon letter (Oi, Oa, A, B, BC, C) printed where that horizon
+  begins. It is generated from the simulation's own strata, so it is a legend
+  and a measurement at once and can never disagree with the map.
+- **The mount** — the battlefield. A slab of instanced soil grit roughly 2:1,
+  pinned along its flanks and corners with gummed tape, with the canopy breaking
+  its top edge. The camera frames it so the mount's left edge lands about 12%
+  across the viewport, leaving the left margin for the rail and everything right
+  of it as bare paper.
+- **Catalogue block** — `right: 154px; bottom: 34px; width: 336px`. A ruled grid
+  with no border and no fill, sitting directly on the sheet. Its only backing is
+  a radial gradient that reads as the paper falling into shadow. The **spore
+  fragment packet** sits to its right at `right: 34px; width: 104px` and fills
+  as spores are banked.
+- **Orders** — bottom left, a ruled list of four acts (Grow, Bond, Cord, Fruit)
+  with keyboard equivalents 1–4.
+
+Responsive: below 1180px the rail narrows to 66px and drops its numerals and the
+catalogue moves in to 150px. Below 900px the catalogue docks full-width to the
+bottom edge and the packet is hidden. The game is desktop-first; small screens
+are a graceful degradation, not a target.
+
+## Elevation & Depth
+
+There are no shadows and no elevation. Nothing floats above anything: every
+element is printed onto one flat sheet, and depth in the scene comes from the
+soil's own darkness — near-black at bedrock, warmer toward the litter — plus the
+falloff in the glow. The interface has no z-axis at all.
+
+Cards, panels, modals, tooltips and popovers do not exist in this world. If
+information must appear, it is printed on the sheet or added to the catalogue
+block.
+
+## Shapes
+
+Rectilinear and ruled. Every corner in the interface is square — zero border
+radius anywhere, including the mount, the tape, the stamp, the packet and the
+catalogue block. The recurring geometry is the hairline rule: a one-pixel line
+that separates fields, marks a horizon, or paces the depth rail.
+
+The one organic shape in the game is the network, and that is because the
+simulation drew it. The only other curve in the interface is the rounded surface
+of the spore heap inside the fragment packet, and that is a poured material
+rather than a shape — it curves the way a heap of spores actually curves. No
+interface element has a radius.
+
+## Components
+
+### Order rows
+
+- **Shape:** no box, no radius; a single hairline rule beneath each row.
+- **Rest:** field-value type at 62% opacity, with a small Courier key numeral.
+- **Active:** the rule and the label take Hyphal Amber. There is no fill.
+- **Hover:** the row indents 6px on a 200ms curve. The page never lifts.
+
+### Speed toggles
+
+- **Shape:** a joined ruled strip, each cell separated by a hairline.
+- **Active:** inverted — Label Ink fill with Mount Shadow text.
+
+### Catalogue block
+
+- **Shape:** a two-column grid of hairline-ruled fields, no border.
+- **Backing:** a radial gradient only, so it holds legibility over the soil.
+- **Values:** tabular numerals, right-aligned. Colour carries state: amber for
+  carbon, pallor for the rival, violet for genetic potential.
+
+### Depth rail
+
+- **Ticks:** 5cm minor, 10cm major; numerals at 38% opacity.
+- **Horizons:** letters set 0.2em apart and offset from the numerals, so the two
+  scales never collide.
+
+## Do's and Don'ts
+
+### Do:
+
+- **Do** keep the sheet as the ground for everything. Print on it; never place a
+  panel over it.
+- **Do** draw the depth rail and its horizon letters from the simulation's real
+  strata.
+- **Do** right-align every number in the catalogue block so the column scans.
+- **Do** let the network be the only bright thing, and let it dim when starved —
+  the picture must reflect the network's real state.
+- **Do** keep tape, foxing and grain slightly irregular. Perfect symmetry reads
+  as a template rather than a specimen.
+- **Do** render the network with normal blending, never additive. Thousands of
+  overlapping strands blend additively into a white smear, which destroys the
+  filament structure the whole art direction depends on. Bloom supplies the glow
+  instead, at a threshold above the soil's albedo so nothing else catches it.
+
+### Don't:
+
+- **Don't** add rounded corners, drop shadows, glass panels, blur, or gradients
+  as surfaces. None of them exist in an archive.
+- **Don't** draw a resource bar, minimap, tooltip, toast, or floating panel.
+- **Don't** use pure white or pure black. Every value is warm and slightly off.
+- **Don't** animate the paper. Growth, flow, spore drift and light belong to the
+  specimen.
+- **Don't** use colour as the only channel for team identity. The rival reads as
+  a different filament *texture* — thinner, straighter, colder — as well as a
+  different hue, so the distinction survives colour-vision deficiency.
+- **Don't** let the canopy become a bright mass. It is a near-silhouette
+  (#151c0f in spring, dropping to #0c0b08 in winter) against the lit paper.
