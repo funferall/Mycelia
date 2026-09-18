@@ -40,7 +40,7 @@ export class Stage {
     this.renderer.setClearColor(0x0b0908, 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 1.22;
 
     this.rig = new CameraRig(1);
     this.scene.add(this.world);
@@ -79,7 +79,7 @@ export class Stage {
         map: makeSkyTexture(),
         transparent: true,
         depthWrite: false,
-        opacity: 0.38,
+        opacity: 0.8,
       })
     );
     sky.position.set(0, MOUNT_HALF_H + 34, -12.6);

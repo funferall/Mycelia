@@ -40,7 +40,7 @@ function boot(): void {
     game.warmUp(warm);
   }
   game.start();
-  ui.setNote('Click the soil to send the growth frontier there.');
+  if (warm <= 0) ui.setNote('Awaken the spore when you are ready.');
 
   // A handle for the visual QA harness and for poking at a match from devtools.
   (window as unknown as { mycelia?: unknown }).mycelia = { game, ui };

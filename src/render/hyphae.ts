@@ -21,6 +21,18 @@ export interface HyphaePalette {
   glow: THREE.Color;
 }
 
+export interface HyphaeOptions {
+  /**
+   * Multiplies every strand radius. The rival saprotroph is drawn thinner than
+   * the player so the two networks stay distinguishable by texture as well as
+   * by hue -- the design system requires identity to survive colour-vision
+   * deficiency, and a hue swap alone would not.
+   */
+  radiusScale?: number;
+  /** Instance capacity before the mesh starts growing itself. */
+  capacity?: number;
+}
+
 /**
  * One network, drawn as instanced segments.
  *
@@ -35,6 +47,7 @@ export class HyphaeMesh {
   readonly tips: THREE.Points;
 
   private readonly palette: HyphaePalette;
+  private readonly radiusScale: number;
   private capacity: number;
   private slotOf: Int32Array;
   private nodeOf: Int32Array;
@@ -49,8 +62,10 @@ export class HyphaeMesh {
   private readonly quat = new THREE.Quaternion();
   private readonly color = new THREE.Color();
 
-  constructor(palette: HyphaePalette, glowMap: THREE.Texture, capacity = 24000) {
+  constructor(palette: HyphaePalette, glowMap: THREE.Texture, options: HyphaeOptions = {}) {
     this.palette = palette;
+    this.radiusScale = options.radiusScale ?? 1;
+    const capacity = options.capacity ?? 24000;
     this.capacity = capacity;
     this.slotOf = new Int32Array(1024).fill(-1);
     this.nodeOf = new Int32Array(capacity).fill(-1);
@@ -230,7 +245,7 @@ export class HyphaeMesh {
 
     // Radius follows thickness: a freshly committed strand is hair-fine, a cord
     // that has been carrying traffic is a visible pipe.
-    const radius = 0.04 + node.thickness * 0.26;
+    const radius = (0.04 + node.thickness * 0.26) * this.radiusScale;
     this.dummy.position.copy(this.mid);
     this.dummy.quaternion.copy(this.quat);
     this.dummy.scale.set(radius, length * 1.04, radius);

@@ -12,13 +12,15 @@ import {
   isPassable,
   orderWaypoint,
   nearestNode,
+  makeCord,
   startFruiting,
   stepNetwork,
   tryBond,
+  type HyphaNode,
   type Network,
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
-import { createWorld, idx, rowAtDepthCm, updateMoisture, type Tree, type World } from './world';
+import { createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
 
 export interface SimEvent {
   /** Simulation time the event was logged at, in seconds. */
@@ -102,15 +104,18 @@ export class Simulation {
 
     const season = this.season;
     this.world.rainfall = season.rain;
+    this.world.litterfall = season.litterfall;
     // Drought pulls the water table down; wet seasons raise it.
     const tableTarget = GRID.rows * 0.66 + (1 - season.rain) * 22 - (season.rain - 1) * 8;
     this.world.waterTableCm += (tableTarget - this.world.waterTableCm) * Math.min(1, dt * 0.08);
 
-    // Soil moisture touches every cell, which is far more often than soil
-    // actually changes, so it runs on a beat rather than every single step.
+    // Soil moisture and mineralisation touch every cell, which is far more
+    // often than soil actually changes, so they run on a beat rather than every
+    // single step.
     this.moistureClock += dt;
     if (this.moistureClock >= 0.25) {
       updateMoisture(this.world, this.moistureClock);
+      updateSoil(this.world, this.moistureClock, season.litterfall);
       this.moistureClock = 0;
     }
 
@@ -119,6 +124,8 @@ export class Simulation {
       light: season.light,
       warmth: season.warmth,
       rival: this.rival,
+      time: this.time,
+      log: (text: string) => this.log(text),
       dt,
     };
     stepNetwork(this.player, ctx);
@@ -153,10 +160,15 @@ export class Simulation {
 
       // Which of my nodes is bonded to this tree?
       let bondNode = null;
+      let bonded = false;
       for (const tip of tree.rootTips) {
         if (tip.bondedTo === null) continue;
+        bonded = true;
         const node = this.player.nodes[tip.bondedTo];
-        if (node && node.alive) {
+        // A junction that has been severed from the root is not supplying
+        // anything, however much of it is still standing. The tree feels the
+        // cut as an unmet demand and counts down to leaving.
+        if (node && node.alive && node.connected) {
           bondNode = node;
           break;
         }
@@ -183,6 +195,17 @@ export class Simulation {
           if (tree.patience <= 0) {
             this.severBond(tree, 'stopped supplying');
           }
+        }
+      } else if (bonded) {
+        // The tree is still bonded to something, but the strand holding the
+        // bond is dead or cut off from the root. It is not being fed, and it
+        // must feel that: an abandoned junction is not a quiet no-op.
+        tree.waterReceived = 0;
+        tree.nutrientReceived = 0;
+        tree.patience -= dt * 1.6;
+        tree.health = Math.max(0.05, tree.health - dt * 0.012);
+        if (tree.patience <= 0) {
+          this.severBond(tree, 'lost the strand that fed it');
         }
       } else {
         // Unbonded trees live off the soil alone. Drought hurts them, but
@@ -307,49 +330,99 @@ export class Simulation {
   orderGrowth(gx: number, gy: number): boolean {
     if (this.outcome !== 'playing') return false;
     if (!Number.isFinite(gx) || !Number.isFinite(gy)) return false;
-    orderWaypoint(this.player, Math.round(gx), Math.round(gy));
+    if (!isPassable(this.world, Math.round(gx), Math.round(gy))) return false;
+    orderWaypoint(this.player, Math.round(gx), Math.round(gy), this.world);
     return true;
   }
 
   /** Attempt symbiosis with the nearest available root tip. */
   orderBond(gx: number, gy: number): { ok: boolean; message: string } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
     const candidate = this.nearestAvailableTip(gx, gy);
     if (!candidate) return { ok: false, message: 'No unbonded root tip within reach.' };
-    const tree = this.world.trees[candidate.treeId];
-    if (!tree) return { ok: false, message: 'No tree there.' };
-    const ok = tryBond(this.player, this.world, candidate.treeId, candidate.tipId);
-    if (!ok) return { ok: false, message: 'A strand must be near the tip, and it costs carbon.' };
-    this.log(`Symbiosis with ${SPECIES[tree.species].common}. Trading begins.`);
-    return { ok: true, message: `Bonded to ${SPECIES[tree.species].common}.` };
+    return this.orderBondTip(candidate.treeId, candidate.tipId);
+  }
+
+  /**
+   * Attempt symbiosis with one specific root tip.
+   *
+   * The interface binds its root labels to a tree and a tip, so the strand that
+   * bonds is the one the player was looking at rather than whichever strand
+   * happened to be nearest when they clicked.
+   */
+  orderBondTip(treeId: number, tipId: number): { ok: boolean; message: string } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
+    const tree = this.world.trees[treeId];
+    const tip = tree?.rootTips[tipId];
+    if (!tree || !tip) return { ok: false, message: 'No root there.' };
+    if (tree.dead) return { ok: false, message: 'That tree is dead. Its roots are food now.' };
+    if (tip.bondedTo !== null) return { ok: false, message: 'Already bonded to that root.' };
+
+    const distance = this.nearestStrand(tip.gx, tip.gy);
+    if (!distance) return { ok: false, message: 'No living strand left in the network.' };
+    if (distance.distance > 3.5) {
+      return {
+        ok: false,
+        message: `${Math.round(distance.distance)}cm short of that root. Grow closer first.`,
+      };
+    }
+    if (distance.node.carbon < ECON.bondCharge) {
+      return { ok: false, message: 'The strand at that root is too poor to hold a bond. Let it gather.' };
+    }
+    if (!tryBond(this.player, this.world, treeId, tipId)) {
+      return { ok: false, message: 'The junction would not take. Try a strand on the root itself.' };
+    }
+    const spec = SPECIES[tree.species];
+    this.log(`Symbiosis with ${spec.common}. It wants water and minerals; it pays in sugar.`);
+    return { ok: true, message: `Bonded to ${spec.common}. It drinks ${spec.waterDemand.toFixed(1)} water/s.` };
+  }
+
+  /** The nearest living, connected strand to a grid point. */
+  nearestStrand(gx: number, gy: number): { node: HyphaNode; distance: number } | null {
+    let best: HyphaNode | null = null;
+    let bestDist = Infinity;
+    for (const node of this.player.nodes) {
+      if (!node.alive || !node.connected) continue;
+      const d = Math.hypot(node.wx - (gx + 0.5), node.wy - (gy + 0.5));
+      if (d < bestDist) {
+        bestDist = d;
+        best = node;
+      }
+    }
+    return best ? { node: best, distance: bestDist } : null;
   }
 
   /** Commit surplus to a fruiting body. */
   orderFruit(gx: number, gy: number): { ok: boolean; message: string } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
     if (this.player.fruit.active) return { ok: false, message: 'A fruiting body is already rising.' };
-    if (this.player.surplus < ECON.fruitThreshold * 0.98) {
+    if (this.player.surplus < ECON.fruitThreshold) {
       return {
         ok: false,
         message: `Surplus ${this.player.surplus.toFixed(0)} of ${ECON.fruitThreshold} needed.`,
       };
     }
     if (this.season.warmth < 0.3) return { ok: false, message: 'Too cold to fruit.' };
-    const ok = startFruiting(this.player, this.world, Math.round(gx), Math.round(gy));
-    if (!ok) return { ok: false, message: 'Nothing of mine is near enough to the surface there.' };
-    this.log('A fruiting body has begun to rise.');
-    return { ok: true, message: 'Fruiting.' };
+    if (gy > 12 || gy < 0) return { ok: false, message: 'Grow into the upper 12 cm of soil before fruiting.' };
+    const strand = startFruiting(this.player, this.world, Math.round(gx), Math.round(gy));
+    if (!strand) return { ok: false, message: 'Nothing of mine is near enough to the surface there.' };
+    this.log('A fruiting body has begun to rise. It spends the reserve as it grows.');
+    return {
+      ok: true,
+      message: `Fruiting from the strand at -${strand.gy}cm. It must stay supplied to rise.`,
+    };
   }
 
   /** Thicken the strand nearest a point into a cord. */
   orderCord(gx: number, gy: number): { ok: boolean; message: string } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
     const node = nearestNode(this.player, gx, gy, 3);
     if (!node) return { ok: false, message: 'No strand of mine there.' };
-    if (node.thickness >= 0.9) return { ok: false, message: 'Already a cord.' };
+    if (node.reinforced) return { ok: false, message: 'Already a cord.' };
     if (node.carbon < ECON.cordCharge) {
       return { ok: false, message: 'Not enough carbon at that strand.' };
     }
-    node.carbon -= ECON.cordCharge;
-    node.thickness = Math.min(1, node.thickness + 0.35);
-    node.pulse = 1;
+    makeCord(this.player, node.id);
     this.log('A strand thickened into a cord.');
     return { ok: true, message: 'Cord thickened.' };
   }

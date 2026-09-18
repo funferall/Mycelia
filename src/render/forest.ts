@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GRID, SPECIES, type SeasonId } from '../sim/content';
 import { mulberry32 } from '../sim/rng';
 import type { Tree, World } from '../sim/world';
+import { makeGlowTexture } from './textures';
 
 /**
  * Everything above the soil line, plus the roots that reach down into it.
@@ -23,7 +24,7 @@ const SEASON_FOLIAGE: Record<SeasonId, THREE.Color> = {
 };
 
 const BONDED = new THREE.Color('#ffd489');
-const UNBONDED = new THREE.Color('#4a3a2a');
+const UNBONDED = new THREE.Color('#bcae86');
 
 interface TreeVisual {
   tree: Tree;
@@ -150,6 +151,7 @@ export class ForestView {
     this.trunkMesh.count = this.visuals.length;
     this.trunkMesh.instanceMatrix.needsUpdate = true;
     this.foliageMesh.count = this.visuals.reduce((n, v) => n + v.blobs.length, 0);
+    this.foliageMesh.visible = false; // Fine botanical foliage is supplied by Canopy.
     this.foliageMesh.instanceMatrix.needsUpdate = true;
 
     const rootGeometry = new THREE.BufferGeometry();
@@ -160,10 +162,11 @@ export class ForestView {
     this.rootLines = new THREE.LineSegments(
       rootGeometry,
       new THREE.LineBasicMaterial({
-        color: '#4a382a',
+        color: '#88734f',
         transparent: true,
         opacity: 0.8,
         depthWrite: false,
+        depthTest: false,
       })
     );
     this.rootLines.frustumCulled = false;
@@ -185,7 +188,9 @@ export class ForestView {
     this.tipPoints = new THREE.Points(
       tipGeometry,
       new THREE.PointsMaterial({
-        size: 2.6,
+        size: 1.8,
+        map: makeGlowTexture(),
+        depthTest: false,
         sizeAttenuation: true,
         transparent: true,
         blending: THREE.AdditiveBlending,
@@ -228,7 +233,7 @@ export class ForestView {
       );
       this.dummy.updateMatrix();
       this.trunkMesh.setMatrixAt(v, this.dummy.matrix);
-      this.color.set('#241c15').lerp(new THREE.Color('#5a5348'), 1 - health);
+      this.color.set(tree.species === 'birch' ? '#8c8770' : '#594a36').lerp(new THREE.Color('#5a5348'), 1 - health);
       this.trunkMesh.setColorAt(v, this.color);
 
       for (const blobIndex of visual.blobs) {

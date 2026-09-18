@@ -1,6 +1,7 @@
 import { ECON, GRID, STRATA, type StratumId } from '../sim/content';
 import type { Simulation } from '../sim/sim';
 import { horizonBands } from '../render/soil';
+import type { Journey } from './journey';
 
 export type OrderId = 'grow' | 'bond' | 'cord' | 'fruit';
 
@@ -13,6 +14,7 @@ const RECORD_FIELDS = [
   'Nitrogen',
   'Genetic p.',
   'Surplus',
+  'Forest health',
   'Network',
   'Growing tips',
   'Trees bonded',
@@ -74,6 +76,7 @@ export class SheetUI {
     must('#barcode-caption').textContent = `MYC ${accession.slice(2)}`;
 
     for (const button of document.querySelectorAll<HTMLButtonElement>('.order')) {
+      button.setAttribute('aria-pressed', String(button.dataset.order === 'grow'));
       button.addEventListener('click', () => {
         const order = button.dataset.order as OrderId | undefined;
         if (order) this.orderHandler?.(order);
@@ -81,6 +84,7 @@ export class SheetUI {
     }
 
     document.addEventListener('keydown', (event) => {
+      if (event.target instanceof HTMLInputElement || event.ctrlKey || event.metaKey || event.altKey) return;
       const map: Record<string, OrderId> = { '1': 'grow', '2': 'bond', '3': 'cord', '4': 'fruit' };
       const order = map[event.key];
       if (order) this.orderHandler?.(order);
@@ -95,6 +99,7 @@ export class SheetUI {
     this.activeOrder = order;
     for (const button of document.querySelectorAll<HTMLButtonElement>('.order')) {
       button.classList.toggle('is-on', button.dataset.order === order);
+      button.setAttribute('aria-pressed', String(button.dataset.order === order));
     }
   }
 
@@ -145,7 +150,7 @@ export class SheetUI {
     }
   }
 
-  update(sim: Simulation, dt: number): void {
+  update(sim: Simulation, dt: number, journey?: Journey): void {
     this.refreshClock += dt;
     if (this.refreshClock < 0.16) return;
     this.refreshClock = 0;
@@ -156,7 +161,6 @@ export class SheetUI {
 
     if (season.id !== this.lastSeason) {
       this.lastSeason = season.id;
-      sim.log(`${season.label}.`);
     }
     this.seasonName.textContent = season.label;
     this.seasonMeter.style.transform = `scaleX(${(sim.seasonClock / season.seconds).toFixed(3)})`;
@@ -175,6 +179,7 @@ export class SheetUI {
     this.set('Nitrogen', player.nitrogen.toFixed(0));
     this.set('Genetic p.', player.genetic.toFixed(0), 'is-violet');
     this.set('Surplus', `${player.surplus.toFixed(0)} / ${ECON.fruitThreshold}`);
+    this.set('Forest health', `${Math.round(sim.world.trees.reduce((sum, tree) => sum + (tree.dead ? 0 : tree.health), 0) / sim.world.trees.length * 100)}%`);
     this.set('Network', `${player.lengthCm.toFixed(0)} cm`);
     this.set('Growing tips', String(player.tipCount));
     this.set('Trees bonded', `${bonded} / ${living}`);
@@ -192,6 +197,23 @@ export class SheetUI {
     if (latest) {
       this.notes.textContent = `${latest.text}  ·  Spores away ${player.fruited}/${sim.fruitGoal}.`;
     }
+    if (journey && document.querySelector<HTMLElement>('#begin')!.hidden) this.updateJourney(sim, journey);
+  }
+
+  private updateJourney(sim: Simulation, journey: Journey): void {
+    const net = sim.player;
+    const step = journey.step;
+    must('#chapter-title').textContent = journey.title;
+    must('#chapter-copy').textContent = journey.blocker
+      ? `${journey.copy} ${journey.blocker}`
+      : journey.copy;
+    document.querySelectorAll<HTMLElement>('[data-step]').forEach((element, i) => {
+      element.classList.toggle('current', i === step);
+      element.classList.toggle('complete', i < step);
+      if (i === step) element.setAttribute('aria-current', 'step'); else element.removeAttribute('aria-current');
+    });
+    must('#rest').setAttribute('aria-pressed', String(net.resting));
+    must('#rest').innerHTML = net.resting ? 'Resume growing <span aria-hidden="true">R</span>' : 'Rest & gather <span aria-hidden="true">R</span>';
   }
 
   showOutcome(sim: Simulation, onRestart: () => void): void {

@@ -22,6 +22,7 @@ export interface HyphaNode {
   alive: boolean;
   /** 0..1. Thick strands become cords: fast transport, expensive to keep. */
   thickness: number;
+  reinforced: boolean;
   carbon: number;
   water: number;
   nitrogen: number;
@@ -55,8 +56,23 @@ export interface Fruiting {
   active: boolean;
   /** 0..1 eruption progress. */
   progress: number;
+  /**
+   * Energy committed when the body started, in carbon-equivalent. It is spent
+   * as the body grows, so a bloom can never be both finished and unpaid for.
+   */
+  store: number;
+  /** Strand the body rose from. Cut its supply and the eruption stalls. */
+  nodeId: number;
   gx: number;
   gy: number;
+}
+
+/** A mushroom that finished erupting, kept so the sheet can show where it stood. */
+export interface Bloom {
+  gx: number;
+  gy: number;
+  /** Simulation time the spores left, in seconds. */
+  at: number;
 }
 
 export interface Network {
@@ -78,6 +94,12 @@ export interface Network {
   lengthCm: number;
   /** Carbon standing in the network right now. */
   carbon: number;
+  /**
+   * The largest carbon hoard the founding spore will ever hold. It starts as
+   * the reserve the match opens with; income above it is respired away rather
+   * than banked, so a network cannot sit on a fortune and grow at leisure.
+   */
+  carbonCeiling: number;
   /** Living connected nodes below their working carbon reserve. */
   starving: number;
   water: number;
@@ -87,10 +109,13 @@ export interface Network {
   fruit: Fruiting;
   /** Completed fruitings — victory progress. */
   fruited: number;
+  /** Where each of those fruitings stood, in the order they happened. */
+  blooms: Bloom[];
   /** Spores released and settled beyond the network's own soil. */
   spores: number;
   /** Highest carbon surplus banked toward the next fruiting. */
   surplus: number;
+  resting: boolean;
   /** Set once nothing living remains. */
   extinct: boolean;
   rng: Rng;
@@ -124,6 +149,7 @@ export function createNetwork(
     isTip: false,
     alive: true,
     thickness: 0.85,
+    reinforced: false,
     carbon: startingCarbon,
     water: 4,
     nitrogen: 2,
@@ -149,13 +175,16 @@ export function createNetwork(
     lengthCm: 0,
     starving: 0,
     carbon: startingCarbon,
+    carbonCeiling: startingCarbon,
     water: 4,
     nitrogen: 2,
     genetic: 0,
-    fruit: { active: false, progress: 0, gx, gy },
+    fruit: { active: false, progress: 0, store: 0, nodeId: root.id, gx, gy },
     fruited: 0,
+    blooms: [],
     spores: 0,
     surplus: 0,
+    resting: false,
     extinct: false,
     rng,
     waypoints: [],
@@ -170,7 +199,19 @@ export function createNetwork(
   return net;
 }
 
-function spawnTip(
+/**
+ * Grow a new tip out of an existing strand.
+ *
+ * The new branch is built out of the parent's own body: it takes carbon, water
+ * and mineral from the strand that spawned it, and never more than that strand
+ * can spare. Nothing is manufactured at birth, so a network can only widen as
+ * fast as its economy actually supplies it, and a poor strand produces a lean,
+ * slow branch rather than a free one.
+ *
+ * Exported so the conservation rules can be exercised directly by the test
+ * harness; the game only reaches it through `commitTip`.
+ */
+export function spawnTip(
   net: Network,
   from: HyphaNode,
   angle: number,
@@ -193,6 +234,20 @@ function spawnTip(
     ty = Math.max(0, Math.min(GRID.rows - 1, ty));
   }
 
+  // Draw the child's starting body out of the parent. Water and mineral are
+  // taken proportionally and may be thin; carbon is what a strand really has to
+  // give up, so the parent keeps a floor it cannot be pushed below.
+  const carbonGive = Math.min(
+    ECON.birthReserve,
+    Math.max(0, from.carbon - ECON.parentReserveFloor)
+  );
+  const share = carbonGive / ECON.birthReserve;
+  const waterGive = Math.min(0.6 * share, from.water);
+  const nitrogenGive = Math.min(0.3 * share, from.nitrogen);
+  from.carbon -= carbonGive;
+  from.water -= waterGive;
+  from.nitrogen -= nitrogenGive;
+
   const node: HyphaNode = {
     id: net.nodes.length,
     parent: from.id,
@@ -206,9 +261,10 @@ function spawnTip(
     isTip: true,
     alive: true,
     thickness: 0.18,
-    carbon: 1.5,
-    water: 0.4,
-    nitrogen: 0.2,
+    reinforced: false,
+    carbon: carbonGive,
+    water: waterGive,
+    nitrogen: nitrogenGive,
     health: 1,
     connected: true,
     bondedTree: -1,
@@ -338,6 +394,10 @@ export interface StepContext {
   warmth: number;
   /** A rival network, if one is on the map. */
   rival: Network | null;
+  /** Simulation time this step is being taken at, in seconds. */
+  time: number;
+  /** Records something the player should be told about. */
+  log: (text: string) => void;
   dt: number;
 }
 
@@ -361,7 +421,8 @@ export function stepNetwork(net: Network, ctx: StepContext): void {
   updateTipCeiling(net);
   harvest(net, world, ctx);
   transport(net, dt);
-  extendTips(net, ctx);
+  respire(net);
+  if (!net.resting) extendTips(net, ctx);
   thicken(net, world, dt);
   decay(net, world, dt);
   progressFruiting(net, ctx);
@@ -377,7 +438,9 @@ function updateTipCeiling(net: Network): void {
   }
   let bonded = 0;
   for (const node of net.nodes) {
-    if (node.alive && node.bondedTree >= 0) bonded++;
+    // A cut-off junction is no longer feeding a tree, so it no longer widens
+    // the frontier either. Growth capacity has to be paid for with live trade.
+    if (node.alive && node.connected && node.bondedTree >= 0) bonded++;
   }
   net.tipCeiling = Math.min(MAX_TIPS, 6 + bonded * 13);
 }
@@ -392,7 +455,11 @@ function markConnectivity(net: Network): void {
   for (const n of nodes) n.connected = false;
   const stack: number[] = [net.rootId];
   const root = nodes[net.rootId];
-  if (root) root.connected = true;
+  // The founding spore is the only place the network is joined to itself. If it
+  // is dead, nothing is connected, however much of the colony is still standing:
+  // a severed network must read as severed rather than staying quietly alive.
+  if (!root || !root.alive) return;
+  root.connected = true;
   while (stack.length > 0) {
     const id = stack.pop() as number;
     const node = nodes[id];
@@ -423,9 +490,12 @@ function harvest(net: Network, world: World, ctx: StepContext): void {
     cell.water -= got * 0.06;
     node.water = Math.min(ECON.nodeWaterCap, node.water + got);
 
-    // Nitrogen and phosphorus: mined from the cell and depleted over time.
+    // Nitrogen and phosphorus: mined from the cell the node stands in. The
+    // horizon holds a finite standing stock and rebuilds it slowly, so a pocket
+    // that has been worked over goes quiet until either the network grows on or
+    // the soil has had time to mineralise again.
     const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness));
-    cell.nitrogen = Math.max(0, cell.nitrogen - uptake * 0.05);
+    cell.nitrogen = Math.max(0, cell.nitrogen - uptake * ECON.nitrogenSoilCost);
     node.nitrogen = Math.min(ECON.nodeNitrogenCap, node.nitrogen + uptake);
 
     // Decomposition: hyphae metabolise the organic matter they are sitting in.
@@ -436,14 +506,17 @@ function harvest(net: Network, world: World, ctx: StepContext): void {
       cell.organic -= bite * 0.05;
       // Held resources are capped: the excess is simply lost, which is what
       // forces the player to keep investing rather than banking.
-      node.carbon = Math.min(ECON.nodeCarbonCap, node.carbon + bite * 3.2);
+      node.carbon += Math.min(bite * 3.2, Math.max(0, ECON.nodeCarbonCap - node.carbon));
     }
   }
 
   // Symbiosis: bonded trees pay in sugar, and only while they are healthy.
   const world_trees = ctx.world.trees;
   for (const node of net.nodes) {
-    if (!node.alive || node.bondedTree < 0) continue;
+    // Only a strand still joined to the root can trade on the network's behalf.
+    // A junction that has been cut off is not delivering anything to the tree,
+    // and must not keep paying the player for a bond the tree cannot feel.
+    if (!node.alive || !node.connected || node.bondedTree < 0) continue;
     const tree = world_trees[node.bondedTree];
     if (!tree || tree.dead) {
       node.bondedTree = -1;
@@ -452,10 +525,13 @@ function harvest(net: Network, world: World, ctx: StepContext): void {
     }
     const spec = (ctx.world.trees[node.bondedTree] as { species: string }).species;
     const rate = tree.health * ctx.light * (0.6 + tree.maturity * 0.6);
-    node.carbon = Math.min(
-      ECON.nodeCarbonCap * 1.6,
-      node.carbon + rate * carbonPerSecond(spec) * dt
-    );
+    const income = rate * carbonPerSecond(spec) * dt;
+    // Rest directs a measured share of current photosynthesis into reproduction.
+    // Starting reserves cannot masquerade as an earned fruiting surplus.
+    const saved = net.resting && tree.waterReceived > 0.65 && tree.nutrientReceived > 0.65
+      ? income * 0.55 : 0;
+    net.surplus = Math.min(ECON.fruitThreshold, net.surplus + saved);
+    node.carbon += Math.min(income - saved, Math.max(0, ECON.nodeCarbonCap * 1.6 - node.carbon));
     node.pulse = Math.min(1, node.pulse + dt * 0.6);
   }
 }
@@ -483,26 +559,122 @@ function transport(net: Network, dt: number): void {
   const nodes = net.nodes;
   const order = traversalOrder(net);
 
-  const carbonReserve = (node: HyphaNode): number =>
-    (node.isTip ? 2.2 : 0.9) + (node.bondedTree >= 0 ? 1 : 0);
-
   // Carbon travels up from strands holding more than they need, and back down
   // to any node below its working reserve. A growing tip needs real fuel, so
   // the frontier is topped up rather than merely rescued; only what nobody
   // needs reaches the root, and only what the root cannot use becomes surplus.
-  moveResource(nodes, order, 'carbon', carbonReserve, carbonReserve, dt);
+  moveResource(nodes, order, 'carbon',
+    node => carbonReserve(node),
+    node => carbonReserve(node),
+    dt,
+    true);
 
-  // Water and minerals: these are pulled to the junctions that need them, so
-  // the highest fill level wins, and a bonded tree's junction is served first.
-  const waterTarget = (node: HyphaNode): number =>
-    node.bondedTree >= 0 ? ECON.nodeWaterCap : ECON.nodeWaterCap * 0.45;
-  const nitrogenTarget = (node: HyphaNode): number =>
-    node.bondedTree >= 0 ? ECON.nodeNitrogenCap : ECON.nodeNitrogenCap * 0.45;
-  moveResource(nodes, order, 'water', waterTarget, () => ECON.nodeWaterCap * 0.85, dt);
-  moveResource(nodes, order, 'nitrogen', nitrogenTarget, () => ECON.nodeNitrogenCap * 0.85, dt);
+  // Mark the strands that stand between the root and a tree. A partner is an
+  // obligation rather than an option, so these are the routes that get fed.
+  const supplyPath = new Set<number>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const node = nodes[order[i] as number];
+    if (node.bondedTree >= 0 || supplyPath.has(node.id)) {
+      supplyPath.add(node.id);
+      if (node.parent >= 0) supplyPath.add(node.parent);
+    }
+  }
+
+  // Water and minerals are drawn from the soil each node stands in, so a strand
+  // holds very little of them: the standing stock belongs to whoever needs it.
+  // A node on the way to a tree therefore gives everything it holds rather than
+  // keeping a reserve back, which is what makes a partner's supply depend on a
+  // real route through the network instead of on one lucky junction.
+
+  // A partner that is short mobilises the whole network. Without this, a scarce
+  // resource pools in a thousand small reserves and a tree dies of thirst inside
+  // a network holding enough to save it: every strand sits exactly on its own
+  // keeping level, nothing is in transit, and demand has nothing to pull from.
+  const thirsty = wantsSupply(nodes);
+
+  for (const key of ['water', 'nitrogen'] as const) {
+    const cap = key === 'water' ? ECON.nodeWaterCap : ECON.nodeNitrogenCap;
+    moveResource(nodes, order, key,
+      node => standingReserve(node, key, thirsty),
+      // A junction is filled to its whole capacity, and so is every strand on
+      // the route to it: a strut is a pipe, not a cistern, and it passes what it
+      // receives straight on to the tree.
+      node => (node.bondedTree >= 0 || supplyPath.has(node.id) ? cap : standingReserve(node, key, thirsty)),
+      dt,
+      node => !supplyPath.has(node.id));
+  }
 }
 
 type ResourceKey = 'carbon' | 'water' | 'nitrogen';
+
+/** Carbon a strand refuses to give up: fuel for a tip, and a junction's float. */
+function carbonReserve(node: HyphaNode): number {
+  return (node.isTip ? 2.2 : 0.9) + (node.bondedTree >= 0 ? 1 : 0);
+}
+
+/**
+ * Respiration: carbon a strand cannot use is lost rather than banked.
+ *
+ * Storage is deliberately tiny. A node holds about one centimetre of growth
+ * plus its working float, and the founding spore holds the reserve the match
+ * opened with and not a gram more. A player who stops making decisions watches
+ * their income evaporate instead of sitting on a fortune, which is what keeps
+ * every match a series of investments rather than a slow accumulation.
+ */
+function respire(net: Network): void {
+  for (const node of net.nodes) {
+    if (!node.alive) continue;
+    const cap = node.id === net.rootId
+      ? Math.max(ECON.nodeCarbonCap, net.carbonCeiling)
+      : ECON.nodeCarbonCap * (node.bondedTree >= 0 ? 1.6 : 1);
+    if (node.carbon > cap) node.carbon = cap;
+  }
+}
+
+/**
+ * What a node keeps for itself before it will ship anything further inward.
+ *
+ * Carbon is the body, so everyone holds a working reserve. Water and mineral
+ * are what the network is *for*: a strut keeps just enough to stay alive, a tip
+ * keeps enough to pay for the next centimetre, and a bonded junction keeps its
+ * whole store because that is a debt to a tree rather than a surplus.
+ *
+ * The frontier's reserves are deliberately small. A tip needs about a fiftieth
+ * of a unit of mineral per centimetre, so a generous tip reserve is not fuel,
+ * it is a reservoir the network cannot spend: a hungry partner can only be fed
+ * out of what is actually in transit.
+ *
+ * While a partner is short, everyone gives up almost all of it. A tree's unmet
+ * demand outranks the comfort of every strand in the network.
+ */
+function standingReserve(node: HyphaNode, key: ResourceKey, thirsty = false): number {
+  if (key === 'carbon') return carbonReserve(node);
+  if (node.bondedTree >= 0) return key === 'water' ? ECON.nodeWaterCap : ECON.nodeNitrogenCap;
+  // The founding spore is the colony's core, not a bare pipe: it keeps a little
+  // of everything even while a partner is draining the network, so the ground
+  // the match began in never becomes the one place nothing will grow.
+  if (node.parent < 0) return key === 'water' ? 0.6 : 0.2;
+  if (node.isTip) {
+    if (thirsty) return key === 'water' ? 0.15 : 0.05;
+    return key === 'water' ? 0.6 : 0.15;
+  }
+  if (thirsty) return 0;
+  return key === 'water' ? 0.1 : 0.04;
+}
+
+/**
+ * Is a bonded tree short of what it was promised?
+ *
+ * A junction that is not holding its full store is a tree that is not being
+ * fully served, which is the signal the rest of the network answers.
+ */
+function wantsSupply(nodes: HyphaNode[]): boolean {
+  for (const node of nodes) {
+    if (!node.alive || !node.connected || node.bondedTree < 0) continue;
+    if (node.water < ECON.nodeWaterCap * 0.9 || node.nitrogen < ECON.nodeNitrogenCap * 0.9) return true;
+  }
+  return false;
+}
 
 /**
  * One resource, one sweep each way.
@@ -512,6 +684,10 @@ type ResourceKey = 'carbon' | 'water' | 'nitrogen';
  * throughput ceiling set by its thickness, so a hair-fine strand is a
  * bottleneck and a cord is a highway — which is what makes the shape of the
  * network a real decision rather than decoration.
+ *
+ * `holdsBack` decides whether a node on the outward sweep keeps its own reserve
+ * before filling a child. Strands carrying a partner's supply do not: a tree
+ * waiting at the end of the route outranks the reserve of every strand on it.
  */
 function moveResource(
   nodes: HyphaNode[],
@@ -519,10 +695,12 @@ function moveResource(
   key: ResourceKey,
   surplusAbove: (node: HyphaNode) => number,
   fillTo: (node: HyphaNode) => number,
-  dt: number
+  dt: number,
+  holdsBack: boolean | ((node: HyphaNode) => boolean)
 ): void {
-  const pipe = (node: HyphaNode): number => (1.2 + node.thickness * 9) * dt;
+  const pipe = (node: HyphaNode): number => (1.2 + node.thickness * 9) * (node.reinforced ? ECON.cordThroughput : 1) * dt;
   const isCarbon = key === 'carbon';
+  const holds = typeof holdsBack === 'function' ? holdsBack : () => holdsBack;
 
   for (let i = order.length - 1; i >= 0; i--) {
     const node = nodes[order[i] as number];
@@ -552,9 +730,7 @@ function moveResource(
       // to, or a node sitting exactly at its reserve could never be topped up
       // and would slowly die of upkeep. The root keeps more than everyone else,
       // so supply flows outward down a gradient instead of pooling at the base.
-      const keep = isCarbon
-        ? surplusAbove(node) * (node.parent < 0 ? 3 : 0.35)
-        : surplusAbove(node) * 0.6;
+      const keep = holds(node) ? surplusAbove(node) * (isCarbon && node.parent < 0 ? 3 : 0.35) : 0;
       const movable = Math.max(0, node[key] - keep);
       const moved = Math.min(deficit, movable, pipe(node));
       if (moved <= 0) continue;
@@ -714,7 +890,7 @@ function thicken(net: Network, world: World, dt: number): void {
   for (const node of net.nodes) {
     if (!node.alive || node.isTip) continue;
     const traffic = Math.abs(node.flow);
-    const target = Math.min(1, 0.08 + traffic * 0.22 + node.age * 0.004);
+    const target = Math.max(node.reinforced ? 0.9 : 0, Math.min(1, 0.08 + traffic * 0.22 + node.age * 0.004));
     if (target > node.thickness) {
       node.thickness += (target - node.thickness) * Math.min(1, dt * 0.5);
     } else {
@@ -749,6 +925,8 @@ function decay(net: Network, world: World, dt: number): void {
     if (node.carbon <= 0.02) {
       node.health -= dt * 0.03;
       if (node.health <= 0) killNode(net, world, node, 0.5);
+    } else {
+      node.health = Math.min(1, node.health + dt * 0.015);
     }
     // Very old tips that never found anything are pruned back.
     if (node.isTip && node.age > 140 && Math.hypot(node.wx - node.gx, node.wy - node.gy) < 0.2) {
@@ -779,51 +957,104 @@ function killNode(net: Network, world: World, node: HyphaNode, organicReturn: nu
 }
 
 /**
- * Move what the root cannot hold into the fruiting surplus.
- *
- * Storage is deliberately small. Carbon above the surplus threshold is lost —
- * fungi invest, they do not hoard — so a player who stops making decisions
- * watches their economy evaporate rather than sitting on it.
+ * The nearest living strand joined to the root within a patch, or null if the
+ * network has been cut away from that ground entirely.
  */
-function bankSurplus(net: Network): void {
-  const root = net.nodes[net.rootId];
-  if (!root || !root.alive) return;
-  // A network that cannot feed its own frontier is not running a surplus, it is
-  // failing. Banking while any strand is starving would starve it faster.
-  if (net.starving > 0) return;
-  // The root keeps a working reserve before anything is banked, so a network
-  // that is merely healthy does not starve its own branches to fill a surplus.
-  const cap = ECON.nodeCarbonCap * 5;
-  if (root.carbon <= cap) return;
-  const excess = root.carbon - cap;
-  root.carbon = cap;
-  net.surplus = Math.min(ECON.fruitThreshold, net.surplus + excess);
-  // Anything past the threshold is wasted outright.
+function feederAt(net: Network, gx: number, gy: number, wantWater: number, wantNitrogen: number): HyphaNode | null {
+  let best: HyphaNode | null = null;
+  let bestDist = Infinity;
+  let nearest: HyphaNode | null = null;
+  let nearestDist = Infinity;
+  for (const node of net.nodes) {
+    if (!node.alive || !node.connected) continue;
+    const d = Math.hypot(node.gx - gx, node.gy - gy);
+    if (d > 2) continue;
+    if (d < nearestDist) {
+      nearestDist = d;
+      nearest = node;
+    }
+    // Prefer a strand in this patch that can actually pay for the day's growth.
+    // Any strand will do when none can, so that a starving patch drains visibly
+    // rather than the body simply refusing to notice it.
+    if (node.water >= wantWater && node.nitrogen >= wantNitrogen && d < bestDist) {
+      bestDist = d;
+      best = node;
+    }
+  }
+  return best ?? nearest;
 }
 
-/** Progress a fruiting body, and erupt when it completes. */
+/**
+ * Progress is *what the body has spent*, never a second number that can drift
+ * away from the reserve. A mushroom that has spent its whole commitment is
+ * exactly the mushroom that has finished rising.
+ */
+function setFruitStore(net: Network, store: number): void {
+  net.fruit.store = Math.max(0, Math.min(ECON.fruitThreshold, store));
+  net.fruit.progress = 1 - net.fruit.store / ECON.fruitThreshold;
+}
+
+/**
+ * Progress a fruiting body, erupt when it completes, and let one die back when
+ * the strand beneath it loses its supply.
+ *
+ * The energy for the body was committed in `startFruiting` and is spent here as
+ * the mushroom grows, so what the player sees in the record is what the body is
+ * actually living on. Weather can pause an eruption without wasting it, but a
+ * severed or starving network loses the bloom outright.
+ */
 function progressFruiting(net: Network, ctx: StepContext): void {
   const fruit = net.fruit;
-  if (!fruit.active) {
-    bankSurplus(net);
+  if (!fruit.active) return;
+
+  // The body drinks from whichever strand of the network is in the patch it
+  // rose from. Reading the patch rather than pinning one node id means a strand
+  // being replaced by its successor does not kill a mushroom, while a genuine
+  // cut between the site and the root still does.
+  const wantWater = ECON.fruitWaterDraw * ctx.dt;
+  const wantNitrogen = ECON.fruitNitrogenDraw * ctx.dt;
+  const feeder = feederAt(net, fruit.gx, fruit.gy, wantWater, wantNitrogen);
+  const fed = Boolean(
+    feeder && feeder.water >= wantWater && feeder.nitrogen >= wantNitrogen
+  );
+  if (fed && feeder) {
+    feeder.water -= wantWater;
+    feeder.nitrogen -= wantNitrogen;
+  }
+
+  if (!fed) {
+    // Nothing rises out of a patch that has been cut off. The body withdraws
+    // the investment it has made so far, at a walking pace: a brief interruption
+    // costs time, a real cut loses the bloom and whatever it had spent.
+    const returned = ECON.fruitThreshold * ctx.dt * ECON.fruitRecessionPerSecond;
+    setFruitStore(net, Math.min(ECON.fruitThreshold, fruit.store + returned));
+    if (fruit.progress <= 0) {
+      net.fruit.active = false;
+      fruit.store = 0;
+      fruit.progress = 0;
+      ctx.log(`The fruiting body failed: ${feeder ? 'its strand ran dry' : 'the strand beneath it was cut off'}.`);
+    }
     return;
   }
 
-  // Drought and frost halt an eruption. The sky has a veto.
+  // Drought and frost halt an eruption. The sky has a veto, but it only ever
+  // costs time: the committed store waits with the body.
   const kindSky = ctx.warmth > 0.3 && ctx.world.rainfall > 0.45;
-  if (kindSky) {
-    fruit.progress = Math.min(1, fruit.progress + ctx.dt / ECON.fruitSeconds);
-  }
-  if (fruit.progress >= 1) {
+  if (!kindSky) return;
+
+  const step = ctx.dt / ECON.fruitSeconds;
+  const spend = Math.min(fruit.store, ECON.fruitThreshold * step);
+  setFruitStore(net, fruit.store - spend);
+
+  if (fruit.store <= 0) {
     fruit.active = false;
     fruit.progress = 0;
+    fruit.store = 0;
     net.fruited++;
+    net.blooms.push({ gx: fruit.gx, gy: fruit.gy, at: ctx.time });
     net.spores += ECON.sporesPerFruit;
     net.genetic += 4;
-    // Fruiting is expensive: it spends the surplus that paid for it.
-    net.surplus = 0;
-    const root = net.nodes[net.rootId];
-    if (root) root.carbon *= 0.35;
+    ctx.log('Spores are away. The lineage travels.');
   }
 }
 
@@ -857,10 +1088,16 @@ function updateTotals(net: Network): void {
 // ---------------------------------------------------------------------------
 
 /** Send the growth frontier toward a point. Ordered tips break off first. */
-export function orderWaypoint(net: Network, gx: number, gy: number): void {
+export function orderWaypoint(net: Network, gx: number, gy: number, world?: World): void {
   if (!inBounds(gx, gy)) return;
+  net.resting = false;
+  net.waypoints.length = 0;
   net.waypoints.push({ gx, gy });
   if (net.waypoints.length > 6) net.waypoints.shift();
+  if (world) {
+    // Retarget now, not after each strand has finished its previous journey.
+    for (const node of net.nodes) if (node.alive && node.isTip) chooseTarget(net, world, node, net.rng);
+  }
 }
 
 /**
@@ -905,34 +1142,49 @@ export function tryBond(
 export function makeCord(net: Network, nodeId: number): boolean {
   const node = net.nodes[nodeId];
   if (!node || !node.alive) return false;
-  if (node.thickness >= 0.9) return false;
+  if (node.reinforced) return false;
   if (node.carbon < ECON.cordCharge) return false;
   node.carbon -= ECON.cordCharge;
-  node.thickness = Math.min(1, node.thickness + 0.35);
+  node.thickness = 0.9;
+  node.reinforced = true;
   node.pulse = 1;
   return true;
 }
 
-/** Begin a fruiting body at the given cell, if the network can pay for it. */
-export function startFruiting(net: Network, world: World, gx: number, gy: number): boolean {
-  if (net.fruit.active) return false;
-  if (net.surplus < ECON.fruitThreshold * 0.98) return false;
-  if (!isPassable(world, gx, gy)) return false;
+/**
+ * Begin a fruiting body at the given cell.
+ *
+ * The whole reserve is committed here and now, and the body spends it as it
+ * grows. Paying up front is what makes the record honest: there is no second,
+ * invisible reserve collected while a mushroom is rising, and nothing is
+ * quietly erased when it finishes.
+ *
+ * @returns the strand the body rose from, or null if the order was refused.
+ */
+export function startFruiting(net: Network, world: World, gx: number, gy: number): HyphaNode | null {
+  if (gy < 0 || gy > 12) return null;
+  if (net.fruit.active) return null;
+  if (net.surplus < ECON.fruitThreshold) return null;
+  if (!isPassable(world, gx, gy)) return null;
   // Fruiting bodies erupt above ground, so they need a strand near the surface.
-  let near = false;
+  let near: HyphaNode | null = null;
+  let bestDist = Infinity;
   for (const node of net.nodes) {
     if (!node.alive || !node.connected) continue;
-    if (Math.abs(node.gx - gx) <= 2 && Math.abs(node.gy - gy) <= 2) {
-      near = true;
-      break;
+    const d = Math.hypot(node.gx - gx, node.gy - gy);
+    if (d <= 2 && d < bestDist) {
+      bestDist = d;
+      near = node;
     }
   }
-  if (!near) return false;
+  if (!near) return null;
   net.fruit.active = true;
-  net.fruit.progress = 0;
+  setFruitStore(net, ECON.fruitThreshold);
+  net.surplus = Math.max(0, net.surplus - ECON.fruitThreshold);
+  net.fruit.nodeId = near.id;
   net.fruit.gx = gx;
   net.fruit.gy = gy;
-  return true;
+  return near;
 }
 
 /** The single node nearest a grid point, for click-to-select interactions. */

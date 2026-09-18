@@ -46,9 +46,24 @@
       sheet world).
     -->
 
-    <canvas id="gl" aria-hidden="true"></canvas>
+    <canvas id="gl" tabindex="0" aria-label="Living forest. Drag to pan, scroll to zoom. Use the root buttons to grow and bond."></canvas>
 
     <main id="sheet">
+      <div id="root-markers" aria-label="Tree roots"></div>
+      <section class="field-journal" aria-label="Field guide">
+        <p class="journal-kicker">Mycelia · a living forest</p>
+        <h2 id="chapter-title">A quiet beginning.</h2>
+        <p id="chapter-copy">Beneath the forest, a single spore awakens. Follow a root, share what you find, and let a small life become a forest.</p>
+        <button type="button" id="begin" class="journal-action">Awaken the spore <span aria-hidden="true">↗</span></button>
+        <div id="journey" hidden>
+          <ol class="journey-steps" aria-label="Life cycle">
+            <li data-step="0">Reach</li><li data-step="1">Bond</li><li data-step="2">Gather</li><li data-step="3">Fruit</li>
+          </ol>
+          <button type="button" id="focus-root" class="journal-action">Find the nearest root <span aria-hidden="true">↗</span></button>
+          <button type="button" id="rest" class="journal-action" aria-pressed="false">Rest & gather <span aria-hidden="true">R</span></button>
+          <p id="gather-note" class="journal-footnote">Rest pauses new growth and banks part of what a well-supplied tree pays. A fruiting body spends that reserve as it grows, and recedes if its strand is cut off.</p>
+        </div>
+      </section>
       <!-- Depth rail: a real soil-survey scale, generated from the map itself. -->
       <section class="rail" aria-label="Depth scale">
         <div class="rail-scale" id="rail-scale"></div>
@@ -77,6 +92,10 @@
           <button type="button" data-speed="1" class="is-on">1×</button>
           <button type="button" data-speed="2">2×</button>
           <button type="button" data-speed="4">4×</button>
+        </div>
+        <div class="quiet-controls">
+          <button type="button" id="sound" aria-pressed="false">Sound off</button>
+          <button type="button" id="immersive" aria-pressed="false">Hide notes · H</button>
         </div>
       </section>
 
@@ -113,7 +132,7 @@
             </button>
           </li>
         </ul>
-        <p class="orders-note" id="order-note">Drag to pan · scroll to zoom · shift-drag to tilt</p>
+        <p class="orders-note" id="order-note" role="status">Awaken the spore when you are ready.</p>
       </section>
 
       <!-- The catalogue record. Every number in the game lives here. -->
@@ -140,6 +159,8 @@
         <h2 id="outcome-title"></h2>
         <p id="outcome-body"></p>
       </div>
+      <p class="camera-hint">Drag to wander <span>·</span> Scroll to look closer <span>·</span> F to return <span>·</span> Space to pause</p>
+      <button type="button" id="restore-notes" hidden>Show field notes · H</button>
 
       <noscript>
         <p class="noscript">

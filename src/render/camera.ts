@@ -108,6 +108,12 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
   }
 
+  focus(x: number, y: number, distance: number): void {
+    this.goal.target.set(x + 8, y, 0);
+    this.goal.distance = distance;
+    this.goal.elevation = 0.08;
+  }
+
   private clampTarget(): void {
     this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, -120, 120);
     this.goal.target.y = THREE.MathUtils.clamp(this.goal.target.y, -70, 90);

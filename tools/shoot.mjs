@@ -30,6 +30,11 @@ function arg(name, fallback) {
 const url = arg('url', 'http://127.0.0.1:5174');
 const outs = argAll('out');
 const waitMs = Number(arg('at', 9000));
+// A warmed match runs its fixed steps before the first frame, and software
+// WebGL makes that slow: `?warm=300` needs about three minutes on SwiftShader.
+// The default has to cover that, or the harness reports a timeout on a page
+// that loaded perfectly well.
+const bootTimeout = Number(arg('timeout', 300000));
 const [width, height] = arg('size', '1600x1000').split('x').map(Number);
 const clicks = argAll('click');
 const keys = argAll('key');
@@ -89,7 +94,7 @@ page.on('pageerror', (error) => problems.push(`pageerror: ${error.message}`));
 // so wait for the game to exist rather than for the load event.
 await page.goto(url, { waitUntil: 'commit', timeout: 120000 });
 await page
-  .waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 })
+  .waitForFunction(() => Boolean(window.mycelia), null, { timeout: bootTimeout })
   .catch(() => problems.push('timed out waiting for window.mycelia'));
 
 // Let the simulation run so the network has grown before we photograph it.
@@ -104,6 +109,9 @@ for (const spot of clicks) {
   await page.waitForTimeout(600);
 }
 
+if (process.argv.includes('--freeze')) {
+  await page.evaluate(() => window.mycelia?.game?.stop());
+}
 for (const out of outs) {
   mkdirSync(dirname(out), { recursive: true });
   // Software WebGL starves the compositor, so a full-page screenshot can time

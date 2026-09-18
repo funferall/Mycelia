@@ -11,7 +11,7 @@
   --sheet: #141110;
   --sheet-deep: #0b0908;
   --ink: #cbbfa4;
-  --ink-dim: rgb(203 191 164 / 62%);
+  --ink-dim: #aa9f89;
   --ink-faint: rgb(203 191 164 / 38%);
   --rule: rgb(203 191 164 / 22%);
   --rule-strong: rgb(203 191 164 / 40%);
@@ -74,7 +74,7 @@ body {
   background-image: radial-gradient(rgb(232 220 192 / 5%) 1px, transparent 0);
   background-size: 3px 3px;
   mix-blend-mode: screen;
-  opacity: 0.5;
+  opacity: 0.12;
   pointer-events: none;
 }
 
@@ -677,4 +677,91 @@ body {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* Field notes stay at the edge; the living specimen owns the light. */
+[hidden] { display: none !important; }
+button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); outline-offset: 5px; }
+.field-journal { position: absolute; top: 158px; right: 38px; width: 292px; }
+.journal-kicker { margin: 0 0 14px; color: var(--ink-dim); font: 11px var(--mono); letter-spacing: 0.08em; }
+.field-journal h2 { margin: 0 0 12px; color: var(--paper); font-size: 24px; line-height: 1.2; font-weight: 400; }
+#chapter-copy { margin: 0 0 20px; max-width: 34ch; font-size: 16px; line-height: 1.55; color: var(--ink-dim); }
+.journal-action { display: flex; justify-content: space-between; width: 100%; align-items: center; border: 0; border-top: 1px solid var(--rule); background: none; color: var(--ink); padding: 12px 0; font: 16px var(--serif); text-align: left; cursor: pointer; }
+.journal-action:hover, .journal-action[aria-pressed='true'] { color: var(--amber); }
+.journal-action span { font: 11px var(--mono); }
+.journal-footnote { color: var(--ink-dim); font-size: 13px; line-height: 1.4; margin: 6px 0 0; }
+.journey-steps { display: flex; list-style: none; padding: 0; margin: 24px 0 18px; gap: 0; counter-reset: journey; }
+.journey-steps li { flex: 1; border-top: 1px solid var(--rule); padding-top: 8px; color: var(--ink-dim); font-size: 12px; }
+.journey-steps li.current { color: var(--amber); border-color: var(--amber); }
+.journey-steps li.complete { border-color: var(--ink); }
+.quiet-controls { display: flex; gap: 18px; justify-content: flex-end; margin-top: 14px; }
+.quiet-controls button, #restore-notes { border: 0; background: none; padding: 5px 0; font: 11px var(--serif); color: var(--ink-dim); cursor: pointer; }
+.quiet-controls button:hover { color: var(--paper); }
+.speed-row button { min-height: 32px; }
+.catalogue { right: 32px; bottom: 56px; width: 304px; padding: 0; }
+.specimen-line { font-size: 16px; }
+.record dt { font-size: 10px; padding-top: 6px; padding-bottom: 6px; }
+.record dd { font-size: 12px; }
+.record dt:nth-of-type(1), .record dd:nth-of-type(1),
+.record dt:nth-of-type(3), .record dd:nth-of-type(3),
+.record dt:nth-of-type(7), .record dd:nth-of-type(7),
+.record dt:nth-of-type(11), .record dd:nth-of-type(11),
+.record dt:nth-of-type(13), .record dd:nth-of-type(13) { display: none; }
+.notes p { font-size: 13px; line-height: 1.4; }
+.packet { right: 370px; bottom: 52px; width: 80px; height: 110px; opacity: 0.7; }
+.orders { width: 210px; bottom: 58px; }
+.order { min-height: 38px; }
+.order-hint { display: none; }
+.order-name { font-size: 17px; }
+.orders-note { font: 13px/1.45 var(--serif); letter-spacing: 0; color: var(--ink-dim); min-height: 3em; }
+.camera-hint { position: absolute; left: 30px; bottom: 14px; margin: 0; color: var(--ink-dim); font: 11px var(--serif); }
+.camera-hint span { padding: 0 10px; opacity: 0.5; }
+.root-marker { position: absolute; transform: translate(10px, -50%); white-space: nowrap; padding: 7px 8px; border: 0; border-bottom: 1px solid rgb(203 191 164 / 35%); background: rgb(14 12 9 / 88%); color: var(--paper); font: 13px var(--serif); cursor: pointer; min-height: 32px; }
+.root-marker::before { content: ''; position: absolute; left: -12px; top: 50%; width: 5px; height: 5px; border: 1px solid currentColor; transform: translateY(-50%) rotate(45deg); }
+.root-marker.is-bondable, .root-marker.is-site { color: var(--amber); border-color: rgb(255 179 71 / 45%); }
+.root-marker.is-bonded { color: var(--ink-dim); border-color: rgb(203 191 164 / 22%); }
+.root-marker.is-distant { color: var(--ink); }
+.root-marker.is-poor { color: var(--ink-dim); }
+.root-marker.is-site::before { transform: translateY(-50%) rotate(0deg); border-radius: 50%; }
+.root-marker:hover { color: var(--amber); background: var(--sheet); }
+.root-marker:disabled { cursor: default; opacity: 0.75; }
+.immersed .stamp, .immersed .field-journal, .immersed .season, .immersed .catalogue, .immersed .packet, .immersed .orders, .immersed .rail, .immersed .camera-hint, .immersed #root-markers { visibility: hidden; }
+#restore-notes { position: absolute; right: 32px; bottom: 24px; font-size: 14px; color: var(--paper); }
+.outcome { background: #141110f5; z-index: 4; }
+@media (min-width: 1400px) {
+  .field-journal { right: 50px; width: 302px; }
+  .catalogue { right: 50px; width: 302px; }
+}
+@media (max-height: 850px) and (min-width: 901px) {
+  .field-journal { top: 135px; }
+  #chapter-copy { font-size: 14px; margin-bottom: 12px; }
+  .field-journal h2 { font-size: 21px; margin-bottom: 8px; }
+  .journal-kicker { margin-bottom: 8px; }
+  .journey-steps { margin: 12px 0 8px; }
+  .journal-action { padding: 8px 0; font-size: 14px; }
+  .journal-footnote { display: none; }
+  .record dt, .record dd { padding-top: 3px; padding-bottom: 3px; }
+  .notes { margin-top: 10px; }
+  .catalogue { bottom: 38px; }
+  .packet { display: none; }
+}
+@media (max-width: 900px) {
+  .stamp { left: 18px; top: 20px; width: 145px; }
+  .barcode, .barcode-caption, .stamp-accession, .rail, .packet { display: none; }
+  .season { right: 18px; top: 20px; }
+  .field-journal { left: 18px; right: 18px; top: auto; bottom: 168px; width: auto; background: linear-gradient(90deg, #141110f5, #141110c9); padding: 16px; }
+  .field-journal h2 { font-size: 20px; }
+  .journal-kicker, .journal-footnote, .journey-steps, #focus-root { display: none; }
+  #chapter-copy { max-width: none; font-size: 14px; line-height: 1.4; margin-bottom: 8px; }
+  .journal-action { padding: 8px 0; font-size: 15px; }
+  .catalogue { display: none; }
+  .orders { left: 18px; right: 18px; width: auto; bottom: 40px; background: #141110eb; }
+  #order-list { display: flex; gap: 12px; }
+  #order-list li { flex: 1; }
+  .order { grid-template-columns: 12px 1fr; gap: 4px; }
+  .order-name { font-size: 15px; }
+  .orders-note { margin-top: 8px; min-height: 2.8em; font-size: 12px; }
+  .orders-title { display: none; }
+  .camera-hint { left: 18px; bottom: 15px; font-size: 10px; }
+  .camera-hint span { padding: 0 4px; }
 }

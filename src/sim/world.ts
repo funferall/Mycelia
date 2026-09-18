@@ -1,4 +1,5 @@
 import {
+  ECON,
   GRID,
   HORIZON_PROFILE,
   MAX_DEPTH_CM,
@@ -16,6 +17,12 @@ export interface SoilCell {
   organic: number;
   /** Nitrogen and phosphorus available for uptake, 0..1. */
   nitrogen: number;
+  /**
+   * What this horizon can rebuild its nitrogen up to. A function of the parent
+   * material and the organic matter standing in it, so stripped soil recovers
+   * only where the forest is still dropping litter on it.
+   */
+  nitrogenBase: number;
   /** Soil moisture, 0..1, recomputed each tick from depth and rainfall. */
   water: number;
   /** Stone and aggregate fraction, 0..1. Visual grit and growth friction. */
@@ -64,6 +71,8 @@ export interface World {
   waterTableCm: number;
   /** Rainfall multiplier for the current tick, set by the season. */
   rainfall: number;
+  /** Leaf fall for the current tick, 0..1, set by the season. */
+  litterfall: number;
   trees: Tree[];
   /** Carbon-equivalent in living tree biomass — the forest's own scoreboard. */
   forestBiomass: number;
@@ -123,6 +132,7 @@ export function createWorld(seed: number): World {
         stratum,
         organic: Math.max(0, base.organic * (0.55 + organicNoise * 0.9)),
         nitrogen: Math.max(0, base.nitrogen * (0.6 + organicNoise * 0.8)),
+        nitrogenBase: Math.max(0, base.nitrogen * (0.6 + organicNoise * 0.8)),
         water: 0,
         hardness: Math.max(0, Math.min(1, base.hardness * (0.7 + veinNoise * 0.6))),
         occupancy: 0,
@@ -137,6 +147,7 @@ export function createWorld(seed: number): World {
     cells,
     waterTableCm: MAX_DEPTH_CM * 0.66,
     rainfall: 1,
+    litterfall: 0.25,
     trees: [],
     forestBiomass: 0,
   };
@@ -230,6 +241,33 @@ export function updateMoisture(world: World, dtSeconds: number): void {
       // gradual drying rather than a step change.
       const rate = dtSeconds <= 0 ? 1 : Math.min(1, dtSeconds * 0.35);
       cell.water += (target - cell.water) * rate;
+    }
+  }
+}
+
+/**
+ * The soil's own slow metabolism.
+ *
+ * Two things happen on this beat. Organic matter is rebuilt, heavily in
+ * autumn litterfall and barely in winter, and nitrogen is mineralised back into
+ * the horizon up to a ceiling its organic content supports. Without this, a
+ * network sitting still strips its own address of every mineral within a few
+ * minutes and then starves next to soil that still looks rich.
+ *
+ * @param litterfall the current season's leaf fall, 0..1
+ */
+export function updateSoil(world: World, dtSeconds: number, litterfall: number): void {
+  const organicRate = Math.min(1, dtSeconds * ECON.organicRegrowth * (0.3 + litterfall * 1.7));
+  const mineralRate = Math.min(1, dtSeconds * ECON.soilMineralisation);
+  for (const cell of world.cells) {
+    if (cell.stratum === 'bedrock') continue;
+    const base = STRATA[cell.stratum];
+    if (cell.organic < base.organic) {
+      cell.organic += (base.organic - cell.organic) * organicRate;
+    }
+    const ceiling = cell.nitrogenBase * (0.35 + cell.organic * 0.85);
+    if (cell.nitrogen < ceiling) {
+      cell.nitrogen += (ceiling - cell.nitrogen) * mineralRate;
     }
   }
 }

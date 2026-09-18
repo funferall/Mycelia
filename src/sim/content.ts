@@ -203,15 +203,21 @@ export interface Season {
   rain: number;
   /** 0 = frozen, 1 = high summer. Gates fruiting and slows growth. */
   warmth: number;
+  /**
+   * Leaf fall, 0..1. The forest's own gift back to the soil: organic matter is
+   * rebuilt each autumn, so the litter layer recovers the nitrogen a network
+   * has been mining out of it.
+   */
+  litterfall: number;
   /** Real seconds this season lasts. */
   seconds: number;
 }
 
 export const SEASONS: readonly Season[] = [
-  { id: 'spring', label: 'Spring flush', light: 1.15, rain: 1.35, warmth: 0.55, seconds: 150 },
-  { id: 'summer', label: 'Summer drought', light: 1.3, rain: 0.35, warmth: 1.0, seconds: 170 },
-  { id: 'autumn', label: 'Autumn litterfall', light: 0.85, rain: 1.1, warmth: 0.5, seconds: 150 },
-  { id: 'winter', label: 'Winter dormancy', light: 0.3, rain: 0.9, warmth: 0.08, seconds: 160 },
+  { id: 'spring', label: 'Spring flush', light: 1.15, rain: 1.35, warmth: 0.55, litterfall: 0.25, seconds: 150 },
+  { id: 'summer', label: 'Summer drought', light: 1.3, rain: 0.35, warmth: 1.0, litterfall: 0.1, seconds: 170 },
+  { id: 'autumn', label: 'Autumn litterfall', light: 0.85, rain: 1.1, warmth: 0.5, litterfall: 1, seconds: 150 },
+  { id: 'winter', label: 'Winter dormancy', light: 0.3, rain: 0.9, warmth: 0.08, litterfall: 0.15, seconds: 160 },
 ];
 
 /** Economy constants. Everything the player does is priced here. */
@@ -220,6 +226,17 @@ export const ECON = {
   growthPerCm: 0.42,
   /** How much of that cost is charged on entering a new cell. */
   entryCharge: 0.9,
+  /**
+   * What a new branch takes from the strand that spawned it, in carbon. Nothing
+   * is created at birth: a fork is paid for out of the parent's own body, and a
+   * parent that cannot afford one produces a leaner, slower branch.
+   */
+  birthReserve: 1.2,
+  /**
+   * A parent never gives its last carbon to a child. Below this floor it is the
+   * parent that would starve, and a strand with no carbon rots.
+   */
+  parentReserveFloor: 0.35,
   /**
    * Carbon per second spent maintaining each living node. Deliberately steep:
    * a sprawling network is expensive to keep alive, so going wide has a price.
@@ -241,10 +258,42 @@ export const ECON = {
   cordCharge: 1.2,
   /** Water drawn from the local soil by each node, per second. */
   waterDrawPerNode: 0.05,
+  /**
+   * How much of the mineral a node takes out of the cell it stands in. The soil
+   * is the source, so a network crowded into one pocket empties it and has to
+   * grow outward, or wait for the horizon to rebuild, to keep eating.
+   */
+  nitrogenSoilCost: 1,
   /** Nitrogen consumed per centimetre of growth. */
   nitrogenPerCm: 0.05,
   /** Water consumed per centimetre of growth. Hyphae are mostly water. */
   waterPerCm: 0.07,
+  /**
+   * Mineralisation: how fast a horizon rebuilds the nitrogen standing in it,
+   * toward a ceiling set by its organic content. Fast enough that a working
+   * pocket keeps feeding the strands in it, which is what makes a partner's
+   * supply depend on how much living soil the network actually stands on.
+   */
+  soilMineralisation: 0.5,
+  /**
+   * How fast leaf litter and root debris rebuild a horizon's organic matter.
+   * Autumn litterfall runs this at full speed; winter nearly stops it.
+   */
+  organicRegrowth: 0.004,
+  /**
+   * A fruiting body commits its whole reserve when it starts, then spends that
+   * store as it grows. Progress pauses if the strand beneath it is cut off, and
+   * a body that loses its supply recedes rather than hanging in the air.
+   */
+  fruitRecessionPerSecond: 0.06,
+  /**
+   * What a fruiting body drinks through the strand beneath it, per second. A
+   * strand joined to a working network is refilled every tick, so a supplied
+   * mushroom is never short; a cut or starved one runs dry within seconds and
+   * the eruption stalls.
+   */
+  fruitWaterDraw: 0.06,
+  fruitNitrogenDraw: 0.015,
   /** Carbon cost to thicken a strand into a cord. */
   cordCost: 14,
   /** Multiplier on transport throughput once a strand is a cord. */

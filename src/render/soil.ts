@@ -101,6 +101,35 @@ export class SoilMesh {
     this.mesh.frustumCulled = false;
     this.group.add(this.mesh);
 
+    // Continuous earth behind the aggregate: grit is embedded in sediment,
+    // not suspended over a black void. Its strata come from the generated map.
+    const earth = document.createElement('canvas');
+    earth.width = 544;
+    earth.height = 448;
+    const context = earth.getContext('2d')!;
+    const pixels = context.createImageData(earth.width, earth.height);
+    const earthRng = mulberry32(world.seed ^ 0x80fe);
+    const tones: Record<StratumId, number[]> = {
+      litter: [58, 43, 25], humus: [48, 34, 23], loam: [43, 32, 24],
+      clay: [51, 39, 31], sand: [57, 48, 35], stone: [43, 41, 36], bedrock: [31, 30, 27],
+    };
+    for (let y = 0; y < earth.height; y++) for (let x = 0; x < earth.width; x++) {
+      const cell = world.cells[idx(Math.floor(x / 4), Math.floor(y / 4))];
+      const base = tones[cell.stratum];
+      const grain = 0.58 + earthRng() * 0.48;
+      const lamina = 0.8 + Math.sin(y * 0.42 + Math.sin(x * 0.027) * 3 + Math.sin(x * 0.08)) * 0.12;
+      const shade = grain * lamina * (1 - y / earth.height * 0.22);
+      const index = (y * earth.width + x) * 4;
+      for (let c = 0; c < 3; c++) pixels.data[index + c] = base[c] * shade;
+      pixels.data[index + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    const texture = new THREE.CanvasTexture(earth);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sediment = new THREE.Mesh(new THREE.PlaneGeometry(GRID.cols, GRID.rows), new THREE.MeshBasicMaterial({ map: texture }));
+    sediment.position.z = -1.95;
+    this.group.add(sediment);
+
     const dummy = new THREE.Object3D();
     let p = 0;
     for (let gy = 0; gy < GRID.rows; gy++) {
