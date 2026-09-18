@@ -6,13 +6,39 @@ import { mulberry32 } from '../sim/rng';
 import { makeGlowTexture } from './textures';
 
 const FLOOR = GRID.rows / 2;
-export const FOREST_DEPTH = 76;
+/** One stand is a square of ground this wide, in world units. */
+export const TILE_SIZE = GRID.cols;
+export const FOREST_DEPTH = TILE_SIZE;
 const PALETTE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
 
-/** Presentation coordinates only. Root IDs and the soil simulation never move. */
-export function treeSurfacePosition(tree: Tree): THREE.Vector3 {
+/**
+ * Where a stand sits in the region, and how high the ground is there.
+ *
+ * `heightAt` takes region coordinates, so every tile's floor is a window onto
+ * one continuous surface: two neighbours sample the same line at their shared
+ * edge and cannot disagree about it.
+ */
+export interface ForestTile {
+  /** Stand id, so a crown can be traced back to the ground it stands in. */
+  id: number;
+  originX: number;
+  originY: number;
+  heightAt(x: number, y: number): number;
+}
+
+/**
+ * Presentation coordinates only. Root IDs and the soil simulation never move.
+ *
+ * The tree's own column is its position *within the stand*; depth into the tile
+ * comes from its seed, so a tree keeps its place as the canopy grows and the
+ * region is never a grid of trees in a row.
+ */
+export function treeSurfacePosition(tree: Tree, tile?: ForestTile): THREE.Vector3 {
   const rng = mulberry32(tree.seed ^ 0x9af2);
-  return new THREE.Vector3(tree.gx - GRID.cols / 2 + 0.5, FLOOR, -12 - rng() * 51);
+  const localX = tree.gx - GRID.cols / 2 + 0.5;
+  const localZ = 10 + rng() * (TILE_SIZE - 26);
+  const ground = tile ? tile.heightAt(tile.originX + tree.gx, tile.originY + localZ) : 0;
+  return new THREE.Vector3(localX, FLOOR + ground, -localZ);
 }
 
 interface StandingTree {
@@ -42,16 +68,16 @@ export class SurfaceForest {
   private weather = 0;
   selectedId: number | null = null;
 
-  constructor(private readonly world: World) {
+  constructor(private readonly world: World, private readonly tile?: ForestTile) {
     const rng = mulberry32(world.seed ^ 0x6f123);
-    const floorGeometry = new THREE.PlaneGeometry(GRID.cols, FOREST_DEPTH, 68, 38);
+    const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE, 68, 68);
     floorGeometry.rotateX(-Math.PI / 2);
-    floorGeometry.translate(0, FLOOR, -FOREST_DEPTH / 2);
+    floorGeometry.translate(0, FLOOR, -TILE_SIZE / 2);
     const p = floorGeometry.attributes.position;
     const colors: number[] = [];
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), z = p.getZ(i);
-      p.setY(i, FLOOR + relief(x, z));
+      p.setY(i, FLOOR + this.groundHeight(x, z));
       const shade = 0.75 + rng() * 0.25;
       const c = new THREE.Color().lerpColors(new THREE.Color('#353b21'), new THREE.Color('#646042'), (Math.sin(x * 0.14 + z * 0.17) + 1) / 2).multiplyScalar(shade);
       colors.push(c.r, c.g, c.b);
@@ -61,6 +87,7 @@ export class SurfaceForest {
     this.floorMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide });
     const floor = new THREE.Mesh(floorGeometry, this.floorMaterial);
     floor.userData.ground = true;
+    floor.userData.standId = this.tile?.id ?? 0;
     this.pickTargets.push(floor);
     this.ground.add(floor);
     this.group.add(this.ground);
@@ -73,8 +100,8 @@ export class SurfaceForest {
     const litter = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 5, 2), new THREE.MeshStandardMaterial({ color: '#80704c', roughness: 1 }), 1600);
     for (const mesh of [grass, litter]) {
       for (let i = 0; i < mesh.count; i++) {
-        const x = (rng() - 0.5) * (GRID.cols - 2), z = -rng() * FOREST_DEPTH;
-        this.dummy.position.set(x, FLOOR + relief(x, z) + 0.1, z);
+        const x = (rng() - 0.5) * (GRID.cols - 2), z = -rng() * TILE_SIZE;
+        this.dummy.position.set(x, FLOOR + this.groundHeight(x, z) + 0.1, z);
         this.dummy.rotation.set(0, rng() * Math.PI * 2, 0);
         const s = 0.25 + rng() * 0.65;
         this.dummy.scale.set(s, mesh === litter ? 0.07 : s, mesh === litter ? s * 0.4 : s);
@@ -103,7 +130,7 @@ export class SurfaceForest {
 
   private addTree(tree: Tree): void {
     const rng = mulberry32(tree.seed);
-    const home = treeSurfacePosition(tree);
+    const home = treeSurfacePosition(tree, this.tile);
     const group = new THREE.Group();
     const h = tree.height * (0.7 + tree.maturity * 0.5);
     const evergreen = tree.species === 'hemlock';
@@ -171,6 +198,7 @@ export class SurfaceForest {
     pick.position.y = h * 0.72;
     pick.scale.set(h * 0.4, h * 0.45, h * 0.4);
     pick.userData.treeId = tree.id;
+    pick.userData.standId = this.tile?.id ?? 0;
     group.add(pick);
     this.pickTargets.push(pick);
     this.group.add(group);
@@ -178,13 +206,34 @@ export class SurfaceForest {
 
     const shadow = new THREE.Mesh(new THREE.PlaneGeometry(h * 1.5, h * 1.5), new THREE.MeshBasicMaterial({ map: this.shadowTexture, color: '#121a0d', transparent: true, opacity: 0.7, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
-    shadow.position.set(home.x + 2, FLOOR + relief(home.x, home.z) + 0.15, home.z);
+    shadow.position.set(home.x + 2, FLOOR + this.groundHeight(home.x, home.z) + 0.15, home.z);
     this.ground.add(shadow);
+  }
+
+  /**
+   * Ground height at a point in this stand, in world units above the soil line.
+   * Without a tile the stand is its own little world and the ground is the
+   * prototype's own relief; with one it is a window onto the region.
+   */
+  private groundHeight(localX: number, localZ: number): number {
+    if (!this.tile) return relief(localX, localZ);
+    return this.tile.heightAt(this.tile.originX + localX + GRID.cols / 2, this.tile.originY - localZ);
   }
 
   crownPosition(treeId: number): THREE.Vector3 | null {
     const v = this.trees.find(entry => entry.tree.id === treeId);
     return v ? v.group.localToWorld(new THREE.Vector3(0, v.tree.height * 0.9, 0)) : null;
+  }
+
+  /** Which stand this surface is. */
+  get standId(): number {
+    return this.tile?.id ?? 0;
+  }
+
+  /** Where one of this stand's crowns stands, in this surface's own frame. */
+  surfacePosition(treeId: number): THREE.Vector3 | null {
+    const entry = this.trees.find((tree) => tree.tree.id === treeId);
+    return entry ? treeSurfacePosition(entry.tree, this.tile) : null;
   }
 
   nearestTree(x: number, z: number): Tree | null {
@@ -211,7 +260,7 @@ export class SurfaceForest {
     for (const v of this.trees) {
       const health = v.tree.dead ? 0 : v.tree.health;
       const growth = (0.7 + v.tree.maturity * 0.5) / (0.7 + v.initialMaturity * 0.5);
-      v.group.position.set(v.home.x, FLOOR + relief(v.home.x, v.home.z) * blend, v.home.z * blend);
+      v.group.position.set(v.home.x, FLOOR + (v.home.y - FLOOR) * blend, v.home.z * blend);
       v.group.scale.set(growth, growth, growth * (0.22 + 0.78 * blend));
       const gust = Math.sin(t * 0.48 + v.home.x * 0.055) * 0.008 + Math.sin(t * 1.1 + v.home.z) * 0.002;
       v.group.rotation.z = reduced ? 0 : gust;

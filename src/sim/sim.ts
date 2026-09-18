@@ -49,11 +49,18 @@ export type MatchOutcome = 'playing' | 'fruited' | 'extinct';
  */
 export class Simulation {
   readonly world: World;
-  readonly player: Network;
+  /** The colony in this stand. Replaced only when a spore founds one. */
+  player: Network;
   readonly rival: Network;
   readonly seed: number;
   readonly events: SimEvent[] = [];
   readonly runStartedAt = Date.now();
+  /**
+   * Whether a colony is actually growing here. Ground with no colony has a
+   * world and can be looked at, but has no network, pays no upkeep and is not
+   * stepped: the stand's history begins when a spore lands.
+   */
+  hasColony = true;
 
   /** Seconds of simulated time elapsed. */
   time = 0;
@@ -79,6 +86,7 @@ export class Simulation {
     const seed = site ? site.seed >>> 0 : hashString(seedText);
     this.seed = seed;
     this.rng = mulberry32(seed ^ 0x1d872b41);
+    this.site = site ?? null;
     this.world = site
       ? createStandWorld(seed, { waterTableCm: site.waterTableCm, mix: communityThresholds(site.community) })
       : createWorld(seed);
@@ -112,6 +120,42 @@ export class Simulation {
         : `Match opened on seed "${seedText}".`
     );
     this.log(`${this.world.trees.length} trees standing in the stand.`);
+  }
+
+  /** The stand this simulation is, when it is one of a region's stands. */
+  readonly site: StandSite | null = null;
+
+  /**
+   * Start a colony in this stand from a spore.
+   *
+   * The world is left exactly as it is — the soil, the trees and the rival in
+   * this ground are the ones that were already here — and a network is added to
+   * it, holding what the spore carried and nothing more.
+   */
+  foundColony(kit: FoundingKit): void {
+    const anchor = startingGround(this.world);
+    const colony = createNetwork(
+      'player',
+      PLAYER_PALETTE.label,
+      anchor.gx,
+      anchor.gy,
+      mulberry32(this.seed ^ 0xabc123),
+      kit.carbon,
+      { water: kit.water, nitrogen: kit.nitrogen }
+    );
+    // A spore arrives as reserves, not as a body.
+    colony.carbon = kit.carbon;
+    colony.carbonCeiling = kit.carbon;
+    colony.water = kit.water;
+    colony.nitrogen = kit.nitrogen;
+    for (const node of colony.nodes) {
+      node.carbon = 0;
+      node.water = 0;
+      node.nitrogen = 0;
+    }
+    this.player = colony;
+    this.hasColony = true;
+    this.log(`A spore takes hold here with ${kit.carbon.toFixed(0)} carbon.`);
   }
 
   get season(): Season {

@@ -62,7 +62,7 @@ export class CameraRig {
    */
   private readonly autoByView: Record<WorldView, boolean> = { forest: true, underground: true };
   /** The last mount and stand being framed, so a resize can frame them again. */
-  private mountFraming: { mountW: number; mountH: number; canopyH: number; standDepth: number } | null = null;
+  private mountFraming: { mountW: number; mountH: number; canopyH: number; standDepth: number; standWidth: number } | null = null;
   private reframePending = false;
   readonly camera: THREE.PerspectiveCamera;
   readonly target = new THREE.Vector3(0, 10, 0);
@@ -137,9 +137,9 @@ export class CameraRig {
    * left margin left free for the depth rail and the right for the catalogue
    * block — rather than the soil running off both edges of the screen.
    */
-  frameMount(aspect: number, mountW: number, mountH: number, canopyH: number, standDepth = 76): void {
+  frameMount(aspect: number, mountW: number, mountH: number, canopyH: number, standDepth = 76, standWidth = mountW): void {
     // Remembered so a viewport change can frame the same mount again.
-    this.mountFraming = { mountW, mountH, canopyH, standDepth };
+    this.mountFraming = { mountW, mountH, canopyH, standDepth, standWidth };
     if (this.view === 'forest') { this.frameForest(aspect); return; }
     this.autoByView.underground = true;
     const fov = (this.camera.fov * Math.PI) / 180;
@@ -205,8 +205,8 @@ export class CameraRig {
   private applyFraming(): void {
     if (this.view === 'forest') this.frameForest(this.camera.aspect);
     else if (this.mountFraming) {
-      const { mountW, mountH, canopyH, standDepth } = this.mountFraming;
-      this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth);
+      const { mountW, mountH, canopyH, standDepth, standWidth } = this.mountFraming;
+      this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth, standWidth);
     } else this.focus(this.goal.target.x, 35, 160);
   }
 
@@ -228,6 +228,12 @@ export class CameraRig {
   private overviewDistance = 350;
   /** The distance the whole stand is framed at; see `frameForest`. */
   private forestOverview = 285;
+  /**
+   * Where the forest should be centred, in the frame the stands are laid out
+   * in. One stand centres on itself; a region centres on the region, or the
+   * rows nearest the camera fall out of the picture.
+   */
+  forestCentre: { x: number; z: number } = { x: 0, z: -38 };
 
   /** True for as long as the rig is crossing between the two views. */
   get transitioning(): boolean { return this.crossing; }
@@ -250,8 +256,8 @@ export class CameraRig {
       if (saved && !this.autoByView[view]) { this.goal.target.copy(saved.target); this.goal.distance = saved.distance; this.goal.elevation = saved.elevation; this.goal.azimuth = saved.azimuth; }
       else if (view === 'forest') this.frameForest(this.camera.aspect);
       else if (this.mountFraming) {
-        const { mountW, mountH, canopyH, standDepth } = this.mountFraming;
-        this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth);
+        const { mountW, mountH, canopyH, standDepth, standWidth } = this.mountFraming;
+        this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth, standWidth);
       } else this.focus(this.goal.target.x, 35, 160);
       // Turn-around is a crossing too: reversing mid-rise starts a new
       // crossing from wherever the picture actually is.
@@ -267,7 +273,7 @@ export class CameraRig {
     // The stand is as wide as the mount and a little over half as deep, and a
     // narrow viewport has to fit it across the frame. Fitting only the height
     // crops the ends of the stand on a portrait window.
-    const halfWidth = (stand ? stand.mountW : 136) / 2 + 34;
+    const halfWidth = (stand ? stand.standWidth : 136) / 2 + 34;
     const depth = stand ? stand.standDepth : 76;
     const narrow = Math.max(0.35, aspect);
     this.goal.distance = Math.max(
@@ -276,7 +282,7 @@ export class CameraRig {
       halfWidth / (halfTan * narrow),
       (depth * 0.6) / halfTan
     );
-    this.goal.target.set(aspect > 1.3 ? 20 : 0, 65, -38);
+    this.goal.target.set(this.forestCentre.x + (aspect > 1.3 ? 20 : 0), 65, this.forestCentre.z);
     this.goal.elevation = 1.02;
     this.goal.azimuth = 0.14;
     this.forestOverview = this.goal.distance;

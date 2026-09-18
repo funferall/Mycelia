@@ -263,28 +263,36 @@ function dump(region, seed) {
   const snapshot = (match) =>
     match.stands.map((stand) => ({
       id: stand.site.id,
-      colonized: stand.sim !== null,
-      strands: stand.sim ? stand.sim.player.nodes.filter((node) => node.alive).length : 0,
-      carbon: stand.sim ? Number(stand.sim.player.carbon.toFixed(6)) : 0,
-      waterTable: stand.sim ? Number(stand.sim.world.waterTableCm.toFixed(6)) : 0,
-      fruited: stand.sim ? stand.sim.player.fruited : 0,
+      colonized: stand.sim.hasColony,
+      strands: stand.sim.hasColony ? stand.sim.player.nodes.filter((node) => node.alive).length : 0,
+      carbon: stand.sim.hasColony ? Number(stand.sim.player.carbon.toFixed(6)) : 0,
+      waterTable: Number(stand.sim.world.waterTableCm.toFixed(6)),
+      fruited: stand.sim.hasColony ? stand.sim.player.fruited : 0,
     }));
 
   // A match opens in one stand, and only that stand is simulated.
   const match = new RegionalMatch(seeds[0]);
   assert.equal(match.colonizedStands, 1, 'a match opens with one colony');
   assert.equal(match.activeStandId, match.region.foundingStand, 'the founding stand is the one in view');
-  assert.equal(match.stands.filter((stand) => stand.sim !== null).length, 1, 'no other stand is running yet');
-  assert.equal(match.selectStand(match.stands.findIndex((stand) => stand.sim === null)), false, 'uncolonized ground cannot be entered');
+  assert.equal(match.stands.filter((stand) => stand.sim.hasColony).length, 1, 'no other stand holds a colony yet');
+  {
+    // Ground with no colony can still be entered and looked at; there is simply
+    // nothing to give orders to.
+    const empty = match.stands.findIndex((stand) => !stand.sim.hasColony);
+    assert.equal(match.selectStand(empty), true, 'ground with no colony can be entered');
+    assert.equal(match.activeColonized, false, 'and it is known to be empty');
+    assert.equal(match.selectStand(match.region.foundingStand), true);
+    assert.equal(match.activeColonized, true);
+  }
   advance(match, 5);
 
   // Every colony shares one weather, without any of them being told about it.
   {
     const other = new RegionalMatch(seeds[0]);
     advance(other, 90);
-    const seasons = new Set(other.stands.filter((stand) => stand.sim).map((stand) => stand.sim.season.id));
+    const seasons = new Set(other.stands.filter((stand) => stand.sim.hasColony).map((stand) => stand.sim.season.id));
     assert.equal(seasons.size, 1, `colonies disagree about the season: ${[...seasons]}`);
-    const times = other.stands.filter((stand) => stand.sim).map((stand) => stand.sim.time);
+    const times = other.stands.filter((stand) => stand.sim.hasColony).map((stand) => stand.sim.time);
     assert.ok(Math.max(...times) - Math.min(...times) < 1e-6, 'colonies count different time');
   }
 
@@ -359,13 +367,13 @@ function dump(region, seed) {
       release(m, from);
       const wind = m.region.windAt(m.stands[from].sim.time);
       const reachable = downwindStands(m.region, from, wind, 1.01);
-      if (reachable.every((id) => m.stands[id].sim !== null)) break;
+      if (reachable.every((id) => m.stands[id].sim.hasColony)) break;
     }
     const calmWind = m.region.windAt(m.stands[from].sim.time);
     const withinReach = downwindStands(m.region, from, calmWind, 1.01);
     assert.ok(withinReach.length > 0, 'ordinary wind should reach at least one neighbour');
     assert.ok(
-      withinReach.every((id) => m.stands[id].sim !== null),
+      withinReach.every((id) => m.stands[id].sim.hasColony),
       'ordinary wind could still reach an uncolonized stand, so the storm proves nothing'
     );
 

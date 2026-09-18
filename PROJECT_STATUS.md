@@ -505,6 +505,17 @@ either foundation.
 - Ground with no colony in it is not simulated at all: its history begins when a
   spore lands. That is deterministic and cheap, but it means an uncolonized
   stand does not drift while the player is away from it.
+- The region now renders, but not yet cleanly. `npm run build` passes and the
+  browser console is clean, and a capture at 1600×1000 shows one continuous
+  3×3 slab of ground with the region framed whole. What is still wrong, and is
+  the immediate next work: only the colony's own stand reads as a forest — the
+  neighbouring stands' ground is drawn but their trees are not visible in the
+  capture — the tiles nearest the camera have their floor missing below the
+  slab while their trees hang over the edge, and nothing yet lets the player
+  enter a second stand's underground view (the stand has to be rebindable:
+  `SoilMesh`, `ForestView`, `LivingView` and the camera all still hold one
+  stand). The browser suites (`npm run test:view`, `npm run test:journey`) have
+  not been re-run against this renderer.
 - Surface and underground geometry share state but do not yet have automated
   round-trip identity tests beyond the crown → root landing check in
   `tools/test-view.mjs`.
@@ -705,6 +716,18 @@ verification entry—not a new document.
 
 ### 18 September 2026
 
+- Began rendering the region (P1 item 3). `SurfaceForest` takes a tile — a stand
+  id, its origin in the region and the region's own `heightAt` — so every stand's
+  floor is a window onto one continuous surface, and `Game` builds one surface
+  per stand, laid out around the colony's stand and framed as a region rather
+  than as a single stand. Crowns carry their stand id, the tree selector lists
+  the whole region with the player's own stand first, and only the colony's
+  ground can be entered: selecting a crown in another stand explains that no
+  colony is there yet.
+- Known and recorded above: the neighbouring stands' trees are not visible, the
+  nearest row's floor is missing below the slab, and entering a second stand
+  needs the underground views to be rebindable. The browser suites have not been
+  re-run.
 - Began P1. `src/sim/region.ts` generates a deterministic 3×3 region: a
   heightfield with a fall line and a valley, drainage from a priority flood,
   flow accumulation, a stream whose course crosses stand borders, a water table

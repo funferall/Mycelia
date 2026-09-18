@@ -3,7 +3,9 @@ import { GRID, SPECIES } from './sim/content';
 import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
-import { FOREST_DEPTH, SurfaceForest, treeSurfacePosition } from './render/surface';
+import { TILE_SIZE, SurfaceForest } from './render/surface';
+import { COMMUNITY_LABEL, communityThresholds, createRegion, type Region } from './sim/region';
+import { createStandWorld } from './sim/world';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
@@ -67,7 +69,15 @@ export class Game {
   private readonly forest: ForestView;
   private readonly ui: SheetUI;
   private readonly living: LivingView;
-  private readonly surface: SurfaceForest;
+  /**
+   * One surface per stand, so the region is drawn as one landscape. Only the
+   * stand the player's colony stands in can be entered; the rest are ground the
+   * forest shows and the simulation is not yet running.
+   */
+  private readonly surfaces: SurfaceForest[] = [];
+  private readonly region: Region;
+  /** Stand the selected crown stands in, or null while nothing is chosen. */
+  private selectedStandId: number | null = null;
   /** Everything drawn inside the soil, faded as one body during a crossing. */
   private readonly overlays: OverlayFade;
   private readonly sound = new Soundscape();
@@ -126,9 +136,10 @@ export class Game {
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
     this.stage.scene.add(this.forest.group);
-    this.surface = new SurfaceForest(this.sim.world);
+    this.region = createRegion(seedText);
+    this.buildRegionStand();
     this.living = new LivingView(this.sim);
-    this.stage.scene.add(this.surface.group, this.living.group);
+    this.stage.scene.add(this.living.group);
     this.overlays = new OverlayFade([
       this.playerMesh.group,
       this.rivalMesh.group,
@@ -151,10 +162,69 @@ export class Game {
     this.setSpeed(0);
   }
 
+  /**
+   * Build the region: one surface per stand, laid out around the stand the
+   * player's colony stands in, so the whole 3x3 mosaic is drawn as one
+   * continuous forest.
+   *
+   * The founding stand's trees are the simulation's own. Every other stand's
+   * ground comes from the same generators the region would hand a colony
+   * arriving there, so what the player can see is what such a colony would
+   * find.
+   */
+  private buildRegionStand(): void {
+    const founding = this.region.stands[this.region.foundingStand];
+    if (!founding) return;
+    for (const site of this.region.stands) {
+      const world =
+        site.id === founding.id
+          ? this.sim.world
+          : createStandWorld(site.seed, {
+              waterTableCm: site.waterTableCm,
+              mix: communityThresholds(site.community),
+            });
+      const surface = new SurfaceForest(world, {
+        id: site.id,
+        originX: site.sx * TILE_SIZE,
+        originY: site.sy * TILE_SIZE,
+        heightAt: (x, y) => this.region.heightAt(x, y),
+      });
+      surface.group.position.set((site.sx - founding.sx) * TILE_SIZE, 0, -(site.sy - founding.sy) * TILE_SIZE);
+      this.surfaces[site.id] = surface;
+      this.stage.scene.add(surface.group);
+    }
+  }
+
+  /** The region's surfaces, in stand order. Used by the browser checks. */
+  get regionSurfaces(): SurfaceForest[] {
+    return this.surfaces;
+  }
+
+  /** The stand the player can enter: the one their colony stands in. */
+  private get surface(): SurfaceForest {
+    return this.surfaces[this.region.foundingStand] as SurfaceForest;
+  }
+
+  private get enterableStand(): number {
+    return this.region.foundingStand;
+  }
+
   /** Recompute the default framing for the current viewport. */
   private frameSheet(): void {
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-    this.stage.rig.frameMount(aspect, GRID.cols, GRID.rows, 34, FOREST_DEPTH);
+    // The forest is framed as the whole region now, not one stand: the mosaic
+    // spans three tiles each way.
+    const span = this.region.cols * TILE_SIZE;
+    // Centred on the region rather than on the colony's own tile, so the rows
+    // nearest the camera stay in the picture.
+    const founding = this.region.stands[this.region.foundingStand];
+    this.stage.rig.forestCentre = {
+      x: ((this.region.cols - 1) / 2 - (founding?.sx ?? 0)) * TILE_SIZE,
+      // A tile's own depth runs from its near edge back to z = -TILE_SIZE, so
+      // the region's centre sits half a tile behind the middle row.
+      z: ((founding?.sy ?? 0) - this.region.rows / 2) * TILE_SIZE,
+    };
+    this.stage.rig.frameMount(aspect, GRID.cols, GRID.rows, 34, span, span);
   }
 
   /**
@@ -398,15 +468,29 @@ export class Game {
     document.querySelector('#view-underground')!.addEventListener('click', () => this.descend());
     document.querySelector('#descend-tree')!.addEventListener('click', () => this.descend());
     document.querySelector('#forest-tree')!.addEventListener('change', event => {
-      const id = Number((event.target as HTMLSelectElement).value);
-      this.selectTree(id);
+      const [standId, treeId] = (event.target as HTMLSelectElement).value.split(':').map(Number);
+      if (standId !== undefined && treeId !== undefined) this.selectTree(standId, treeId);
     });
     const select = document.querySelector<HTMLSelectElement>('#forest-tree')!;
-    for (const tree of this.sim.world.trees) {
-      const option = document.createElement('option');
-      option.value = String(tree.id);
-      option.textContent = `${SPECIES[tree.species].common} · ${tree.id + 1}`;
-      select.append(option);
+    // The player's own stand comes first, because that is the ground they can
+    // walk into; the rest of the region is listed under its community.
+    const standsInOrder = [
+      this.enterableStand,
+      ...this.region.stands.map((site) => site.id).filter((id) => id !== this.enterableStand),
+    ];
+    for (const standId of standsInOrder) {
+      const site = this.region.stands[standId];
+      const surface = this.surfaces[standId];
+      if (!site || !surface) continue;
+      for (const entry of surface.trees) {
+        const option = document.createElement('option');
+        option.value = `${standId}:${entry.tree.id}`;
+        // The colony's own stand is described as what it is. The rest of the
+        // region is described by the community the region generated for it.
+        const where = standId === this.enterableStand ? 'your stand' : COMMUNITY_LABEL[site.community];
+        option.textContent = `${SPECIES[entry.tree.species].common} · ${entry.tree.id + 1} · ${where}`;
+        select.append(option);
+      }
     }
     const motion = document.querySelector<HTMLButtonElement>('#ambient-motion')!;
     const updateMotion = () => { motion.textContent = this.ambientMotion ? 'Wind on' : 'Wind still'; motion.setAttribute('aria-pressed', String(this.ambientMotion)); };
@@ -425,6 +509,12 @@ export class Game {
   }
 
   private descend(): void {
+    // Only the stand holding the colony can be entered: the others are ground
+    // the region is keeping for a spore that has not landed yet.
+    if (this.selectedStandId !== null && this.selectedStandId !== this.enterableStand) {
+      this.ui.setNote('That stand has no colony in it yet. Fruit spores into it from ground you hold.');
+      return;
+    }
     const id = this.surface.selectedId;
     if (id === null) this.setView('underground');
     else {
@@ -437,19 +527,38 @@ export class Game {
     }
   }
 
-  private selectTree(id: number): void {
-    const tree = this.sim.world.trees.find(tree => tree.id === id);
-    if (!tree) return;
-    this.surface.selectedId = id;
-    document.querySelector<HTMLSelectElement>('#forest-tree')!.value = String(id);
-    const position = treeSurfacePosition(tree);
-    this.stage.rig.focusTree(position.x, position.z);
+  private selectTree(standId: number, id: number): void {
+    const surface = this.surfaces[standId];
+    const entry = surface?.trees.find((tree) => tree.tree.id === id);
+    if (!surface || !entry) return;
+    this.selectedStandId = standId;
+    surface.selectedId = id;
+    document.querySelector<HTMLSelectElement>('#forest-tree')!.value = `${standId}:${id}`;
+    // The camera frames the region from the founding stand's own origin, so a
+    // neighbouring stand's tree has to be moved into that frame to be looked at.
+    const position = surface.surfacePosition(id);
+    if (position) this.stage.rig.focusTree(position.x + surface.group.position.x, position.z + surface.group.position.z);
     this.updateTreeNote();
   }
 
   private updateTreeNote(): void {
-    const tree = this.sim.world.trees.find(tree => tree.id === this.surface.selectedId);
-    const status = !tree ? 'Choose a crown to follow its roots.' : `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${tree.rootTips.some(tip => tip.bondedTo !== null) ? 'Bonded to your network' : 'Not yet bonded'}`;
+    const standId = this.selectedStandId;
+    const site = standId === null ? null : this.region.stands[standId];
+    const tree = standId === null ? null : this.surfaces[standId]?.trees.find((tree) => tree.tree.id === this.surfaces[standId]?.selectedId)?.tree;
+    const where = site
+      ? standId === this.enterableStand
+        ? 'your own stand'
+        : `${COMMUNITY_LABEL[site.community]} · no colony here yet`
+      : '';
+    const status = !tree
+      ? 'Choose a crown to follow its roots.'
+      : `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${
+          standId === this.enterableStand
+            ? tree.rootTips.some((tip) => tip.bondedTo !== null)
+              ? 'Bonded to your network'
+              : 'Not yet bonded'
+            : 'beyond your colony'
+        } · ${where}`;
     document.querySelector('#tree-status')!.textContent = status;
   }
 
@@ -770,13 +879,19 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.set((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2);
     this.raycaster.setFromCamera(this.pointer, this.stage.rig.camera);
-    const intersections = this.raycaster.intersectObjects(this.surface.pickTargets, false);
+    const intersections = this.raycaster.intersectObjects(this.surfaces.flatMap((surface) => surface.pickTargets), false);
     const treeHit = intersections.find(hit => hit.object.userData.treeId !== undefined);
-    if (treeHit) this.selectTree(treeHit.object.userData.treeId as number);
+    if (treeHit) {
+      this.selectTree(treeHit.object.userData.standId as number, treeHit.object.userData.treeId as number);
+      return;
+    }
     else if (intersections[0]) {
       const point = intersections[0].point;
-      const tree = this.surface.nearestTree(point.x, point.z);
-      if (tree) this.selectTree(tree.id);
+      // Find the stand whose ground the click landed on, then its nearest tree.
+      const standId = intersections[0].object.userData.standId as number | undefined;
+      const surface = standId === undefined ? this.surface : this.surfaces[standId];
+      const tree = surface?.nearestTree(point.x, point.z);
+      if (tree && surface) this.selectTree(surface.standId, tree.id);
     }
   }
 

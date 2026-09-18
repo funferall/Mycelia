@@ -25,12 +25,13 @@ import { Simulation, type MatchOutcome } from './sim';
 export interface StandState {
   readonly site: StandSite;
   /**
-   * The stand's own simulation, built the moment a spore lands here and kept
-   * from then on: re-entering a stand shows everything that happened in it
-   * while nobody was looking. Ground with no colony in it is not simulated at
-   * all, which is what keeps nine stands affordable.
+   * The stand's own simulation: its soil, its trees and its rival, generated
+   * once from the stand site. Re-entering a stand shows everything that
+   * happened in it while nobody was looking. Ground with no colony in it is not
+   * *stepped*, which is what keeps nine stands affordable, but it still exists
+   * and can be looked at.
    */
-  sim: Simulation | null;
+  sim: Simulation;
   /** Blooms already released as spores, so each one is credited once. */
   released: number;
   /** Every spore that has landed here, oldest first. */
@@ -64,12 +65,14 @@ export class RegionalMatch {
     this.region = createRegion(seedText);
     this.stands = this.region.stands.map((site) => ({
       site,
-      sim: null,
+      sim: new Simulation(`${seedText}:${site.id}`, site),
       released: 0,
       arrivals: [],
     }));
     this.activeStandId = this.region.foundingStand;
-    this.require(this.activeStandId).sim = new Simulation(seedText, this.require(this.activeStandId).site);
+    // Only the founding stand starts with a colony in it.
+    for (const stand of this.stands) stand.sim.hasColony = false;
+    this.require(this.activeStandId).sim.hasColony = true;
   }
 
   private require(id: number): StandState {
@@ -85,9 +88,7 @@ export class RegionalMatch {
 
   /** The live simulation the interface and the renderer read. */
   get sim(): Simulation {
-    const sim = this.active.sim;
-    if (!sim) throw new Error(`match: stand ${this.activeStandId} has no colony`);
-    return sim;
+    return this.active.sim;
   }
 
   get time(): number {
@@ -95,33 +96,39 @@ export class RegionalMatch {
   }
 
   get colonizedStands(): number {
-    return this.stands.reduce((count, stand) => count + (stand.sim ? 1 : 0), 0);
+    return this.stands.reduce((count, stand) => count + (stand.sim.hasColony ? 1 : 0), 0);
   }
 
   /** Blooms anywhere in the region: the lineage, not one colony, reproduces. */
   get fruited(): number {
-    return this.stands.reduce((count, stand) => count + (stand.sim?.player.fruited ?? 0), 0);
+    return this.stands.reduce((count, stand) => count + (stand.sim.hasColony ? stand.sim.player.fruited : 0), 0);
   }
 
   /** Spores carried off the sheet by every colony. */
   get spores(): number {
-    return this.stands.reduce((count, stand) => count + (stand.sim?.player.spores ?? 0), 0);
+    return this.stands.reduce((count, stand) => count + (stand.sim.hasColony ? stand.sim.player.spores : 0), 0);
   }
 
   get outcome(): MatchOutcome {
     if (this.fruited >= 2) return 'fruited';
-    const colonies = this.stands.filter((stand) => stand.sim !== null);
-    return colonies.length > 0 && colonies.every((stand) => stand.sim?.outcome === 'extinct') ? 'extinct' : 'playing';
+    const colonies = this.stands.filter((stand) => stand.sim.hasColony);
+    return colonies.length > 0 && colonies.every((stand) => stand.sim.outcome === 'extinct') ? 'extinct' : 'playing';
   }
 
   /**
-   * Move the player's attention to a stand that has a colony in it. Only
-   * colonized ground can be entered: there has to be a network to look at.
+   * Move the player's attention to a stand. Ground with no colony in it can be
+   * entered and looked at — its soil, its roots and its rival are all there —
+   * but there is no network to give orders to until a spore lands.
    */
   selectStand(id: number): boolean {
-    if (!this.stands[id]?.sim) return false;
+    if (!this.stands[id]) return false;
     this.activeStandId = id;
     return true;
+  }
+
+  /** True when the stand in view holds a colony. */
+  get activeColonized(): boolean {
+    return this.active.sim.hasColony;
   }
 
   /** Advance the whole region by one fixed step. */
@@ -135,7 +142,9 @@ export class RegionalMatch {
     // Every stand, every tick, in stand order. A stand's own season clock runs
     // from the same start and the same steps, so the region shares one weather
     // without any of them having to be told about the others.
-    for (const stand of this.stands) stand.sim?.step(dt);
+    for (const stand of this.stands) {
+      if (stand.sim.hasColony) stand.sim.step(dt);
+    }
     this.stepSpores(dt);
   }
 
@@ -150,7 +159,7 @@ export class RegionalMatch {
     this.sporeClock = 0;
 
     for (const stand of this.stands) {
-      if (!stand.sim) continue;
+      if (!stand.sim.hasColony) continue;
       while (stand.released < stand.sim.player.fruited) {
         stand.released++;
         this.release(stand);
@@ -159,13 +168,12 @@ export class RegionalMatch {
   }
 
   private release(from: StandState): void {
-    const parent = from.sim?.player;
-    if (!parent) return;
-    const wind = this.region.windAt(from.sim?.time ?? 0);
+    const parent = from.sim.player;
+    const wind = this.region.windAt(from.sim.time);
     const reach = wind.strength >= STORM_STRENGTH ? 2.01 : 1.01;
     for (const targetId of downwindStands(this.region, from.site.id, wind, reach)) {
       const target = this.require(targetId);
-      if (target.sim) continue;
+      if (target.sim.hasColony) continue;
       const cost = ECON.colonyFund;
       // A colony pays for its daughter out of what it is holding. A parent that
       // cannot afford the journey does not send anyone, and the spore is only
@@ -178,22 +186,11 @@ export class RegionalMatch {
   }
 
   private found(target: StandState, from: StandState, cost: { carbon: number; water: number; nitrogen: number }, wind: number): void {
-    const seed = `${this.region.seedText}:${target.site.id}`;
-    target.sim = new Simulation(seed, target.site, cost);
-    // A spore arrives as reserves, not as a body: the colony's whole holding is
-    // exactly what its parent paid, and the germinating strand starts empty.
-    const colony = target.sim.player;
-    colony.carbon = cost.carbon;
-    colony.carbonCeiling = cost.carbon;
-    colony.water = cost.water;
-    colony.nitrogen = cost.nitrogen;
-    for (const node of colony.nodes) {
-      node.carbon = 0;
-      node.water = 0;
-      node.nitrogen = 0;
-    }
+    // The stand's own ground is left exactly as it is: the colony arrives in
+    // the soil that was already under it.
+    target.sim.foundColony(cost);
     target.released = 0;
-    const at = from.sim?.time ?? 0;
+    const at = from.sim.time;
     target.arrivals.push({ at, from: from.site.id, spores: cost.carbon });
     this.colonization.push({ at, from: from.site.id, to: target.site.id, wind, cost: { ...cost } });
     target.sim.events.unshift({
