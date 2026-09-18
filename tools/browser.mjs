@@ -68,3 +68,34 @@ export function collectProblems(page) {
 export async function waitForGame(page, timeout = 300000) {
   await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout });
 }
+
+/**
+ * Soil grid coordinates to page pixels, through the game's own camera.
+ *
+ * A check that clicks the soil has to aim where the soil actually is, so this
+ * projects the point exactly as the game projects its root labels.
+ */
+export function gridToPage(page, gx, gy) {
+  return page.evaluate(
+    ([gx, gy]) => {
+      const camera = window.mycelia.game.stage.rig.camera;
+      camera.updateMatrixWorld();
+      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+      const apply = (m, x, y, z, w) => [
+        m[0] * x + m[4] * y + m[8] * z + m[12] * w,
+        m[1] * x + m[5] * y + m[9] * z + m[13] * w,
+        m[2] * x + m[6] * y + m[10] * z + m[14] * w,
+        m[3] * x + m[7] * y + m[11] * z + m[15] * w,
+      ];
+      const { halfWidth, halfHeight } = window.mycelia.game.viewReport().mount;
+      const view = apply(camera.matrixWorldInverse.elements, gx - halfWidth, halfHeight - gy, 0, 1);
+      const clip = apply(camera.projectionMatrix.elements, view[0], view[1], view[2], view[3]);
+      const rect = document.querySelector('#gl').getBoundingClientRect();
+      return {
+        x: rect.left + ((clip[0] / clip[3] + 1) / 2) * rect.width,
+        y: rect.top + ((1 - clip[1] / clip[3]) / 2) * rect.height,
+      };
+    },
+    [gx, gy]
+  );
+}

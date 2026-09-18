@@ -21,10 +21,8 @@
  * `--url` is optional: without it the script starts `vite preview` on the build
  * in `dist/` and shuts it down again.
  */
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { collectProblems, launchBrowser } from './browser.mjs';
+import { collectProblems, gridToPage, launchBrowser } from './browser.mjs';
+import { startPreview } from './preview.mjs';
 
 /** Must match CROSSING_SECONDS in `src/render/camera.ts`. */
 const CROSSING_SECONDS = 1.5;
@@ -39,7 +37,6 @@ const argOf = (name, fallback) => {
 };
 const verbose = args.includes('--verbose');
 const port = Number(argOf('port', 4173));
-const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const url = argOf('url', `http://127.0.0.1:${port}`);
 
 const results = [];
@@ -60,32 +57,10 @@ const note = (line) => {
 // ---------------------------------------------------------------------------
 let server = null;
 if (!args.includes('--url')) {
-  const entry = fileURLToPath(new URL('../dist/index.html', import.meta.url));
-  if (!existsSync(entry)) {
-    console.error('test-view: no build in dist/. Run `npm run build` first.');
+  server = await startPreview(port).catch((error) => {
+    console.error(`test-view: ${error.message}`);
     process.exit(1);
-  }
-  const vite = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
-  server = spawn(
-    process.execPath,
-    [vite, 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
-    { cwd: repoRoot, stdio: 'ignore' }
-  );
-  const deadline = Date.now() + 30000;
-  for (;;) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (response.ok) break;
-    } catch {
-      /* not up yet */
-    }
-    if (Date.now() > deadline) {
-      server.kill();
-      console.error(`test-view: preview server never answered on ${url}`);
-      process.exit(1);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+  });
 }
 
 const browser = await launchBrowser();
@@ -578,8 +553,259 @@ function movement(series) {
   await contexts.pop().close();
 }
 
+// ---------------------------------------------------------------------------
+// 7. What a click, a drag, a wheel and the keyboard actually do
+// ---------------------------------------------------------------------------
+{
+  const page = await open('/?seed=raven-wood&view=underground', { width: 1280, height: 800 });
+  await page.click('#begin');
+  await settle(page);
+  // Paused, so the effect of an order is unambiguous: a waypoint either exists
+  // or it does not.
+  await page.click('.speed-row button[data-speed="0"]');
+
+  const soil = async () => {
+    const founder = await page.evaluate(() => {
+      const node = window.mycelia.game.sim.player.nodes[0];
+      return { gx: node.gx, gy: node.gy };
+    });
+    return gridToPage(page, founder.gx, founder.gy);
+  };
+  const state = () =>
+    page.evaluate(() => {
+      const game = window.mycelia.game;
+      return {
+        view: game.viewReport().view,
+        crossing: game.viewReport().crossing,
+        resting: game.sim.player.resting,
+        order: [...document.querySelectorAll('.order')].find((button) => button.classList.contains('is-on'))?.dataset.order ?? null,
+        paused: document.querySelector('.speed-row button[data-speed="0"]').classList.contains('is-on'),
+        pan: game.viewReport().target.x,
+      };
+    });
+  /** A growth order clears `resting`, so the pace control is the observable. */
+  const setResting = async (want) => {
+    if ((await state()).resting !== want) await page.click('#rest');
+  };
+
+  // A drag is a camera move; a tap is an order.
+  {
+    await page.click('.order[data-order="grow"]');
+    await setResting(true);
+    const before = await state();
+    const at = await soil();
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.mouse.move(at.x + 46, at.y + 26, { steps: 8 });
+    await page.mouse.up();
+    const after = await state();
+    check(
+      'a drag pans the camera instead of issuing an order',
+      after.resting === true && Math.abs(after.pan - before.pan) > 0.5,
+      `the frontier stayed still (${after.resting}), camera moved ${(after.pan - before.pan).toFixed(1)} world units`
+    );
+  }
+
+  // A tap on open soil with Grow selected does issue one.
+  {
+    await setResting(true);
+    const at = await soil();
+    await page.mouse.click(at.x, at.y);
+    const after = await state();
+    const note = await page.textContent('#order-note');
+    check(
+      'a tap on the soil issues the selected order',
+      after.resting === false && /frontier/i.test(note),
+      `resting ${after.resting}, note "${note}"`
+    );
+    check('the order note says where the frontier was sent', /directed to \d+/i.test(note), note);
+  }
+
+  // A refused order says so, and leaves the match alone.
+  {
+    await setResting(true);
+    const blank = await page.evaluate(() => {
+      const game = window.mycelia.game;
+      const { halfWidth, halfHeight } = game.viewReport().mount;
+      const rect = document.querySelector('#gl').getBoundingClientRect();
+      for (let fx = 0.94; fx > 0.5; fx -= 0.02) {
+        const x = rect.left + rect.width * fx;
+        const y = rect.top + rect.height * 0.5;
+        const point = game.gridAt(x, y);
+        if (point && (point.gx < 0 || point.gx > halfWidth * 2 || point.gy < 0 || point.gy > halfHeight * 2)) {
+          return { x, y, point };
+        }
+      }
+      return null;
+    });
+    check('there is bare paper beside the specimen to click on', Boolean(blank), JSON.stringify(blank?.point ?? null));
+    if (blank) {
+      await page.mouse.click(blank.x, blank.y);
+      const refusal = await page.textContent('#order-note');
+      const after = await state();
+      check(
+        'a refused order is refused out loud and changes nothing',
+        /stone cannot be crossed/i.test(refusal) && after.resting === true,
+        `note "${refusal}", resting ${after.resting}`
+      );
+    }
+  }
+
+  // A cancelled pointer must not leave the canvas waiting for a release, and it
+  // must not turn a later release into a tap.
+  {
+    await setResting(true);
+    const at = await soil();
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.evaluate(() => {
+      document.querySelector('#gl').dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1 }));
+    });
+    await page.mouse.move(at.x + 30, at.y + 18, { steps: 4 });
+    await page.mouse.up();
+    const after = await state();
+    check(
+      'a cancelled pointer issues no order',
+      after.resting === true,
+      `resting ${after.resting}`
+    );
+    // And the canvas is not left deaf: a real drag still pans afterwards.
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.mouse.move(at.x - 40, at.y - 20, { steps: 6 });
+    await page.mouse.up();
+    const recovered = await state();
+    check(
+      'the canvas still pans after a cancelled pointer',
+      Math.abs(recovered.pan - after.pan) > 0.5,
+      `camera moved ${(recovered.pan - after.pan).toFixed(1)} world units`
+    );
+  }
+
+  // Nothing can be ordered mid-crossing.
+  {
+    await page.click('.order[data-order="grow"]');
+    await setResting(true);
+    await page.click('#view-forest');
+    const crossingAtClick = (await state()).crossing;
+    // The labels are hidden mid-crossing, so the middle of the sheet is the
+    // canvas itself rather than a marker sitting over it.
+    await page.mouse.click(640, 400);
+    const after = await state();
+    check(
+      'a click during a crossing issues no order',
+      crossingAtClick && after.resting === true,
+      `crossing at the click: ${crossingAtClick}, resting ${after.resting}`
+    );
+    await settle(page);
+  }
+
+  // Wheel descent: one notch is not enough to cross, a handful of notches is.
+  {
+    const before = await state();
+    await page.mouse.move(640, 400);
+    await page.mouse.wheel(0, -400);
+    const once = await state();
+    check(
+      'one wheel notch zooms the forest without dropping into the soil',
+      before.view === 'forest' && once.view === 'forest',
+      `${before.view} then ${once.view}`
+    );
+    let notches = 1;
+    let now = once;
+    while (now.view === 'forest' && notches < 12) {
+      await page.mouse.wheel(0, -400);
+      await page.waitForTimeout(120);
+      now = await state();
+      notches++;
+    }
+    check(
+      'zooming past the threshold descends into the soil',
+      now.view === 'underground',
+      `${notches} notches to cross`
+    );
+    await settle(page);
+    check('and the descent lands with the network whole', (await report(page)).strandOpacity === 1);
+  }
+
+  // The keyboard belongs to the sheet, not to whatever control has focus.
+  {
+    // The tree selector only exists above ground, so the guard is checked where
+    // a player could actually be typing into it.
+    await page.click('#view-forest');
+    await settle(page);
+    await page.focus('#forest-tree');
+    const focused = await page.evaluate(() => document.activeElement?.id ?? null);
+    const before = await state();
+    await page.keyboard.press('v');
+    const after = await state();
+    check(
+      'a key typed into a control does not change the view',
+      focused === 'forest-tree' && before.view === after.view,
+      `focus ${focused}, ${before.view} to ${after.view}`
+    );
+
+    await page.focus('#gl');
+    const viewBefore = (await state()).view;
+    await page.keyboard.press('v');
+    await settle(page);
+    check(
+      'the canvas itself answers V',
+      (await state()).view !== viewBefore,
+      `${viewBefore} to ${(await state()).view}`
+    );
+
+    await page.keyboard.press('2');
+    check('number keys choose an order', (await state()).order === 'bond');
+    check('the chosen order is pressed in the sheet', await page.evaluate(() => document.querySelector('.order[data-order="bond"]').getAttribute('aria-pressed') === 'true'));
+
+    const panBefore = (await state()).pan;
+    await page.keyboard.press('ArrowLeft');
+    // The pose eases toward the new goal, so wait for the frame that moves it.
+    await page
+      .waitForFunction((from) => Math.abs(window.mycelia.game.viewReport().target.x - from) > 0.5, panBefore, { timeout: 15000 })
+      .catch(() => {});
+    check(
+      'arrow keys pan the camera',
+      Math.abs((await state()).pan - panBefore) > 0.5,
+      `camera moved ${((await state()).pan - panBefore).toFixed(1)} world units`
+    );
+
+    const pausedBefore = (await state()).paused;
+    await page.keyboard.press('Space');
+    const pausedAfter = (await state()).paused;
+    check(
+      'Space toggles the pace',
+      pausedAfter !== pausedBefore,
+      `paused ${pausedBefore} to ${pausedAfter}`
+    );
+    await page.keyboard.press('Space');
+    check('and Space toggles it back', (await state()).paused === pausedBefore);
+  }
+
+  // Changing views faster than the crossing takes must still land where the
+  // last click asked, with nothing left half faded.
+  {
+    for (const selector of ['#view-underground', '#view-forest', '#view-underground', '#view-forest', '#view-underground']) {
+      await page.click(selector);
+    }
+    await settle(page);
+    const landed = await report(page);
+    check(
+      'a burst of view changes lands in the view that was asked for last',
+      landed.view === 'underground' && landed.blend === 0 && landed.strandOpacity === 1,
+      JSON.stringify({ view: landed.view, blend: landed.blend, strandOpacity: landed.strandOpacity })
+    );
+    await page.keyboard.press('v');
+    await settle(page);
+    check('and input still works after the burst', (await report(page)).view === 'forest');
+  }
+
+  await contexts.pop().close();
+}
+
 await browser.close();
-server?.kill();
+server?.stop();
 
 for (const line of results) console.log('  ok - ' + line);
 for (const line of failures) console.log('  FAIL - ' + line);

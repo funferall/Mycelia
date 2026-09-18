@@ -104,7 +104,7 @@ committed or deployed.
 | Shared stage | `src/render/{stage,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/test-view.mjs`, `tools/shoot.mjs`, `tools/browser.mjs` | Headless deterministic regression, browser checks for the connected views, and screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless deterministic regression, browser checks for the connected views and for input, a whole match played through the interface, and screenshot/error capture |
 
 The simulated soil is still a two-dimensional transect. Each simulated tree has
 one horizontal `gx` coordinate and stable root IDs. `treeSurfacePosition()` in
@@ -134,7 +134,7 @@ and equivalent useful details have been accounted for, then remove it.
 | CORE-04 | Verified | Supplied fruiting and stored bloom history | Weather pause, supplied progress, severed loss, and actual bloom locations are covered. |
 | CORE-05 | Verified | Repeatable two-bloom victory | `raven-wood`, `old-growth`, and `ironwood` complete through public orders with 480 spores. |
 | CORE-06 | Verified | Outcome and command guards | Invalid/deep fruiting, permanent cords, and post-outcome guards pass. |
-| CORE-07 | Partial | First-player journey through the actual UI | Guidance and controls exist; a complete two-bloom journey has not been browser-automated through visible controls. |
+| CORE-07 | Verified | First-player journey through the actual UI | `npm run test:journey` plays a whole match with clicks on the sheet's own controls: Awaken the spore, a `Reach` root label, the `Bond` label that appears, the soil itself to send the frontier up, Rest & gather, the Fruit order, a marked strand, and the outcome's "Open a new sheet". `raven-wood` finishes with 2 blooms and 480 spores at 354s of match time, and the new sheet opens fresh. |
 
 ### Forest and underground views
 
@@ -144,7 +144,7 @@ and equivalent useful details have been accounted for, then remove it.
 | VIEW-02 | Implemented, unverified | Surface tree identity and selection | Crowns and selector options use simulation tree IDs; status reflects health, death, and bonds. Add automated crown-selection and tree/root round-trip checks. |
 | VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
 | VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
-| VIEW-05 | Implemented, unverified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. Exercise pointer cancel, drag thresholds, control focus, and rapid view changes in a browser. |
+| VIEW-05 | Verified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. `npm run test:view` now covers the cases the row was waiting on: a drag pans instead of ordering while a tap on soil orders, a refused order is refused out loud and changes nothing, a cancelled pointer issues nothing and leaves the canvas still able to pan, a click during a crossing issues nothing, one wheel notch does not cross while six do, a key typed into the tree selector does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and Space, and a burst of five view changes lands in the view asked for last with input still live afterwards. |
 
 ### Regional map, terrain, forest stands, and water
 
@@ -342,7 +342,7 @@ Ecological references supporting this direction:
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
-| UX-01 | Implemented, unverified | Guided opening and journey model | `deriveJourney()` drives Reach → Bond → Gather → Fruit guidance. Browser-test refusal recovery and complete-match guidance. |
+| UX-01 | Verified | Guided opening and journey model | `deriveJourney()` drives Reach → Bond → Gather → Fruit guidance. `npm run test-journey` follows that guidance to the end of a match — each step is taken by clicking the label or control the guidance offers — and `npm run test:view` checks that a refused order (paper outside the specimen) is explained rather than silently dropped. |
 | UX-02 | Partial | Actionable root labels | Explicit root IDs and states exist. Verify collision handling, safe areas, compact viewports, and prioritization during a mature match. |
 | UX-03 | Partial | Responsive layouts | Desktop render is inspected; compact styles exist. `npm run test:view` now asserts at 1600×1000, 1366×768, and 390×844 that the canvas fills the viewport, that the view controls stay on screen, and that all 13 catalogue figures are present and inside the viewport. Remaining: touch input, real phone and tablet hardware, and the 1180px breakpoint band. |
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
@@ -368,19 +368,22 @@ Work in this order unless the user explicitly changes priority.
    default framing, and the stand's framing now fits the whole stand at a
    portrait aspect. `npm run test:view` covers 1600×1000, 1366×768, and
    390×844.
-4. **Partially done.** Browser checks now cover `V`-style view changes, the
-   selected tree → correct root round trip, return context, crossing reversal,
-   the three viewport sizes, and reduced motion. Still to add: wheel-threshold
-   descent, pointer cancel and drag thresholds, control focus, and rapid view
-   changes from the buttons themselves.
-5. Complete one two-bloom journey through visible UI controls rather than only
-   simulation methods.
+4. **Done in this changeset.** `npm run test:view` now also covers the wheel
+   threshold, pointer cancel, drag-versus-tap, refused orders, mid-crossing
+   clicks, control focus, keyboard orders, pause, and a burst of view changes.
+5. **Done in this changeset.** `npm run test:journey` plays a two-bloom match
+   to the outcome and the restart through the sheet's own controls.
 
 Exit criteria: the same selected tree can be followed down and back repeatedly,
 with no unintended order, lost input, abrupt world pop, or broken framing.
-Following a crown and returning to the forest is now checked automatically; the
-remaining exit-criteria work is the two-bloom journey through the interface and
-the input-safety cases in item 4.
+Each clause of that now has a check behind it: the crown round trip, no order
+from a drag or a mid-crossing click, input still live after a burst of view
+changes, continuous dissolve with exact endpoints, and the three viewport sizes.
+What remains untested is the wider browser matrix — a second engine, a second
+GPU, and touch input — which is recorded under `UX-03`.
+
+With P0 complete, P1 — the deterministic regional world model — is the next
+work in order.
 
 ### P1 — define the scalable regional world model
 
@@ -508,7 +511,7 @@ wall-clock crossing:
 - `npm test` — **pass: 10 checks**. Conservation, cut supply, disconnection,
   supplied fruiting, three two-bloom victories, guards, and identical-order
   determinism.
-- `npm run test:view` — **pass: 40 checks**, measured on a built preview with
+- `npm run test:view` — **pass: 60 checks**, measured on a built preview with
   software WebGL:
   - A rise at 30fps and a rise at 4fps both take 1.50-1.53s of wall clock
     (46 frames of 33ms and 6 frames of 250ms). This is the property the old
@@ -536,6 +539,23 @@ wall-clock crossing:
     figures stay on screen at every size.
   - Reduced motion reaches the forest in the frame it was asked for, with no
     crossing reported and the soil's contents left out.
+  - Input separation, all through real mouse and keyboard events: a drag pans
+    the camera without ordering while a tap on soil orders ("Frontier directed
+    to ..."), a refused order on bare paper says the stone cannot be
+    crossed and changes nothing, a cancelled pointer issues nothing and the
+    canvas still pans afterwards, a click during a crossing issues nothing, one
+    wheel notch does not cross while six do, a key typed into the tree selector
+    does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and
+    Space, and a burst of five view changes lands in the view asked for last
+    with input still live.
+- `npm run test:journey` — **pass: 13 checks**. A whole match played with clicks
+  on the printed controls on `raven-wood`: Awaken the spore, `↗ Reach · oak`,
+  `◇ Bond · oak`, a click on the soil 8cm below the surface to send the frontier
+  up, Rest & gather, the Fruit order, a `◇ Fruit here` strand twice, the outcome
+  ("Fruiting recorded", packet 480), and "Open a new sheet". Two blooms and 480
+  spores at 354s of match time; no assignment to simulation state anywhere in
+  the check. Under software WebGL at 1200×760 the match takes about eleven
+  minutes of wall clock at 4× pace.
 - Built-preview captures, no page or console errors:
   `node tools/shoot.mjs --url http://127.0.0.1:4173/?seed=raven-wood --out design/shots/review-forest.png --canvas-out design/shots/review-forest-canvas.png --at 4000 --freeze`,
   the same with `&view=underground`, and the same at `--size 390x844`. The
@@ -551,16 +571,18 @@ Useful commands:
 npm run build
 npm test
 npm run test:view
+npm run test:journey
 npm run preview -- --host 127.0.0.1
 node tools/shoot.mjs --url http://127.0.0.1:4173 --out design/shots/review.png --canvas-out design/shots/review-canvas.png --at 1500 --freeze
 node tools/shoot.mjs --url "http://127.0.0.1:4173/?view=underground" --out design/shots/underground.png --at 1500 --freeze
 ```
 
-`npm run test:view` starts and stops its own preview server on port 4173; pass
-`--url` to point it at a server you started yourself, `--port` to move it, and
-`--verbose` to print every measurement. It drives the frame loop with a
-synthetic clock, so a run takes a few minutes under software WebGL and its
-timing numbers are not hostage to the machine.
+`npm run test:view` and `npm run test:journey` start and stop their own preview
+servers (ports 4173 and 4174); pass `--url` to point them at a server you
+started yourself, `--port` to move one, and `--verbose` to print every
+measurement. `test:view` drives the frame loop with a synthetic clock, so its
+timing numbers are not hostage to the machine. `test:journey` takes `--seed`
+and `--sim-budget`; it plays a real match, so it takes minutes.
 
 Do not assume ports from this record remain free. Use a built preview for stable
 captures; Vite hot reload can interrupt dev-server screenshot sessions.
@@ -628,6 +650,14 @@ verification entry—not a new document.
 
 ### 18 September 2026
 
+- Closed P0 items 4 and 5. `tools/test-view.mjs` grew eighteen input checks
+  (drag versus tap, refused orders, pointer cancel, mid-crossing clicks, the
+  wheel-descent threshold, control focus, keyboard orders and pause, a burst of
+  view changes), and `tools/test-journey.mjs` plays a whole two-bloom match
+  through the sheet's own controls. `tools/preview.mjs` holds the preview server
+  that both browser tools start for themselves.
+- Verified VIEW-05 (safe input separation), CORE-07 (first-player journey
+  through the actual UI), and UX-01 (guided opening and journey model).
 - Stabilized the forest ↔ underground crossing, closing P0 items 1-3. Replaced
   the underground visibility threshold with `src/render/fade.ts`, which
   dissolves the networks, motes, roots and rewards from their own captured
