@@ -1,5 +1,9 @@
 # MYCELIA — Game Outline Spec
 
+> **Document role:** This is the original product and game-design specification,
+> not a current implementation plan. Use `PROJECT_STATUS.md` for authoritative
+> feature status, priorities, limitations, verification, and next work.
+
 > **Working titles:** *Mycelia* / *The Wood Wide Web* / *Fruiting Season*
 > **Genre:** Real-time strategy (RTS) with ecological simulation
 > **Reference points:** Civilization (growth & escalation), Creeper World (fluid network expansion), Northgard (territory + seasons), Osmos (organic aesthetics)

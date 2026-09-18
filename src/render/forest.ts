@@ -210,6 +210,9 @@ export class ForestView {
     this.refresh();
   }
 
+  /** SurfaceForest now supplies the same crowns and trunks in both views. */
+  showRootsOnly(): void { this.trunkMesh.visible = false; }
+
   /** Re-derive colours and sizes from tree state. Cheap enough to run on a beat. */
   refresh(): void {
     const foliageBase = SEASON_FOLIAGE[this.season];

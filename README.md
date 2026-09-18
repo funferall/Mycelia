@@ -9,6 +9,10 @@ The full design brief is in [`mycelium-rts-outline-spec.md`](mycelium-rts-outlin
 The visual system the build commits to is in [`DESIGN.md`](DESIGN.md), and the
 product record is in [`PRODUCT.md`](PRODUCT.md).
 
+The authoritative implementation status, feature register, priorities, known
+limitations, and verification record are in [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+Future work must be recorded there rather than in separate plans or handoffs.
+
 ## Running it
 
 ```bash
@@ -39,8 +43,8 @@ version. You can also connect the repository in the Cloudflare dashboard and let
 Pages build it — use `npm run build` as the build command and `dist` as the
 output directory.
 
-Nothing here needs Workers KV, D1, R2 or Durable Objects yet. Those arrive with
-saved games and multiplayer, per the spec's roadmap.
+Nothing here needs Workers KV, D1, R2 or Durable Objects yet. Saved games and
+multiplayer remain deferred in `PROJECT_STATUS.md`.
 
 ## How it is put together
 
@@ -73,10 +77,16 @@ cannot disagree with the soil it measures.
 
 | Input | Action |
 |---|---|
-| Drag | Pan the sheet |
-| Shift-drag | Tilt the camera off the sheet |
-| Scroll | Zoom |
-| `F` | Reframe the specimen |
+| Drag | Pan the current view |
+| Shift-drag | Orbit the forest / tilt the underground specimen |
+| Scroll | Zoom; descending close enough enters the underground view |
+| `V` | Switch between Forest and Underground |
+| Arrow keys | Pan while the canvas is focused |
+| `+` / `−` | Zoom while the canvas is focused |
+| `F` | Reframe the current view |
+| Space | Pause or resume |
+| `R` | Rest or resume growth after awakening |
+| `H` | Hide or restore field notes |
 | `1`–`4` | Grow / Bond / Cord / Fruit |
 
 Click the sheet to apply the selected order. With **Bond** selected, click a
@@ -113,13 +123,17 @@ errors, and can run arbitrary JavaScript against the live game through the
 
 ## What is built, and what is not
 
-Working now: procedural soil transects with warped horizons and a water table;
+Working now: a seeded 3D bird's-eye forest with selectable trees and a connected
+descent into the underground view; procedural wind, loose leaves, rainfall and
+seasonal foliage; procedural soil transects with warped horizons and a water table;
 hyphal growth that reads the soil and pays for every centimetre; mycorrhizal
 bonding with a real trade obligation a tree can sever; carbon, water, nitrogen
 and genetic-potential economies with spatial transport through the network;
 cords; a saprotroph rival; seasons with a drought that moves the water table;
 tree health, growth and death; fruiting and spore banking; the printed
-interface; and the depth rail.
+interface; and the depth rail. The surface view is functional but still needs
+transition, weather, responsive, accessibility and performance work detailed in
+`PROJECT_STATUS.md`.
 
 Not yet built: the evolution tree, the other rival species, parasites and
 disease, wildfire and logging, biomes beyond the temperate stand, save/load, and

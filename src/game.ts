@@ -3,7 +3,8 @@ import { GRID, SPECIES } from './sim/content';
 import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
-import { Canopy } from './render/canopy';
+import { SurfaceForest, treeSurfacePosition } from './render/surface';
+import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { ForestView } from './render/forest';
 import { HyphaeMesh, Motes } from './render/hyphae';
@@ -65,9 +66,11 @@ export class Game {
   private readonly forest: ForestView;
   private readonly ui: SheetUI;
   private readonly living: LivingView;
-  private readonly canopy: Canopy;
+  private readonly surface: SurfaceForest;
   private readonly sound = new Soundscape();
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  private ambientMotion = !this.reducedMotion;
+  private lastView = '';
   private awakened = false;
   private markerClock = 0;
   private journeyClock = 0;
@@ -118,16 +121,21 @@ export class Game {
     this.stage.scene.add(this.playerMotes.points, this.rivalMotes.points);
 
     this.forest = new ForestView(this.sim.world);
+    this.forest.showRootsOnly();
     this.stage.scene.add(this.forest.group);
-    this.canopy = new Canopy(this.sim.world);
+    this.surface = new SurfaceForest(this.sim.world);
     this.living = new LivingView(this.sim);
-    this.stage.scene.add(this.canopy.group, this.living.group);
+    this.stage.scene.add(this.surface.group, this.living.group);
 
     ui.buildRail(this.sim);
     this.frameSheet();
+    this.stage.rig.reducedMotion = this.reducedMotion;
+    if (new URLSearchParams(location.search).get('view') !== 'underground') this.stage.rig.setView('forest', true);
+    this.syncViewUI();
     this.bindInput();
     this.bindSpeed();
     this.bindExperience();
+    this.bindViews();
     this.ui.onOrder((order) => this.applyOrder(order));
     this.setSpeed(0);
   }
@@ -203,6 +211,8 @@ export class Game {
     // diverge instead of converge.
     const dt = Math.max(0, Math.min(0.1, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
+    this.stage.rig.update(dt);
+    this.syncViewUI();
 
     this.accumulator += dt * this.speed;
     let steps = 0;
@@ -225,7 +235,10 @@ export class Game {
       this.forest.setSeason(season);
     }
     this.forest.update(dt);
-    this.canopy.update(dt, this.sim.season.id, this.reducedMotion);
+    const blend = this.stage.rig.surfaceBlend;
+    this.surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
+    // Hide through-soil overlays above ground; terrain itself reveals the cutaway.
+    for (const object of [this.playerMesh.group, this.rivalMesh.group, this.playerMotes.points, this.rivalMotes.points, this.forest.group, this.living.group]) object.visible = blend < 0.75;
     this.living.update(this.sim, dt, this.reducedMotion);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
@@ -278,7 +291,7 @@ export class Game {
   }
 
   private bindExperience(): void {
-    document.querySelector('#begin')!.addEventListener('click', () => this.awaken());
+    document.querySelector('#begin')!.addEventListener('click', () => { this.descend(); this.awaken(); });
     document.querySelector('#rest')!.addEventListener('click', () => {
       if (this.sim.outcome !== 'playing') return;
       this.sim.player.resting = !this.sim.player.resting;
@@ -317,6 +330,82 @@ export class Game {
     });
   }
 
+  private bindViews(): void {
+    document.querySelector('#view-forest')!.addEventListener('click', () => this.setView('forest'));
+    document.querySelector('#view-underground')!.addEventListener('click', () => this.descend());
+    document.querySelector('#descend-tree')!.addEventListener('click', () => this.descend());
+    document.querySelector('#forest-tree')!.addEventListener('change', event => {
+      const id = Number((event.target as HTMLSelectElement).value);
+      this.selectTree(id);
+    });
+    const select = document.querySelector<HTMLSelectElement>('#forest-tree')!;
+    for (const tree of this.sim.world.trees) {
+      const option = document.createElement('option');
+      option.value = String(tree.id);
+      option.textContent = `${SPECIES[tree.species].common} · ${tree.id + 1}`;
+      select.append(option);
+    }
+    const motion = document.querySelector<HTMLButtonElement>('#ambient-motion')!;
+    const updateMotion = () => { motion.textContent = this.ambientMotion ? 'Wind on' : 'Wind still'; motion.setAttribute('aria-pressed', String(this.ambientMotion)); };
+    updateMotion();
+    motion.addEventListener('click', () => { this.ambientMotion = !this.ambientMotion; updateMotion(); });
+    matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', event => {
+      this.stage.rig.reducedMotion = event.matches;
+      this.ambientMotion = !event.matches;
+      updateMotion();
+    });
+  }
+
+  private setView(view: WorldView): void {
+    this.stage.rig.setView(view);
+    this.syncViewUI();
+  }
+
+  private descend(): void {
+    const id = this.surface.selectedId;
+    if (id === null) this.setView('underground');
+    else {
+      const target = deriveJourney(this.sim).roots.find(root => root.treeId === id);
+      const tree = this.sim.world.trees.find(tree => tree.id === id);
+      const root = target ?? tree?.rootTips[0];
+      if (root) this.stage.rig.focus(root.gx - GRID.cols / 2, GRID.rows / 2 - root.gy, 150);
+      else this.setView('underground');
+      this.syncViewUI();
+    }
+  }
+
+  private selectTree(id: number): void {
+    const tree = this.sim.world.trees.find(tree => tree.id === id);
+    if (!tree) return;
+    this.surface.selectedId = id;
+    document.querySelector<HTMLSelectElement>('#forest-tree')!.value = String(id);
+    const position = treeSurfacePosition(tree);
+    this.stage.rig.focusTree(position.x, position.z);
+    this.updateTreeNote();
+  }
+
+  private updateTreeNote(): void {
+    const tree = this.sim.world.trees.find(tree => tree.id === this.surface.selectedId);
+    const status = !tree ? 'Choose a crown to follow its roots.' : `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${tree.rootTips.some(tip => tip.bondedTo !== null) ? 'Bonded to your network' : 'Not yet bonded'}`;
+    document.querySelector('#tree-status')!.textContent = status;
+  }
+
+  private syncViewUI(): void {
+    const rig = this.stage.rig;
+    const transition = rig.transitioning;
+    const state = `${rig.view}:${transition}`;
+    if (this.lastView === state) return;
+    this.lastView = state;
+    document.body.dataset.view = rig.view;
+    document.body.classList.toggle('view-transition', transition);
+    for (const view of ['forest', 'underground']) document.querySelector(`#view-${view}`)!.setAttribute('aria-pressed', String(rig.view === view));
+    document.querySelector('#view-status')!.textContent = transition ? (rig.view === 'forest' ? 'Rising through the canopy…' : 'Following the roots…') : (rig.view === 'forest' ? 'Above the forest floor' : 'Within the living soil');
+    document.querySelector('.camera-hint')!.textContent = rig.view === 'forest'
+      ? 'Drag to wander · Shift-drag to orbit · Scroll to descend · V to switch views'
+      : 'Drag to wander · Scroll to look closer · F to reframe · V to rise';
+    for (const button of this.markerButtons.values()) button.hidden = true;
+  }
+
   /** The species' short name, for a label that has to stay short. */
   private shortName(treeId: number): string {
     return SPECIES[this.sim.world.trees[treeId].species].common
@@ -335,7 +424,7 @@ export class Game {
    */
   private updateMarkers(journey: Journey | null): void {
     for (const button of this.markerButtons.values()) button.hidden = true;
-    if (!journey) return;
+    if (!journey || this.stage.rig.view === 'forest' || this.stage.rig.transitioning) { this.updateTreeNote(); return; }
 
     const markers: MarkerSpec[] = [];
     for (const target of journey.roots.slice(0, 4)) markers.push(this.rootMarker(target));
@@ -461,6 +550,7 @@ export class Game {
     const canvas = this.canvas;
 
     canvas.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !event.isPrimary) return;
       this.pointerDown = true;
       this.pointerMoved = 0;
       this.lastX = event.clientX;
@@ -497,7 +587,10 @@ export class Game {
         /* capture already released */
       }
       // A drag is a camera move; a tap is an order.
-      if (this.pointerMoved < 6) this.applyOrderAt(event.clientX, event.clientY);
+      if (this.pointerMoved < 6 && !this.stage.rig.transitioning) {
+        if (this.stage.rig.view === 'forest') this.pickTree(event.clientX, event.clientY);
+        else this.applyOrderAt(event.clientX, event.clientY);
+      }
     };
     canvas.addEventListener('pointerup', release);
     canvas.addEventListener('pointercancel', () => { this.pointerDown = false; });
@@ -506,13 +599,23 @@ export class Game {
       'wheel',
       (event) => {
         event.preventDefault();
-        this.stage.rig.zoomBy(Math.exp(event.deltaY * 0.0011));
+        const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.canvas.clientHeight : 1);
+        const before = this.stage.rig.view;
+        this.stage.rig.zoomBy(Math.exp(THREE.MathUtils.clamp(delta, -160, 160) * 0.0011));
+        if (before === 'forest' && this.stage.rig.view === 'underground') this.descend();
       },
       { passive: false }
     );
 
     window.addEventListener('keydown', (event) => {
-      if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof HTMLInputElement) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      if (event.key.toLowerCase() === 'v') { event.preventDefault(); if (this.stage.rig.view === 'forest') this.descend(); else this.setView('forest'); }
+      if (event.target === canvas && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault();
+        this.stage.rig.pan(event.key === 'ArrowLeft' ? -6 : event.key === 'ArrowRight' ? 6 : 0, event.key === 'ArrowUp' ? 6 : event.key === 'ArrowDown' ? -6 : 0);
+      }
+      if (event.key === '+' || event.key === '=') this.stage.rig.zoomBy(0.85);
+      if (event.key === '-') this.stage.rig.zoomBy(1.15);
       if (event.code === 'Space' && !(event.target instanceof HTMLButtonElement)) {
         event.preventDefault();
         this.awaken();
@@ -528,7 +631,6 @@ export class Game {
     });
     window.addEventListener('resize', () => {
       this.stage.resize();
-      this.frameSheet();
     });
   }
 
@@ -552,6 +654,7 @@ export class Game {
   }
 
   private applyOrderAt(clientX: number, clientY: number): void {
+    if (this.stage.rig.view !== 'underground' || this.stage.rig.transitioning) return;
     if (!this.awakened || this.sim.outcome !== 'playing') return;
     const point = this.gridAt(clientX, clientY);
     if (!point) return;
@@ -585,6 +688,7 @@ export class Game {
   }
 
   private applyOrder(order: OrderId): void {
+    if (this.stage.rig.view === 'forest') this.descend();
     this.ui.setActiveOrder(order);
     const hints: Record<OrderId, string> = {
       grow: 'Click the soil to send the growth frontier there.',
@@ -593,6 +697,20 @@ export class Game {
       fruit: 'Click near the surface to raise a fruiting body.',
     };
     this.ui.setNote(hints[order]);
+  }
+
+  private pickTree(clientX: number, clientY: number): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.set((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2);
+    this.raycaster.setFromCamera(this.pointer, this.stage.rig.camera);
+    const intersections = this.raycaster.intersectObjects(this.surface.pickTargets, false);
+    const treeHit = intersections.find(hit => hit.object.userData.treeId !== undefined);
+    if (treeHit) this.selectTree(treeHit.object.userData.treeId as number);
+    else if (intersections[0]) {
+      const point = intersections[0].point;
+      const tree = this.surface.nearestTree(point.x, point.z);
+      if (tree) this.selectTree(tree.id);
+    }
   }
 
   private restart(): void {

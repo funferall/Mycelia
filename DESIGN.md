@@ -86,6 +86,16 @@ components:
 
 ## Overview
 
+**Scope note — connected surface forest:** Mycelia now has a dimensional
+bird's-eye forest in addition to the underground mounted specimen. The forest
+uses real z-depth, natural light, atmospheric motion, weather, and seasonal
+colour while keeping the same restrained botanical annotations at the edges.
+The flat-sheet, earned-light, and near-silhouette rules below remain binding for
+the underground view. Where this document describes the entire game as flat,
+read that as the underground specimen unless a later surface rule says
+otherwise. `PROJECT_STATUS.md` records implementation maturity and remaining
+work.
+
 **Creative North Star: "The Mounted Specimen"**
 
 The whole game is one sheet of dark archival mounting paper. A living forest
@@ -241,10 +251,12 @@ are a graceful degradation, not a target.
 
 ## Elevation & Depth
 
-There are no shadows and no elevation. Nothing floats above anything: every
-element is printed onto one flat sheet, and depth in the scene comes from the
-soil's own darkness — near-black at bedrock, warmer toward the litter — plus the
-falloff in the glow. The interface has no z-axis at all.
+In the underground view there are no interface shadows or elevation. Every
+annotation is printed onto one flat sheet, and depth in the specimen comes from
+the soil's own darkness—near-black at bedrock, warmer toward the litter—plus the
+falloff in the glow. The interface has no z-axis. The surface forest is the
+deliberate exception: its terrain, trunks, crowns, atmosphere, and camera occupy
+real depth, while its annotations retain the flat botanical grammar.
 
 Cards, panels, modals, tooltips and popovers do not exist in this world. If
 information must appear, it is printed on the sheet or added to the catalogue

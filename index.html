@@ -46,9 +46,23 @@
       sheet world).
     -->
 
-    <canvas id="gl" tabindex="0" aria-label="Living forest. Drag to pan, scroll to zoom. Use the root buttons to grow and bond."></canvas>
+    <canvas id="gl" tabindex="0" aria-label="Living forest and underground network. Drag or use arrow keys to pan, shift-drag to orbit, scroll or use plus and minus to zoom. V switches views. Use the tree selector to follow roots."></canvas>
 
     <main id="sheet">
+      <nav class="world-navigation" aria-label="World view">
+        <div class="view-buttons" role="group" aria-label="Choose a view">
+          <button type="button" id="view-forest" aria-pressed="true">Forest</button>
+          <span aria-hidden="true">↕</span>
+          <button type="button" id="view-underground" aria-pressed="false">Underground</button>
+        </div>
+        <p id="view-status" role="status">Above the forest floor</p>
+      </nav>
+      <section class="forest-observation" aria-label="Explore the forest">
+        <label for="forest-tree">Follow a tree</label>
+        <select id="forest-tree"><option value="" disabled selected>Select a tree in the forest</option></select>
+        <p id="tree-status" role="status">Choose a crown to follow its roots.</p>
+        <button type="button" id="descend-tree" class="journal-action">Explore beneath <span aria-hidden="true">↓</span></button>
+      </section>
       <div id="root-markers" aria-label="Tree roots"></div>
       <section class="field-journal" aria-label="Field guide">
         <p class="journal-kicker">Mycelia · a living forest</p>
@@ -94,6 +108,7 @@
           <button type="button" data-speed="4">4×</button>
         </div>
         <div class="quiet-controls">
+          <button type="button" id="ambient-motion" aria-pressed="true">Wind on</button>
           <button type="button" id="sound" aria-pressed="false">Sound off</button>
           <button type="button" id="immersive" aria-pressed="false">Hide notes · H</button>
         </div>

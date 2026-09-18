@@ -111,10 +111,13 @@ product truth and is unusually complete: high concept, core loop, objectives,
 threats, world model, resources, player mechanics, opponents, RTS structure,
 art direction, technical architecture, roadmap, and open questions.
 
-There is no existing code, no gameplay footage, no playtest data, no player
-base, no screenshots, and no press. Nothing in this record should be presented
-to a visitor as a claim about a shipped product, and no player counts, review
-scores, benchmarks, or testimonials may be authored.
+The repository now contains a working deterministic browser simulation, an
+underground strategy view, a functional 3D surface-forest prototype, UI and
+audio systems, headless simulation tests, and a local browser-capture harness.
+`PROJECT_STATUS.md` is the authoritative record of what is implemented,
+verified, partial, planned, or deferred. There is still no shipped-product
+evidence, public player base, review corpus, or press; no player counts, review
+scores, external benchmarks, or testimonials may be authored.
 
 ## Product Principles
 

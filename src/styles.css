@@ -66,6 +66,8 @@ body {
   pointer-events: auto;
 }
 
+#sheet select { pointer-events: auto; }
+
 /* A drifting spec of dust over the whole sheet, as if photographing paper. */
 #sheet::after {
   content: '';
@@ -670,6 +672,34 @@ body {
   .record {
     grid-template-columns: auto 1fr auto 1fr;
   }
+}
+
+/* The same botanical annotations accompany the forest and its soil cutaway. */
+.world-navigation { position: absolute; top: 26px; left: 46%; transform: translateX(-50%); text-align: center; }
+.view-buttons { display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--rule); }
+.view-buttons button { min-height: 44px; border: 0; border-bottom: 1px solid transparent; padding: 8px 5px; background: none; color: var(--ink-dim); font: 17px var(--serif); cursor: pointer; }
+.view-buttons button[aria-pressed='true'] { color: var(--paper); border-color: var(--paper); }
+.view-buttons button:hover { color: var(--amber); }
+.view-buttons span { color: var(--ink-dim); font-size: 14px; }
+#view-status { color: var(--ink-dim); font: 12px var(--serif); margin: 8px 0 0; }
+.forest-observation { position: absolute; left: 32px; bottom: 76px; width: 270px; }
+.forest-observation label { display: block; color: var(--paper); font: 21px var(--serif); margin-bottom: 12px; }
+.forest-observation select { width: 100%; min-height: 40px; border: 0; border-bottom: 1px solid var(--rule-strong); border-radius: 0; padding: 8px 20px 8px 0; background: var(--sheet); color: var(--paper); font: 14px var(--serif); cursor: pointer; }
+.forest-observation select:focus-visible { outline: 2px solid var(--paper); outline-offset: 4px; }
+#tree-status { min-height: 36px; color: var(--ink); font: 13px/1.45 var(--serif); margin: 12px 0; }
+body[data-view='underground'] .forest-observation { display: none; }
+body[data-view='forest'] .rail, body[data-view='forest'] .orders, body[data-view='forest'] #root-markers, .view-transition #root-markers, .view-transition .rail { visibility: hidden; }
+body[data-view='forest'] #gl { cursor: grab; }
+body[data-view='forest'] #gl:active { cursor: grabbing; }
+.immersed .forest-observation { visibility: hidden; }
+@media (max-width: 900px) {
+  .world-navigation { top: 100px; left: 50%; }
+  .view-buttons button { font-size: 15px; }
+  .forest-observation { left: 18px; right: 18px; bottom: 42px; width: auto; background: var(--sheet); padding: 10px 16px; }
+  .forest-observation label { display: none; }
+  #tree-status { min-height: 0; margin: 6px 0; font-size: 12px; }
+  body[data-view='forest'] .field-journal { bottom: 218px; }
+  .camera-hint { max-width: calc(100% - 36px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

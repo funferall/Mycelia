@@ -29,6 +29,11 @@ export class Stage {
   /** Where the specimen and the sheet live, so callers can add to either. */
   readonly world = new THREE.Group();
   private readonly paper: THREE.Mesh;
+  private readonly decor = new THREE.Group();
+  private readonly backing: THREE.Mesh;
+  private readonly key: THREE.DirectionalLight;
+  private readonly atmosphere = new THREE.HemisphereLight('#cad6b2', '#362d1d', 0);
+  private readonly fog = new THREE.FogExp2('#252c21', 0);
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -50,12 +55,14 @@ export class Stage {
     // Three's lights are physically scaled, so a near-black albedo needs a
     // generous irradiance to read as soil rather than as a hole in the sheet.
     const key = new THREE.DirectionalLight(0xffdcae, 2.6);
+    this.key = key;
     key.position.set(-60, 120, 90);
     this.scene.add(key);
     const fill = new THREE.DirectionalLight(0x35506b, 0.7);
     fill.position.set(80, -40, 60);
     this.scene.add(fill);
     this.scene.add(new THREE.AmbientLight(0x2a2119, 1.1));
+    this.scene.add(this.atmosphere, this.decor);
 
     // The paper itself.
     const paperTexture = makePaperTexture(1024);
@@ -68,7 +75,7 @@ export class Stage {
       })
     );
     this.paper.position.z = -14;
-    this.scene.add(this.paper);
+    this.decor.add(this.paper);
 
     // The one band of light in the world that the network did not make: a low
     // warm glow above the soil line, so the trunks read as silhouettes against
@@ -83,7 +90,7 @@ export class Stage {
       })
     );
     sky.position.set(0, MOUNT_HALF_H + 34, -12.6);
-    this.scene.add(sky);
+    this.decor.add(sky);
 
     // The mount: a near-black backing so the specimen reads as one solid object
     // lifted off the sheet, rather than grit scattered on paper.
@@ -92,9 +99,17 @@ export class Stage {
       new THREE.MeshStandardMaterial({ color: '#0a0807', roughness: 1, metalness: 0 })
     );
     backing.position.z = -2.6;
+    this.backing = backing;
     this.scene.add(backing);
 
-    this.scene.add(makeTapeStrips());
+    this.decor.add(makeTapeStrips());
+    this.decor.traverse(object => {
+      if (object instanceof THREE.Mesh) {
+        const material = object.material as THREE.Material;
+        material.userData.baseOpacity = material.opacity;
+        material.transparent = true;
+      }
+    });
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.rig.camera));
@@ -121,7 +136,21 @@ export class Stage {
   }
 
   render(dt: number): void {
-    this.rig.update(dt);
+    const blend = this.rig.surfaceBlend;
+    this.decor.visible = blend < 0.99;
+    this.decor.traverse(object => {
+      if (object instanceof THREE.Mesh) object.material.opacity = object.material.userData.baseOpacity * (1 - blend);
+    });
+    this.backing.scale.z = 1 + blend * 15.5;
+    // Keep the backing below the terrain, including the lowest part of its relief.
+    this.backing.scale.y = 1 - blend * 0.025;
+    this.backing.position.z = -2.6 - blend * 35.65;
+    this.atmosphere.intensity = blend * 2.1;
+    this.key.intensity = 2.6 - blend * 0.8;
+    this.bloom.strength = 0.42 - blend * 0.31;
+    this.fog.density = blend * 0.001;
+    this.scene.fog = blend > 0.01 ? this.fog : null;
+    this.renderer.setClearColor(new THREE.Color('#0b0908').lerp(new THREE.Color('#12150f'), blend).multiplyScalar(0.18));
     this.composer.render(dt);
   }
 }

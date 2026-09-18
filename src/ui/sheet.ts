@@ -84,7 +84,7 @@ export class SheetUI {
     }
 
     document.addEventListener('keydown', (event) => {
-      if (event.target instanceof HTMLInputElement || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement || event.ctrlKey || event.metaKey || event.altKey) return;
       const map: Record<string, OrderId> = { '1': 'grow', '2': 'bond', '3': 'cord', '4': 'fruit' };
       const order = map[event.key];
       if (order) this.orderHandler?.(order);
