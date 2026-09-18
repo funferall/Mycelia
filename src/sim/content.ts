@@ -310,6 +310,12 @@ export const ECON = {
   fruitSeconds: 34,
   /** Spores released per successful fruiting. */
   sporesPerFruit: 240,
+  /**
+   * What a colony hands to a spore to found a daughter stand. The parent pays
+   * it out of its own body and the daughter starts with exactly that, so a
+   * spore crossing a stand border moves matter rather than minting it.
+   */
+  colonyFund: { carbon: 46, water: 6, nitrogen: 3 },
 } as const;
 
 /** The player's own colony identity — warm amber, per the art direction. */

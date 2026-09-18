@@ -109,6 +109,8 @@ Both are deterministic, so a link like
 ## Visual QA
 
 ```bash
+npm test            # headless simulation regression
+node tools/test-region.mjs  # the regional world: terrain, water, spores
 npm run test:view   # browser checks for the forest <-> underground crossing
 npm run test:journey # plays a whole match through the printed controls
 node tools/shoot.mjs \
@@ -160,3 +162,7 @@ fixed-timestep world that more systems can be added to.
 
 Hosting is free at indie scale. The one recurring cost in this repo is
 `design/comps/`, which was produced once with `gpt-image-2` for roughly $0.75.
+`node tools/test-region.mjs` checks the region the simulation is built on:
+shared stand borders that agree exactly, water that crosses them, communities
+that follow the ground, and spores that found neighbouring stands for what the
+parent paid. It is headless and takes seconds.

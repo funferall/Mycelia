@@ -69,6 +69,12 @@ export interface World {
   cells: SoilCell[];
   /** Depth of the water table in centimetres. Lower means deeper. */
   waterTableCm: number;
+  /**
+   * The depth this stand's water table settles to in an ordinary season.
+   * Regional: a stream corridor sits above a shallow one, a ridge above a deep
+   * one, and the weather moves it from there.
+   */
+  waterTableBaseCm: number;
   /** Rainfall multiplier for the current tick, set by the season. */
   rainfall: number;
   /** Leaf fall for the current tick, 0..1, set by the season. */
@@ -110,10 +116,36 @@ function stratumAtDepth(cm: number): StratumId {
  * pockets in the litter, mineral veins in the stone, and a water table.
  */
 export function createWorld(seed: number): World {
+  return createStandWorld(seed);
+}
+
+/** What a stand's site contributes to the soil beneath it. */
+export interface StandConditions {
+  /** Depth to the water table in an ordinary season, in centimetres. */
+  waterTableCm?: number;
+  /**
+   * Species mix as cumulative thresholds: rolls below the first are oak, below
+   * the second are birch, the rest hemlock. The default is the mixed stand the
+   * prototype has always drawn.
+   */
+  mix?: [number, number];
+}
+
+/**
+ * Generate one stand's soil.
+ *
+ * The local noise is the stand's own: which horizons undulate where, where the
+ * organic pockets and mineral veins sit. What comes from the region is where
+ * the water stands and what the canopy is made of, because neither is a
+ * property of a square of ground on its own.
+ */
+export function createStandWorld(seed: number, conditions: StandConditions = {}): World {
   const rng: Rng = mulberry32(seed);
   const warp = makeNoise2D(seed ^ 0x9e3779b9, 4, 0.035);
   const pocket = makeNoise2D(seed ^ 0x51ed270b, 5, 0.11);
   const vein = makeNoise2D(seed ^ 0x1b873593, 3, 0.19);
+  const baseCm = Math.max(14, Math.min(MAX_DEPTH_CM - 4, conditions.waterTableCm ?? MAX_DEPTH_CM * 0.66));
+  const mix: [number, number] = conditions.mix ?? [0.45, 0.8];
 
   const cells: SoilCell[] = new Array(GRID.cols * GRID.rows);
   for (let gy = 0; gy < GRID.rows; gy++) {
@@ -145,14 +177,15 @@ export function createWorld(seed: number): World {
     cols: GRID.cols,
     rows: GRID.rows,
     cells,
-    waterTableCm: MAX_DEPTH_CM * 0.66,
+    waterTableCm: baseCm,
+    waterTableBaseCm: baseCm,
     rainfall: 1,
     litterfall: 0.25,
     trees: [],
     forestBiomass: 0,
   };
 
-  seedForest(world, rng);
+  seedForest(world, rng, mix);
   updateMoisture(world, 0);
   return world;
 }
@@ -161,7 +194,7 @@ export function createWorld(seed: number): World {
  * Place a stand of trees. Species mix leans on depth-to-water: birch tolerates
  * the wet hollows, oak wants the well-drained rises, hemlock fills the shade.
  */
-function seedForest(world: World, rng: Rng): void {
+function seedForest(world: World, rng: Rng, mix: [number, number]): void {
   const count = 7 + Math.floor(rng() * 4);
   const spacing = world.cols / count;
 
@@ -171,7 +204,7 @@ function seedForest(world: World, rng: Rng): void {
     if (world.trees.some((t) => Math.abs(t.gx - gx) < spacing * 0.55)) continue;
 
     const roll = rng();
-    const species: TreeSpeciesId = roll < 0.45 ? 'oak' : roll < 0.8 ? 'birch' : 'hemlock';
+    const species: TreeSpeciesId = roll < mix[0] ? 'oak' : roll < mix[1] ? 'birch' : 'hemlock';
     const spec = SPECIES[species];
     const height = Math.round(range(rng, 14, 26) * (species === 'oak' ? 1.15 : 1));
     const maturity = range(rng, 0.55, 1);

@@ -20,7 +20,15 @@ import {
   type Network,
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
-import { createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
+import { communityThresholds, type StandSite } from './region';
+import { createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
+
+/** What a founding spore brings with it when it starts a colony. */
+export interface FoundingKit {
+  carbon: number;
+  water: number;
+  nitrogen: number;
+}
 
 export interface SimEvent {
   /** Simulation time the event was logged at, in seconds. */
@@ -59,11 +67,21 @@ export class Simulation {
   private rivalThinkClock = 0;
   private moistureClock = 0;
 
-  constructor(seedText = 'raven-wood') {
-    const seed = hashString(seedText);
+  /**
+   * @param site the stand this colony lives in. Without one the simulation
+   * builds the single stand the prototype has always opened on, which is what
+   * the deterministic regression and the standalone match still use.
+   * @param kit what the founding spore carried. The reserve it replaces is the
+   * colony's own: a spore that crossed a stand border starts with what its
+   * parent paid, not with a standing endowment.
+   */
+  constructor(seedText = 'raven-wood', site?: StandSite, kit?: FoundingKit) {
+    const seed = site ? site.seed >>> 0 : hashString(seedText);
     this.seed = seed;
     this.rng = mulberry32(seed ^ 0x1d872b41);
-    this.world = createWorld(seed);
+    this.world = site
+      ? createStandWorld(seed, { waterTableCm: site.waterTableCm, mix: communityThresholds(site.community) })
+      : createWorld(seed);
 
     // The player wakes in the soil beside a tree's root system, close enough
     // that the first bond is a short, legible act rather than a long march.
@@ -74,7 +92,8 @@ export class Simulation {
       anchor.gx,
       anchor.gy,
       mulberry32(seed ^ 0xabc123),
-      220
+      kit?.carbon ?? 220,
+      kit ? { water: kit.water, nitrogen: kit.nitrogen } : {}
     );
     // The rival saprotroph starts deep in the litter at the far end, where the
     // decomposable matter is richest, and spreads toward the player.
@@ -87,7 +106,11 @@ export class Simulation {
       40
     );
 
-    this.log(`Match opened on seed "${seedText}".`);
+    this.log(
+      site
+        ? `Colony founded in the ${site.community.replace(/-/g, ' ')} with ${this.player.carbon.toFixed(0)} carbon.`
+        : `Match opened on seed "${seedText}".`
+    );
     this.log(`${this.world.trees.length} trees standing in the stand.`);
   }
 
@@ -106,7 +129,8 @@ export class Simulation {
     this.world.rainfall = season.rain;
     this.world.litterfall = season.litterfall;
     // Drought pulls the water table down; wet seasons raise it.
-    const tableTarget = GRID.rows * 0.66 + (1 - season.rain) * 22 - (season.rain - 1) * 8;
+    // The stand's own depth is the reference; the weather moves it from there.
+    const tableTarget = this.world.waterTableBaseCm + (1 - season.rain) * 22 - (season.rain - 1) * 8;
     this.world.waterTableCm += (tableTarget - this.world.waterTableCm) * Math.min(1, dt * 0.08);
 
     // Soil moisture and mineralisation touch every cell, which is far more

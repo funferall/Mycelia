@@ -134,7 +134,8 @@ export function createNetwork(
   gx: number,
   gy: number,
   rng: Rng,
-  startingCarbon: number
+  startingCarbon: number,
+  endowment: { water?: number; nitrogen?: number } = {}
 ): Network {
   const root: HyphaNode = {
     id: 0,
@@ -151,8 +152,8 @@ export function createNetwork(
     thickness: 0.85,
     reinforced: false,
     carbon: startingCarbon,
-    water: 4,
-    nitrogen: 2,
+    water: endowment.water ?? 4,
+    nitrogen: endowment.nitrogen ?? 2,
     health: 1,
     connected: true,
     bondedTree: -1,

@@ -71,6 +71,14 @@ Confirmed from the project's design spec (`mycelium-rts-outline-spec.md`):
   *spatial* — they exist at nodes and must flow through a connected network, so
   a severed colony starves. Storage is deliberately limited: fungi invest,
   they do not hoard.
+- **The battlefield is a region, not a stand.** A match is a 3×3 mosaic of
+  logical forest stands that share one landscape and one weather: coherent
+  terrain, a stream that crosses stand borders, and a different forest
+  community on ground that drains and holds water differently. Mycelium spreads
+  between stands the way it does in life — by spore, on the wind, with the
+  parent paying for the journey — so a lineage can be several colonies in
+  several kinds of ground rather than one network in one transect. Ground with
+  no colony in it is not simulated until a spore lands there.
 - **Scope for v1:** single-player versus AI, one biome, desktop web. Explicitly
   out of scope: mobile, above-ground micro, more than four players,
   user-generated maps.

@@ -51,6 +51,10 @@ wall-clock crossing, the overlay fade, the viewport re-framing, and the browser
 check that covers them are local working-tree changes and have not been
 committed or deployed.
 
+The regional world model is being built underneath the running game: the region,
+the stand generator's site conditions and the regional match are in the tree,
+but the game still opens, renders and plays on the founding stand alone.
+
 ## Product direction that must be preserved
 
 - The game has **two connected views**: a dimensional bird's-eye forest and the
@@ -95,7 +99,9 @@ committed or deployed.
 
 | Area | Primary files | Current responsibility |
 |---|---|---|
-| Simulation | `src/sim/{sim,network,world,content,rng}.ts` | Seeded world, fixed timestep, resources, network growth, tree trade, seasons, fruiting, outcomes |
+| Simulation | `src/sim/{sim,network,world,content,rng}.ts` | One stand: seeded soil, fixed timestep, resources, network growth, tree trade, seasons, fruiting, outcomes |
+| Region | `src/sim/region.ts` | The 3×3 stand mosaic: one heightfield, drainage and streams, water table, communities, adjacency, wind, seed validation |
+| Regional match | `src/sim/match.ts` | Every stand in a region, stepped in a fixed order, with spores carried between neighbours and colonies founded for what the parent paid |
 | Integration | `src/game.ts`, `src/main.ts` | Frame loop, input, view state, simulation/render/UI/audio synchronization |
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
@@ -104,7 +110,7 @@ committed or deployed.
 | Shared stage | `src/render/{stage,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless deterministic regression, browser checks for the connected views and for input, a whole match played through the interface, and screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand and for a region, browser checks for the connected views and for input, a whole match played through the interface, and screenshot/error capture |
 
 The simulated soil is still a two-dimensional transect. Each simulated tree has
 one horizontal `gx` coordinate and stable root IDs. `treeSurfacePosition()` in
@@ -150,19 +156,19 @@ and equivalent useful details have been accounted for, then remove it.
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
-| MAP-01 | Planned | Multi-stand regional map | Expand a match from one local stand into a seeded grid/mosaic of logical forest squares. Begin with a tunable 3×3 to 5×5 target for prototyping; choose the shipping size only after simulation and rendering profiles. |
-| MAP-02 | Planned | Continuous regional surface | Render logical stands as one continuous landscape with no artificial seams. Stand borders may appear in a botanical survey/atlas overlay for navigation and status, but should not be permanent terrain lines. |
-| MAP-03 | Planned | Terrain-first generation | Generate regional elevation, ridges, hollows, slopes, aspect, drainage, exposed rock, soil parent material, disturbance, and deadwood before placing trees. All generation must be deterministic from seed and generator version. |
-| MAP-04 | Planned | Hydrology and water features | Derive watersheds, flow paths, streams, ponds, vernal pools, wetlands, springs/seeps, seasonal channels, and local water tables from terrain. Connect surface water to underground moisture, saturation, erosion, drought refuges, and root architecture. |
-| MAP-05 | Planned | Distinct forest stands | Generate coherent communities such as oak ridge, mixed hardwood slope, yellow-birch hollow, hemlock ravine, stream corridor, wetland edge, windthrow gap, and recovering clearing. Vary species composition, density, age structure, canopy openness, understory, litter, and deadwood. |
-| MAP-06 | Planned | Stand suitability and succession | Species placement must respond to moisture, drainage, aspect, soil, light, and disturbance. Stand composition can change through growth, death, gaps, regeneration, disease, and recovery rather than remaining static scenery. |
-| MAP-07 | Planned | Cross-stand fungal network | Permit cords, resources, infections, warnings, and eventually roots to cross stand boundaries through explicit graph connections. A severed inter-stand cord must isolate downstream colonies under the same conservation rules as local networks. |
+| MAP-01 | Partial | Multi-stand regional map | A match is now a seeded 3×3 region of logical stands with orthogonal adjacency, chosen at 3×3 for prototyping. Every stand is reachable from the founding stand by construction, and that reachability is validated. Remaining: the region is not rendered or navigable in the game yet, and the shipping size is still open. |
+| MAP-02 | Partial | Continuous regional surface | There is one `heightAt` for the whole region, and the shared edges of neighbouring stands agree exactly — asserted on all twelve internal borders, in both height and flow. Remaining: nothing draws it yet; the renderer still builds one stand of floor. |
+| MAP-03 | Partial | Terrain-first generation | Elevation, a regional fall line, a valley, drainage from a priority flood, flow accumulation and aspect are all generated before anything is placed, deterministically from the seed. Remaining: exposed rock, parent material and deadwood are still local, and there is no generator-version field. |
+| MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and its course is a polyline the renderer could draw. The water table follows relief and flow, and each stand passes its own table depth into the local soil generator. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and saturation barriers. |
+| MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), and the community sets the stand's species mix, so two stands do not grow the same forest. Remaining: density, age structure, canopy openness, understory, litter and deadwood do not vary by community yet. |
+| MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
+| MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. |
 | MAP-08 | Planned | Regional exploration and information | Let the player survey the region from above, select a stand/tree/water feature, and descend to the correct local underground context. Use soil opacity, incomplete surveys, and network sensing as fog of war rather than a conventional minimap. |
-| MAP-09 | Planned | Generated-map fairness | Validate that every seed has a viable founding stand, reachable early partner, water and nutrient options, cross-stand routes, threat counterplay, and at least one recoverable path after loss. Reject or repair impossible seeds deterministically. |
-| MAP-10 | Planned | Regional colonization loop | Recommended first design: begin in one stand, fruit spores into adjacent eligible stands according to wind and landing conditions, establish new colony centers, and pursue a regional restoration/fruiting objective. The current two-bloom victory is prototype scope and must be reconsidered before regional play ships. |
+| MAP-09 | Partial | Generated-map fairness | Validation refuses a region whose stands cannot be reached from the founding stand, or whose founding stand has no water in reach; the founding stand is chosen for habitable ground near water on the way down. Remaining: no repair pass, no threat-counterplay check, and no check that a loss is recoverable. |
+| MAP-10 | Partial | Regional colonization loop | A bloom releases spores that ride the region's own wind: adjacent stands by default, and stands beyond them only in a storm. A spore founds a daughter colony that begins as a germinating spore holding exactly the fund its parent paid. Remaining: the regional objective is still the two-bloom prototype victory, and the hops are not drawn. |
 | MAP-11 | Planned | Regional atlas interface | Provide a restrained botanical survey layer showing stand identity, explored state, broad health, water, infection, and network continuity. It must use the established field-record language and avoid a generic RTS minimap or tile HUD. |
-| MAP-12 | Planned | Simulation streaming and level of detail | Simulate the active stand and nearby interactions at full fidelity; update distant stands deterministically at a coarser cadence without changing outcomes based on camera location or frame rate. Add rendering LOD, pooled geometry, and bounded particles. |
-| MAP-13 | Planned | Generator persistence and replay | Save world seed, generator version, stand state, RNG state, network boundary connections, hydrology, and local modifications. Identical seeds and orders must reproduce the same regional world across view changes and reloads. |
+| MAP-12 | Partial | Simulation streaming and level of detail | Every colonized stand steps at full fidelity every tick, in stand order, and ground with no colony in it is not simulated at all, which is what keeps nine stands affordable. Moving between stands provably changes no number (asserted against an unwatched match). Remaining: coarse cadence for distant colonies, rendering LOD, pooled geometry and bounded particles. |
+| MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
 
 #### Regional generation order
 
@@ -387,22 +393,36 @@ work in order.
 
 ### P1 — define the scalable regional world model
 
-1. Write the deterministic data model for a region, logical stands, terrain,
-   hydrology, local transects, and cross-stand boundary connections before
-   increasing renderer dimensions.
-2. Promote the current world into one stand record without breaking the existing
-   deterministic tests or single-stand playable path.
-3. Prototype a small multi-stand region with continuous elevation and one stream
-   crossing at least two boundaries. Descend into two stands and preserve their
-   independent underground state.
-4. Define full-fidelity and coarse simulation cadences, ensuring camera location
-   never affects results.
-5. Add seed validation and round-trip tests for terrain boundaries, hydrology,
-   stand selection, cross-stand transport, and save/replay inputs.
+1. **Done in this changeset.** `src/sim/region.ts` holds the deterministic data
+   model: one heightfield, a fall line and valley, drainage from a priority
+   flood, flow accumulation, a stream, a water table, per-stand communities,
+   orthogonal adjacency, wind with storms, and seed validation.
+2. **Done in this changeset.** `createStandWorld` generates one stand's soil
+   from its site — the region supplies the water table and the species mix, the
+   stand supplies its own noise — and `createWorld` is the same function with
+   the prototype's default site, so the single-stand path and its ten
+   deterministic checks are unchanged (identical journey results after the
+   change).
+3. **Half done.** Terrain and water cross stand borders coherently and the
+   stream crosses three to six of them; `RegionalMatch` keeps a stand's
+   simulation alive while nobody is looking and lets the player re-enter it.
+   Remaining: nothing *renders* the region, and no control descends into a
+   second stand yet.
+4. **Done in this changeset.** Every colonized stand steps at full fidelity
+   every tick, in stand order; uncolonized ground is not simulated at all. A
+   two-minute match is asserted to be identical whether or not the player moves
+   between stands, so the camera cannot reach the results. Coarse cadence for
+   distant colonies is deliberately still open.
+5. **Partly done.** The region is deterministic and validated, all twelve shared
+   borders are asserted equal in height and flow, hydrology and colonization are
+   covered end to end, and two matches are compared. Remaining: no save/replay
+   format to round-trip.
 
 Exit criteria: at least four connected logical stands render as one continuous
 forest, share coherent terrain and water, retain persistent underground state,
-and exchange resources through deterministic boundary connections.
+and exchange resources through deterministic boundary connections. The terrain,
+water, persistence and boundary exchange now hold in the simulation; rendering
+the region and navigating it is what remains.
 
 ### P2 — establish real roots and ecological opposition
 
@@ -474,8 +494,17 @@ either foundation.
 - The forest is a seeded presentation strip over a 2D soil simulation, not a
   fully simulated 3D terrain volume.
 - The current match contains one stand-sized transect. There is no regional
-  stand grid, connected terrain generator, hydrology graph, cross-stand network,
-  persistent local-slice selection, or distant-stand simulation yet.
+  view, atlas, cross-stand cord, or distant-stand cadence yet. The region exists
+  in the simulation — a 3×3 mosaic with continuous terrain, a stream, per-stand
+  communities and wind-carried spores — but the game still opens, renders and
+  plays on the founding stand alone, and nothing draws the region or lets the
+  player descend into a second stand.
+- A colony that has fruited twice stops growing, as it always has, so a regional
+  match is a founding colony plus whatever its spores founded before it won. A
+  regional objective is still an open design question (MAP-10).
+- Ground with no colony in it is not simulated at all: its history begins when a
+  spore lands. That is deterministic and cheap, but it means an uncolonized
+  stand does not drift while the player is away from it.
 - Surface and underground geometry share state but do not yet have automated
   round-trip identity tests beyond the crown → root landing check in
   `tools/test-view.mjs`.
@@ -510,7 +539,32 @@ wall-clock crossing:
   a production chunk above 500 kB.
 - `npm test` — **pass: 10 checks**. Conservation, cut supply, disconnection,
   supplied fruiting, three two-bloom victories, guards, and identical-order
-  determinism.
+  determinism. These are the same journey numbers as before the regional work
+  (`raven-wood` 354s, `old-growth` 652s, `ironwood` 354s), which is the evidence
+  that generating a stand from default site conditions reproduces the old
+  single-stand world exactly.
+- `node tools/test-region.mjs` — **pass: 12 checks**, seconds on a laptop:
+  - All twelve internal borders of the 3×3 region agree exactly in height and in
+    flow, and the ground is continuous across them.
+  - Three seeds each generate coherent terrain, water and communities: 9
+    habitable stands, 3-6 stream borders, 3-4 distinct communities, and a
+    founding stand chosen for habitable ground near water.
+  - The same seed builds the same region; stand lookup resolves every centre.
+  - Wind reaches the adjacent stands it blows toward in ordinary weather, and a
+    storm reaches further (29 stormy samples in fifteen minutes of weather, and
+    the direction never turns more than 0.05 radians in five seconds).
+  - Community decides the species mix; the mixed slope keeps the prototype's
+    original 45/35/20.
+  - Validation refuses a region whose stands cannot be reached from the founding
+    stand.
+  - A bloom founds exactly one adjacent stand, and the daughter's reserves are
+    exactly the fund its parent paid — no carbon, water or mineral appears.
+  - With every neighbour already colonized, a storm carries a spore past them.
+  - A colony with nothing to give sends nobody, and is never driven into debt.
+  - A colony grows while nobody is looking, and its stand can be entered later.
+  - Two minutes of match are byte-identical whether or not the player moves
+    between stands, and two matches from one seed colonize the same stands with
+    the same spores.
 - `npm run test:view` — **pass: 60 checks**, measured on a built preview with
   software WebGL:
   - A rise at 30fps and a rise at 4fps both take 1.50-1.53s of wall clock
@@ -570,6 +624,7 @@ Useful commands:
 ```powershell
 npm run build
 npm test
+node tools/test-region.mjs
 npm run test:view
 npm run test:journey
 npm run preview -- --host 127.0.0.1
@@ -650,6 +705,26 @@ verification entry—not a new document.
 
 ### 18 September 2026
 
+- Began P1. `src/sim/region.ts` generates a deterministic 3×3 region: a
+  heightfield with a fall line and a valley, drainage from a priority flood,
+  flow accumulation, a stream whose course crosses stand borders, a water table
+  that follows relief and flow, seven stand communities, orthogonal adjacency,
+  wind with storms, a founding stand chosen for habitable ground, and
+  validation that refuses a region whose stands cannot be reached.
+- `src/sim/world.ts` grew `createStandWorld`: a stand's soil takes its water
+  table and species mix from its site, and `createWorld` is that same function
+  with the prototype's defaults, so the single-stand world is unchanged.
+- `src/sim/match.ts` adds `RegionalMatch`: every stand in a region, stepped in
+  stand order, with uncolonized ground simulated not at all and every colonized
+  stand kept alive while nobody is looking. A bloom releases spores that ride
+  the wind — adjacent stands by default, further only in a storm — and a landed
+  spore founds a daughter colony holding exactly the carbon, water and mineral
+  its parent paid.
+- Added `tools/test-region.mjs`: twelve checks over terrain coherence,
+  hydrology, communities, wind, validation, colonization, conservation, stand
+  persistence, camera independence and seed determinism.
+- Recorded honestly that the region is not yet rendered, navigable or drawn:
+  P1 item 3's visible half is the next work.
 - Closed P0 items 4 and 5. `tools/test-view.mjs` grew eighteen input checks
   (drag versus tap, refused orders, pointer cancel, mid-crossing clicks, the
   wheel-descent threshold, control focus, keyboard orders and pause, a burst of
@@ -691,3 +766,6 @@ verification entry—not a new document.
   continuous terrain, hydrology, varied communities, persistent underground
   transects, cross-stand networks, regional colonization, streaming, and seed
   validation.
+`node tools/test-region.mjs` is headless and takes seconds; `REGION_SEEDS`
+chooses the seeds it validates and `--verbose` prints every stand of every
+region, which is how its thresholds were tuned.
