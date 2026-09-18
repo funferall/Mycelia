@@ -39,10 +39,17 @@ requested 3D surface forest. The game opens above a seeded forest stand, allows
 tree selection and camera exploration, and descends to the existing underground
 view. The forest, roots, health, maturity, bonds, weather, and seasons read the
 same simulation state. The surface implementation is substantial but remains a
-prototype requiring transition, weather, performance, and interaction QA.
+prototype requiring weather, performance, and interaction QA.
 
-As of this update, the forest work and this documentation consolidation are
-local working-tree changes and have not been committed or deployed.
+The crossing between the two views was stabilized in the same working tree. It
+is timed against the wall clock rather than against frames, reverses at any
+point, dissolves the contents of the soil instead of switching them off, and
+re-derives its viewport-dependent framing when the window changes shape.
+
+The connected forest view and this log were committed as `89ee3cb`. The
+wall-clock crossing, the overlay fade, the viewport re-framing, and the browser
+check that covers them are local working-tree changes and have not been
+committed or deployed.
 
 ## Product direction that must be preserved
 
@@ -90,13 +97,14 @@ local working-tree changes and have not been committed or deployed.
 |---|---|---|
 | Simulation | `src/sim/{sim,network,world,content,rng}.ts` | Seeded world, fixed timestep, resources, network growth, tree trade, seasons, fruiting, outcomes |
 | Integration | `src/game.ts`, `src/main.ts` | Frame loop, input, view state, simulation/render/UI/audio synchronization |
-| Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered framing, zoom/view transitions, reduced motion |
+| Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
+| Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
 | Underground world | `src/render/{soil,forest,hyphae,living}.ts` | Soil, roots, networks, flow motes, mushrooms, spores, interaction feedback |
 | Shared stage | `src/render/{stage,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/shoot.mjs` | Headless deterministic regression and browser screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-view.mjs`, `tools/shoot.mjs`, `tools/browser.mjs` | Headless deterministic regression, browser checks for the connected views, and screenshot/error capture |
 
 The simulated soil is still a two-dimensional transect. Each simulated tree has
 one horizontal `gx` coordinate and stable root IDs. `treeSurfacePosition()` in
@@ -134,8 +142,8 @@ and equivalent useful details have been accounted for, then remove it.
 |---|---|---|---|
 | VIEW-01 | Implemented, unverified | Bird's-eye 3D forest | Seeded terrain, varied procedural trees, understory, litter, and an oblique overview render successfully. Verify supported viewport framing and mature/dead stands. |
 | VIEW-02 | Implemented, unverified | Surface tree identity and selection | Crowns and selector options use simulation tree IDs; status reflects health, death, and bonds. Add automated crown-selection and tree/root round-trip checks. |
-| VIEW-03 | Partial | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered camera state, selected-root descent, and reduced-motion snapping exist. Underground groups currently appear at a visibility threshold rather than a true crossfade. Low frame rates can stretch the transition because render delta is clamped. |
-| VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. Resize updates aspect but does not reframe the active view. Test rapid reversal and interrupted transitions. |
+| VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
+| VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
 | VIEW-05 | Implemented, unverified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. Exercise pointer cancel, drag thresholds, control focus, and rapid view changes in a browser. |
 
 ### Regional map, terrain, forest stands, and water
@@ -336,7 +344,7 @@ Ecological references supporting this direction:
 |---|---|---|---|
 | UX-01 | Implemented, unverified | Guided opening and journey model | `deriveJourney()` drives Reach → Bond → Gather → Fruit guidance. Browser-test refusal recovery and complete-match guidance. |
 | UX-02 | Partial | Actionable root labels | Explicit root IDs and states exist. Verify collision handling, safe areas, compact viewports, and prioritization during a mature match. |
-| UX-03 | Partial | Responsive layouts | Desktop render is inspected; compact styles exist. Verify 1366×768 and 390×844 without losing essential resource or view feedback. |
+| UX-03 | Partial | Responsive layouts | Desktop render is inspected; compact styles exist. `npm run test:view` now asserts at 1600×1000, 1366×768, and 390×844 that the canvas fills the viewport, that the view controls stay on screen, and that all 13 catalogue figures are present and inside the viewport. Remaining: touch input, real phone and tablet hardware, and the 1180px breakpoint band. |
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
 | PERF-01 | Planned | Measured performance budget | Measure simulation time, render time, draw calls, GPU/CPU memory, and frame time at opening, mature match, and the configured network ceiling on stated hardware. |
@@ -350,20 +358,29 @@ Work in this order unless the user explicitly changes priority.
 
 ### P0 — stabilize and verify the connected views
 
-1. Replace the underground visibility threshold with a deliberate crossfade or
-   cutaway progression so roots, networks, and soil do not pop into view.
-2. Make transition duration stable in wall-clock time at low frame rates and
-   verify reversing the transition at any point.
-3. Reframe the active view after resize and verify 1600×1000, 1366×768, and
-   390×844 layouts.
-4. Add focused browser checks for Forest/Underground controls, `V`, wheel
-   descent, selected tree → correct root, return context, safe clicks, and
-   reduced motion.
+1. **Done in this changeset.** The underground visibility threshold is gone:
+   the networks, motes, roots and rewards dissolve from their own opacities
+   across the crossing, and are hidden outright only once they are gone.
+2. **Done in this changeset.** The crossing runs on a wall-clock timeline, so a
+   4fps rise takes the same 1.50s as a 30fps one, and it reverses at any point
+   with a duration proportional to the blend left to travel.
+3. **Done in this changeset.** A viewport change re-derives the active view's
+   default framing, and the stand's framing now fits the whole stand at a
+   portrait aspect. `npm run test:view` covers 1600×1000, 1366×768, and
+   390×844.
+4. **Partially done.** Browser checks now cover `V`-style view changes, the
+   selected tree → correct root round trip, return context, crossing reversal,
+   the three viewport sizes, and reduced motion. Still to add: wheel-threshold
+   descent, pointer cancel and drag thresholds, control focus, and rapid view
+   changes from the buttons themselves.
 5. Complete one two-bloom journey through visible UI controls rather than only
    simulation methods.
 
 Exit criteria: the same selected tree can be followed down and back repeatedly,
 with no unintended order, lost input, abrupt world pop, or broken framing.
+Following a crown and returning to the forest is now checked automatically; the
+remaining exit-criteria work is the two-bloom journey through the interface and
+the input-safety cases in item 4.
 
 ### P1 — define the scalable regional world model
 
@@ -457,10 +474,18 @@ either foundation.
   stand grid, connected terrain generator, hydrology graph, cross-stand network,
   persistent local-slice selection, or distant-stand simulation yet.
 - Surface and underground geometry share state but do not yet have automated
-  round-trip identity tests.
-- Transition visibility uses `blend < 0.75` for underground groups, causing a
-  possible visual pop.
-- The resize handler updates renderer/camera aspect but does not re-run framing.
+  round-trip identity tests beyond the crown → root landing check in
+  `tools/test-view.mjs`.
+- A crossing is one camera rising through one scene rather than a blend of two
+  rendered views. Under software WebGL a single frame can take over a second, so
+  the dissolve is quantized to two or three steps even though the crossing still
+  completes inside its 1.5s wall-clock budget.
+- Only automatic framing is re-derived on a viewport change. Panning, zooming,
+  tilting, or following a specific tree deliberately pins that view's camera,
+  so a window that changes shape afterwards keeps the player's pose.
+- The first rise after load can drop frames by more than a second: the surface
+  stand's ground, grass, litter and shadows are compiled and uploaded the first
+  time they become visible. Moving that cost to boot has not been measured.
 - Surface weather is rain only; there is no general weather state machine.
 - Wind has no explicit shared vector or strength and leaves do not settle.
 - Surface performance has not been profiled; procedural tree geometry and one
@@ -473,34 +498,69 @@ either foundation.
 
 ## Verification record
 
-Latest verified on 18 September 2026:
+Latest verified on 18 September 2026, on the working tree that contains the
+wall-clock crossing:
 
-- `npm run build` — **pass**. TypeScript and Vite production build complete.
-  Nonfatal warnings: stale Browserslist data, an apparently external/unused
-  Tailwind content warning, and a production chunk above 500 kB.
-- `npm test` — **pass: 10 checks**. Includes conservation, cut supply,
-  disconnection, supplied fruiting, three two-bloom victories, guards, and
-  identical-order determinism.
-- Built-preview browser capture at 1600×1000 — **pass** for forest and direct
-  underground views, with no page or console errors.
-- Forest snapshot state: `view=forest`, `surfaceBlend=1`, eight seeded trees on
-  `raven-wood`.
-- Direct underground snapshot state: `view=underground`, `surfaceBlend=0`, no
-  active transition.
-- Transition capture — functional, but remained active under software WebGL long
-  enough to confirm the low-frame-rate timing risk recorded above.
-- Impeccable mechanical detector — advisory findings only: new surface colors
-  and several UI sizes are not yet recorded in `DESIGN.md`.
+- `npm run build` — **pass**. TypeScript and Vite production build complete in
+  0.43s; production JS 667.28 kB (173.32 kB gzipped). Nonfatal warnings: stale
+  Browserslist data, an apparently external/unused Tailwind content warning, and
+  a production chunk above 500 kB.
+- `npm test` — **pass: 10 checks**. Conservation, cut supply, disconnection,
+  supplied fruiting, three two-bloom victories, guards, and identical-order
+  determinism.
+- `npm run test:view` — **pass: 40 checks**, measured on a built preview with
+  software WebGL:
+  - A rise at 30fps and a rise at 4fps both take 1.50-1.53s of wall clock
+    (46 frames of 33ms and 6 frames of 250ms). This is the property the old
+    smoothing could not hold: below 10fps the render step was clamped, so the
+    crossing stretched.
+  - The dissolve is continuous in both directions: 0 frames where the strands
+    moved while the picture held still, and the largest opacity step at 30fps is
+    0.082 (a threshold would be a step of 1.0).
+  - Crossing endpoints are exact: the network is at opacity 1 underground and
+    opacity 0 above the floor, whatever frame the crossing landed on.
+  - A reversal at blend 0.52 comes back in 23 frames of the 23 expected, a rapid
+    double reversal (0.1s and 0.4s in) still lands in the forest, and neither
+    jumps the picture.
+  - Following a crown descends to that tree's own root (0.00 world units from a
+    tip) and rising returns to the forest above it.
+  - A live crossing under the software renderer spent 1.32s of its 1.50s budget
+    in 2 frames with a worst measured frame of 875ms (runs on this machine have
+    shown 0.43-1.32s spent in one or two frames, with worst frames of 428-875ms):
+    the wall clock is charged, so a hitch cannot stretch the crossing, only
+    coarsen it.
+  - Framing at 1600×1000, 1366×768, and 390×844: the specimen's corners stay
+    within 0.76-0.84 of the half-viewport and all 8 crowns stay inside the
+    frame. The default framing distance is re-derived per aspect (313, 313 and
+    940 world units), and the canvas, view controls, and all 13 catalogue
+    figures stay on screen at every size.
+  - Reduced motion reaches the forest in the frame it was asked for, with no
+    crossing reported and the soil's contents left out.
+- Built-preview captures, no page or console errors:
+  `node tools/shoot.mjs --url http://127.0.0.1:4173/?seed=raven-wood --out design/shots/review-forest.png --canvas-out design/shots/review-forest-canvas.png --at 4000 --freeze`,
+  the same with `&view=underground`, and the same at `--size 390x844`. The
+  portrait capture shows the whole stand inside the sheet instead of cropped at
+  both ends.
+- Impeccable mechanical detector — not re-run in this changeset; the last
+  advisory findings stand (new surface colors and several UI sizes are not yet
+  recorded in `DESIGN.md`).
 
 Useful commands:
 
 ```powershell
 npm run build
 npm test
+npm run test:view
 npm run preview -- --host 127.0.0.1
 node tools/shoot.mjs --url http://127.0.0.1:4173 --out design/shots/review.png --canvas-out design/shots/review-canvas.png --at 1500 --freeze
 node tools/shoot.mjs --url "http://127.0.0.1:4173/?view=underground" --out design/shots/underground.png --at 1500 --freeze
 ```
+
+`npm run test:view` starts and stops its own preview server on port 4173; pass
+`--url` to point it at a server you started yourself, `--port` to move it, and
+`--verbose` to print every measurement. It drives the frame loop with a
+synthetic clock, so a run takes a few minutes under software WebGL and its
+timing numbers are not hostage to the machine.
 
 Do not assume ports from this record remain free. Use a built preview for stable
 captures; Vite hot reload can interrupt dev-server screenshot sessions.
@@ -568,6 +628,22 @@ verification entry—not a new document.
 
 ### 18 September 2026
 
+- Stabilized the forest ↔ underground crossing, closing P0 items 1-3. Replaced
+  the underground visibility threshold with `src/render/fade.ts`, which
+  dissolves the networks, motes, roots and rewards from their own captured
+  opacities, writes exact endpoints, and leaves a hidden overlay set out of the
+  frame entirely.
+- Timed the crossing against the wall clock in `src/render/camera.ts`
+  (`CROSSING_SECONDS`, ease in and out, a reversal duration proportional to the
+  blend left, a legibility floor, and a maximum wall step per frame). The frame
+  loop now passes the real elapsed time separately from the clamped simulation
+  step.
+- Re-derived the active view's framing on a viewport change, discarded
+  remembered poses that were never the player's own, and fixed the forest
+  framing so it fits the whole stand at a portrait aspect instead of cropping
+  its ends.
+- Added `tools/test-view.mjs` (40 browser checks) and the shared
+  `tools/browser.mjs`, which `tools/shoot.mjs` now uses.
 - Consolidated the former feature plan and implementation handoff into this
   authoritative log and removed both superseded documents.
 - Recorded the implemented 3D surface forest, connected camera/view controls,

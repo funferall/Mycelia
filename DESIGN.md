@@ -249,6 +249,34 @@ catalogue moves in to 150px. Below 900px the catalogue docks full-width to the
 bottom edge and the packet is hidden. The game is desktop-first; small screens
 are a graceful degradation, not a target.
 
+The specimen and the stand are framed from the viewport at any size: at a
+portrait aspect the stand is framed whole and reads smaller rather than being
+cropped at its ends.
+
+## Motion
+
+Motion belongs to the specimen, and the one piece of motion the interface owns
+is the crossing between the two views.
+
+- **The crossing is timed by the clock.** A full forest ↔ underground crossing
+  takes a second and a half of wall-clock time at any frame rate. A machine
+  drawing a quarter of the frames sees the same rise in the same second and a
+  half, drawn more coarsely; it never stretches because the renderer is slow.
+- **It eases, and it can turn around.** The crossing eases in and out, and
+  changing views part way through reverses the picture in the time the
+  remaining part would have taken — never less than about a third of a second,
+  so a double tap reads as a correction rather than a flicker.
+- **Nothing in the soil is switched off.** The networks, motes, roots and
+  living rewards dissolve from their own brightness as the forest floor closes
+  over them, and return the same way. A display underground is at full
+  strength; a display that has gone is not drawn at all.
+- **Framing follows the viewport until the player takes the camera.** A window
+  that changes shape re-derives the default framing of the active view.
+  Panning, zooming, tilting, or following a particular tree pins that view, and
+  a later resize leaves the player's own pose alone.
+- **Reduced motion snaps.** Under `prefers-reduced-motion: reduce` the new view
+  appears in the frame it was asked for, with no crossing at all.
+
 ## Elevation & Depth
 
 In the underground view there are no interface shadows or elevation. Every

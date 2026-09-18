@@ -9,11 +9,9 @@
  *   node tools/shoot.mjs --url http://127.0.0.1:5174 --out design/shots/01.png
  *   node tools/shoot.mjs --out a.png --out b.png --at 12000 --size 1600x1000
  */
-import { chromium } from 'playwright';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { collectProblems, launchBrowser, waitForGame } from './browser.mjs';
 
 function argAll(name) {
   const out = [];
@@ -46,56 +44,12 @@ if (outs.length === 0 && canvasOuts.length === 0) {
   process.exit(1);
 }
 
-const browser = await chromium.launch({
-  // The bundled browser revision rarely matches whatever playwright expects, so
-  // reuse whichever Chromium is already on the machine.
-  executablePath: findChromium(),
-  args: [
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--ignore-gpu-blocklist',
-    '--enable-webgl',
-  ],
-});
-
-/** Locate an installed Chromium, preferring a full build over the headless shell. */
-function findChromium() {
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), 'AppData', 'Local', 'ms-playwright');
-  if (!existsSync(root)) return undefined;
-  const dirs = readdirSync(root)
-    .filter((name) => name.startsWith('chromium-') || name.startsWith('chromium_headless_shell-'))
-    .sort()
-    .reverse();
-  for (const dir of dirs) {
-    const candidates = [
-      join(root, dir, 'chrome-win64', 'chrome.exe'),
-      join(root, dir, 'chrome-win', 'chrome.exe'),
-      join(root, dir, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
-      join(root, dir, 'chrome-linux', 'chrome'),
-      join(root, dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell'),
-      join(root, dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return undefined;
-}
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
 
-const problems = [];
-page.on('console', (msg) => {
-  if (msg.type() === 'error') problems.push(`console.error: ${msg.text()}`);
-});
-page.on('pageerror', (error) => problems.push(`pageerror: ${error.message}`));
-
-// A warmed match can spend a while running fixed steps before the first frame,
-// so wait for the game to exist rather than for the load event.
+const problems = collectProblems(page);
 await page.goto(url, { waitUntil: 'commit', timeout: 120000 });
-await page
-  .waitForFunction(() => Boolean(window.mycelia), null, { timeout: bootTimeout })
-  .catch(() => problems.push('timed out waiting for window.mycelia'));
+await waitForGame(page, bootTimeout).catch(() => problems.push('timed out waiting for window.mycelia'));
 
 // Let the simulation run so the network has grown before we photograph it.
 await page.waitForTimeout(waitMs);

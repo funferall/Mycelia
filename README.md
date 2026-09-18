@@ -109,11 +109,20 @@ Both are deterministic, so a link like
 ## Visual QA
 
 ```bash
+npm run test:view   # browser checks for the forest <-> underground crossing
 node tools/shoot.mjs \
   --url "http://127.0.0.1:5173/?warm=300&steward=1" \
   --canvas-out design/shots/latest.png \
   --eval "window.mycelia.game.sim.player.tipCount"
 ```
+
+`npm run test:view` runs the game from the build in `dist/` (run `npm run build`
+first; `tools/shoot.mjs` can use either a preview or a dev server). It starts a
+preview server of its own and checks the crossing between the two views: that it
+takes the same wall-clock time at 30fps and at 4fps, that it dissolves the
+soil's contents in both directions and reverses at any point, that following a
+crown lands on that tree's own root, and that the specimen and the stand stay
+framed at 1600×1000, 1366×768 and 390×844.
 
 The harness drives headless Chromium, captures the WebGL drawing buffer
 directly (`--canvas-out`; under software rendering the compositor does not
@@ -132,8 +141,8 @@ and genetic-potential economies with spatial transport through the network;
 cords; a saprotroph rival; seasons with a drought that moves the water table;
 tree health, growth and death; fruiting and spore banking; the printed
 interface; and the depth rail. The surface view is functional but still needs
-transition, weather, responsive, accessibility and performance work detailed in
-`PROJECT_STATUS.md`.
+weather, accessibility and performance work, and the rest of the connected-view
+work, detailed in `PROJECT_STATUS.md`.
 
 Not yet built: the evolution tree, the other rival species, parasites and
 disease, wildfire and logging, biomes beyond the temperate stand, save/load, and

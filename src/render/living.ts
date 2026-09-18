@@ -25,7 +25,11 @@ export class LivingView {
     this.group.add(this.founder);
     const circle = new THREE.BufferGeometry().setFromPoints(Array.from({ length: 64 }, (_, i) => new THREE.Vector3(Math.cos(i / 64 * Math.PI * 2), Math.sin(i / 64 * Math.PI * 2), 0)));
     this.target = new THREE.LineLoop(circle, new THREE.LineBasicMaterial({ color: '#dfb875', transparent: true, opacity: 0.65, depthTest: false }));
-    this.pulse = new THREE.LineLoop(circle, new THREE.LineBasicMaterial({ color: '#ffce8b', transparent: true, opacity: 0, depthTest: false }));
+    const pulseMaterial = new THREE.LineBasicMaterial({ color: '#ffce8b', transparent: true, opacity: 0, depthTest: false });
+    // This material's opacity is written every frame below, so the overlay fade
+    // must not stamp a captured base over it; `update` carries the fade instead.
+    pulseMaterial.userData.animatedOpacity = true;
+    this.pulse = new THREE.LineLoop(circle, pulseMaterial);
     this.group.add(this.target, this.pulse);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(this.sporeData, 3));
@@ -39,7 +43,13 @@ export class LivingView {
     this.pulseAge = 0;
   }
 
-  update(sim: Simulation, dt: number, reduced: boolean): void {
+  /**
+   * `fade` is how much of the soil's contents is on screen: 1 underground, 0
+   * once the camera is above the forest floor. It is applied to the one
+   * material here that animates its own opacity; the rest are faded by
+   * `OverlayFade` along with the networks and the roots.
+   */
+  update(sim: Simulation, dt: number, reduced: boolean, fade = 1): void {
     this.time += reduced ? 0 : dt;
     this.pulseAge += dt;
     this.founder.scale.setScalar(3.5 + Math.sin(this.time * 1.3) * 0.45);
@@ -50,7 +60,7 @@ export class LivingView {
       this.target.scale.setScalar(1.4 + Math.sin(this.time * 1.5) * 0.2);
     }
     this.pulse.scale.setScalar(1 + this.pulseAge * 4);
-    (this.pulse.material as THREE.LineBasicMaterial).opacity = Math.max(0, 0.75 - this.pulseAge * 0.4);
+    (this.pulse.material as THREE.LineBasicMaterial).opacity = Math.max(0, 0.75 - this.pulseAge * 0.4) * fade;
     // Every mushroom stands where its own bloom actually happened, so a warm-up
     // or a future saved match shows the same sheet the player earned.
     const blooms = sim.player.blooms;
@@ -90,11 +100,13 @@ function makeMushrooms(seed: number): THREE.Group {
   const rng = mulberry32(seed + 987);
   const profile = [new THREE.Vector2(0, 1.2), new THREE.Vector2(0.5, 1.18), new THREE.Vector2(1.3, 0.85), new THREE.Vector2(1.9, 0.25), new THREE.Vector2(2, 0), new THREE.Vector2(1.5, 0.05), new THREE.Vector2(0, 0.2)];
   const capGeometry = new THREE.LatheGeometry(profile, 40);
-  const capMaterial = new THREE.MeshStandardMaterial({ color: '#db994a', roughness: 0.55, emissive: '#945018', emissiveIntensity: 0.2, side: THREE.DoubleSide });
+  // Transparent from the start so the view crossing can dissolve the caps
+  // without recompiling their shaders mid-transition.
+  const capMaterial = new THREE.MeshStandardMaterial({ color: '#db994a', roughness: 0.55, emissive: '#945018', emissiveIntensity: 0.2, side: THREE.DoubleSide, transparent: true });
   for (let i = 0; i < 5; i++) {
     const single = new THREE.Group();
     const height = 2 + rng() * 3;
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.24, height, 10), new THREE.MeshStandardMaterial({ color: '#ead8a9', roughness: 0.8 }));
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.24, height, 10), new THREE.MeshStandardMaterial({ color: '#ead8a9', roughness: 0.8, transparent: true }));
     stem.position.y = height / 2;
     const cap = new THREE.Mesh(capGeometry, capMaterial);
     cap.position.y = height;

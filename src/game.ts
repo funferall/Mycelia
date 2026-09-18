@@ -3,9 +3,10 @@ import { GRID, SPECIES } from './sim/content';
 import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
-import { SurfaceForest, treeSurfacePosition } from './render/surface';
+import { FOREST_DEPTH, SurfaceForest, treeSurfacePosition } from './render/surface';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
+import { OverlayFade } from './render/fade';
 import { ForestView } from './render/forest';
 import { HyphaeMesh, Motes } from './render/hyphae';
 import { SoilMesh } from './render/soil';
@@ -67,6 +68,8 @@ export class Game {
   private readonly ui: SheetUI;
   private readonly living: LivingView;
   private readonly surface: SurfaceForest;
+  /** Everything drawn inside the soil, faded as one body during a crossing. */
+  private readonly overlays: OverlayFade;
   private readonly sound = new Soundscape();
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   private ambientMotion = !this.reducedMotion;
@@ -126,6 +129,14 @@ export class Game {
     this.surface = new SurfaceForest(this.sim.world);
     this.living = new LivingView(this.sim);
     this.stage.scene.add(this.surface.group, this.living.group);
+    this.overlays = new OverlayFade([
+      this.playerMesh.group,
+      this.rivalMesh.group,
+      this.playerMotes.points,
+      this.rivalMotes.points,
+      this.forest.group,
+      this.living.group,
+    ]);
 
     ui.buildRail(this.sim);
     this.frameSheet();
@@ -143,7 +154,7 @@ export class Game {
   /** Recompute the default framing for the current viewport. */
   private frameSheet(): void {
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-    this.stage.rig.frameMount(aspect, GRID.cols, GRID.rows, 34);
+    this.stage.rig.frameMount(aspect, GRID.cols, GRID.rows, 34, FOREST_DEPTH);
   }
 
   /**
@@ -203,15 +214,62 @@ export class Game {
     this.raf = 0;
   }
 
+  /**
+   * A read-only snapshot of what the camera and the soil's overlays are doing.
+   *
+   * The browser checks in `tools/` use this to verify that a crossing takes the
+   * same wall-clock time whatever the frame rate, that nothing pops in or out
+   * mid-crossing, and that a viewport change re-frames the active view. It
+   * reports the very state the frame loop acts on rather than a parallel copy.
+   */
+  viewReport(): {
+    view: WorldView;
+    crossing: boolean;
+    blend: number;
+    overlay: number;
+    strandOpacity: number;
+    distance: number;
+    goalDistance: number;
+    crossingElapsed: number;
+    crossingDuration: number;
+    aspect: number;
+    autoFraming: boolean;
+    mount: { halfWidth: number; halfHeight: number };
+    target: { x: number; y: number; z: number };
+  } {
+    return {
+      view: this.stage.rig.view,
+      crossing: this.stage.rig.transitioning,
+      blend: this.stage.rig.surfaceBlend,
+      overlay: this.overlays.opacity,
+      // The player's strands are the readout for the fade: their material is
+      // opaque at rest, so its opacity is exactly how much of the network is
+      // still on screen.
+      strandOpacity: (this.playerMesh.mesh.material as THREE.Material).opacity,
+      distance: this.stage.rig.distance,
+      goalDistance: this.stage.rig.goalDistance,
+      crossingElapsed: this.stage.rig.crossingProgress.elapsed,
+      crossingDuration: this.stage.rig.crossingProgress.duration,
+      aspect: this.stage.rig.camera.aspect,
+      autoFraming: this.stage.rig.autoFraming,
+      mount: { halfWidth: GRID.cols / 2, halfHeight: GRID.rows / 2 },
+      target: { x: this.stage.rig.target.x, y: this.stage.rig.target.y, z: this.stage.rig.target.z },
+    };
+  }
+
   private frame(now: number): void {
-    // Clamped at both ends. The upper bound stops a spiral of death after a
-    // long stall; the lower bound matters because requestAnimationFrame reports
-    // the frame's start time, which can precede a `performance.now()` taken
-    // just before it — and a negative timestep makes the camera's smoothing
-    // diverge instead of converge.
-    const dt = Math.max(0, Math.min(0.1, (now - this.lastFrame) / 1000));
+    // Two clocks, deliberately. `elapsed` is the real time since the previous
+    // frame and drives presentation that must take the same wall-clock time on
+    // any machine, such as the crossing between the two views. `dt` is clamped
+    // at both ends: the upper bound stops a spiral of death after a long stall;
+    // the lower bound matters because requestAnimationFrame reports the frame's
+    // start time, which can precede a `performance.now()` taken just before it,
+    // and a negative timestep makes the camera's smoothing diverge instead of
+    // converge.
+    const elapsed = Math.max(0, (now - this.lastFrame) / 1000);
+    const dt = Math.min(0.1, elapsed);
     this.lastFrame = now;
-    this.stage.rig.update(dt);
+    this.stage.rig.update(dt, elapsed);
     this.syncViewUI();
 
     this.accumulator += dt * this.speed;
@@ -236,10 +294,12 @@ export class Game {
     }
     this.forest.update(dt);
     const blend = this.stage.rig.surfaceBlend;
+    // The soil's contents dissolve through the middle of a crossing rather than
+    // switching off at a threshold, so the terrain closes over the network on
+    // the way up and they return as it opens on the way down.
+    const overlay = 1 - THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
     this.surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
-    // Hide through-soil overlays above ground; terrain itself reveals the cutaway.
-    for (const object of [this.playerMesh.group, this.rivalMesh.group, this.playerMotes.points, this.rivalMotes.points, this.forest.group, this.living.group]) object.visible = blend < 0.75;
-    this.living.update(this.sim, dt, this.reducedMotion);
+    this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
     if (this.sim.player.fruited > this.lastFruits) this.sound.chime('fruit');
@@ -264,6 +324,9 @@ export class Game {
     }
     this.ui.update(this.sim, dt, this.journey);
     this.ui.showOutcome(this.sim, () => this.restart());
+    // Last word on the overlays: the views above write their own opacities, so
+    // the fade is applied after them and nothing is left half lit.
+    this.overlays.apply(overlay);
     this.stage.render(dt);
     this.markerClock += dt;
     if (this.markerClock > 0.1) {
@@ -631,6 +694,10 @@ export class Game {
     });
     window.addEventListener('resize', () => {
       this.stage.resize();
+      // The default framing is a function of the aspect ratio, so a window that
+      // changes shape has to be framed again. The rig ignores this when the
+      // player has aimed the camera themselves.
+      this.stage.rig.reframe();
     });
   }
 

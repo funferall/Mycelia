@@ -3,6 +3,23 @@ import * as THREE from 'three';
 export type WorldView = 'forest' | 'underground';
 
 /**
+ * Wall-clock seconds a full crossing between the two views takes.
+ *
+ * A crossing is a presentation event, so it is timed against the clock rather
+ * than against frames: the rise takes the same second and a half on a machine
+ * running at twelve frames per second as on one running at a hundred and
+ * twenty. Smoothing alone could not promise that, because its per-frame step is
+ * clamped and a slow frame therefore stretched the crossing.
+ */
+const CROSSING_SECONDS = 1.5;
+
+/** Even a reversal late in a crossing keeps a legible beat instead of snapping. */
+const CROSSING_FLOOR_SECONDS = 0.35;
+
+/** A single frame is never allowed to account for more than this much of a crossing. */
+const CROSSING_MAX_STEP_SECONDS = 2;
+
+/**
  * Camera rig for the sheet.
  *
  * The default view is almost flat — you are looking at a sheet of paper lying
@@ -27,6 +44,26 @@ export class CameraRig {
   reducedMotion = false;
   private surfaceGoal = 0;
   private readonly remembered = new Map<WorldView, { target: THREE.Vector3; distance: number; elevation: number; azimuth: number }>();
+  /** The live pose at the moment a crossing began; see `beginCrossing`. */
+  private readonly crossingFrom = {
+    target: new THREE.Vector3(0, 10, 0),
+    distance: 260,
+    elevation: 0.11,
+    azimuth: 0,
+  };
+  private crossingFromBlend = 0;
+  private crossingElapsed = 0;
+  private crossingDuration = 0;
+  private crossing = false;
+  /**
+   * Whether each view's framing still follows the viewport. Clear it the moment
+   * the player aims the camera themselves: a resize must re-derive the default
+   * framing, never pull someone back from where they were looking.
+   */
+  private readonly autoByView: Record<WorldView, boolean> = { forest: true, underground: true };
+  /** The last mount and stand being framed, so a resize can frame them again. */
+  private mountFraming: { mountW: number; mountH: number; canopyH: number; standDepth: number } | null = null;
+  private reframePending = false;
   readonly camera: THREE.PerspectiveCamera;
   readonly target = new THREE.Vector3(0, 10, 0);
   distance = 260;
@@ -54,6 +91,7 @@ export class CameraRig {
 
   /** Pan by a screen-space delta, in world units at the current distance. */
   pan(dxWorld: number, dyWorld: number): void {
+    this.autoByView[this.view] = false;
     const a = this.goal.azimuth;
     this.goal.target.x += dxWorld * Math.cos(a);
     if (this.view === 'forest') {
@@ -64,17 +102,24 @@ export class CameraRig {
   }
 
   zoomBy(factor: number): void {
+    this.autoByView[this.view] = false;
     const distance = this.goal.distance * factor;
     if (this.view === 'forest' && distance < 105) { this.setView('underground'); return; }
     if (this.view === 'underground' && distance > Math.max(360, this.overviewDistance * 1.12)) { this.setView('forest'); return; }
+    // The ceiling belongs to the view being zoomed: a stand framed for a narrow
+    // window sits much further back than a mount on the same screen.
+    const ceiling = this.view === 'forest'
+      ? Math.max(this.bounds.maxDistance, this.forestOverview * 1.15)
+      : Math.max(this.bounds.maxDistance, this.overviewDistance * 1.2);
     this.goal.distance = THREE.MathUtils.clamp(
       distance,
       this.view === 'forest' ? 105 : this.bounds.minDistance,
-      Math.max(this.bounds.maxDistance, this.overviewDistance * 1.2)
+      ceiling
     );
   }
 
   tiltBy(dElevation: number, dAzimuth: number): void {
+    this.autoByView[this.view] = false;
     this.goal.elevation = THREE.MathUtils.clamp(
       this.goal.elevation + dElevation,
       this.view === 'forest' ? 0.6 : 0,
@@ -92,8 +137,11 @@ export class CameraRig {
    * left margin left free for the depth rail and the right for the catalogue
    * block — rather than the soil running off both edges of the screen.
    */
-  frameMount(aspect: number, mountW: number, mountH: number, canopyH: number): void {
+  frameMount(aspect: number, mountW: number, mountH: number, canopyH: number, standDepth = 76): void {
+    // Remembered so a viewport change can frame the same mount again.
+    this.mountFraming = { mountW, mountH, canopyH, standDepth };
     if (this.view === 'forest') { this.frameForest(aspect); return; }
+    this.autoByView.underground = true;
     const fov = (this.camera.fov * Math.PI) / 180;
     const halfTan = Math.tan(fov / 2);
     // Vertical: the mount, the canopy above it, and a little paper below.
@@ -125,8 +173,47 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
   }
 
+  /** True while the active view's framing is still derived from the viewport. */
+  get autoFraming(): boolean {
+    return this.autoByView[this.view];
+  }
+
+  /** Where the framing is heading; the live pose eases toward it. */
+  get goalDistance(): number {
+    return this.goal.distance;
+  }
+
+  /**
+   * Re-derive the active view's framing after the viewport changed shape.
+   *
+   * The default framing is a function of the aspect ratio, so a window that
+   * changes shape leaves it stale. This applies to the default framing only:
+   * panning, zooming, tilting or following a specific tree all clear
+   * `autoFraming`, and those cameras are the player's.
+   */
+  reframe(): void {
+    if (!this.autoFraming) return;
+    // Mid-crossing the pose is an interpolation toward the goal, so moving the
+    // goal underneath it would jump the picture. Land first, then re-frame.
+    if (this.crossing) {
+      this.reframePending = true;
+      return;
+    }
+    this.applyFraming();
+  }
+
+  private applyFraming(): void {
+    if (this.view === 'forest') this.frameForest(this.camera.aspect);
+    else if (this.mountFraming) {
+      const { mountW, mountH, canopyH, standDepth } = this.mountFraming;
+      this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth);
+    } else this.focus(this.goal.target.x, 35, 160);
+  }
+
   focus(x: number, y: number, distance: number): void {
+    // Switch first: the flag belongs to the view that ends up framed.
     this.setView('underground');
+    this.autoByView[this.view] = false;
     this.goal.target.set(x + 8, y, 0);
     this.goal.distance = distance;
     this.goal.elevation = 0.08;
@@ -139,30 +226,64 @@ export class CameraRig {
   }
 
   private overviewDistance = 350;
+  /** The distance the whole stand is framed at; see `frameForest`. */
+  private forestOverview = 285;
 
-  get transitioning(): boolean { return Math.abs(this.surfaceBlend - this.surfaceGoal) > 0.015; }
+  /** True for as long as the rig is crossing between the two views. */
+  get transitioning(): boolean { return this.crossing; }
+
+  /** Seconds of wall clock the current crossing has taken, and its budget. */
+  get crossingProgress(): { elapsed: number; duration: number } {
+    return { elapsed: this.crossingElapsed, duration: this.crossingDuration };
+  }
 
   setView(view: WorldView, instant = false): void {
     if (view !== this.view) {
       this.remembered.set(this.view, { ...this.goal, target: this.goal.target.clone() });
       this.view = view;
       this.surfaceGoal = view === 'forest' ? 1 : 0;
+      // A remembered pose is the player's own camera; a view still framing
+      // itself from the viewport has nothing worth remembering, and re-deriving
+      // it here is what keeps a view entered after a resize from arriving
+      // framed for the window that used to be there.
       const saved = this.remembered.get(view);
-      if (saved) { this.goal.target.copy(saved.target); this.goal.distance = saved.distance; this.goal.elevation = saved.elevation; this.goal.azimuth = saved.azimuth; }
+      if (saved && !this.autoByView[view]) { this.goal.target.copy(saved.target); this.goal.distance = saved.distance; this.goal.elevation = saved.elevation; this.goal.azimuth = saved.azimuth; }
       else if (view === 'forest') this.frameForest(this.camera.aspect);
-      else this.focus(this.goal.target.x, 35, 160);
+      else if (this.mountFraming) {
+        const { mountW, mountH, canopyH, standDepth } = this.mountFraming;
+        this.frameMount(this.camera.aspect, mountW, mountH, canopyH, standDepth);
+      } else this.focus(this.goal.target.x, 35, 160);
+      // Turn-around is a crossing too: reversing mid-rise starts a new
+      // crossing from wherever the picture actually is.
+      this.beginCrossing();
     }
     if (instant) this.snap();
   }
 
   frameForest(aspect: number): void {
+    this.autoByView.forest = true;
+    const halfTan = Math.tan(((this.camera.fov * Math.PI) / 180) / 2);
+    const stand = this.mountFraming;
+    // The stand is as wide as the mount and a little over half as deep, and a
+    // narrow viewport has to fit it across the frame. Fitting only the height
+    // crops the ends of the stand on a portrait window.
+    const halfWidth = (stand ? stand.mountW : 136) / 2 + 34;
+    const depth = stand ? stand.standDepth : 76;
+    const narrow = Math.max(0.35, aspect);
+    this.goal.distance = Math.max(
+      285,
+      185 / narrow,
+      halfWidth / (halfTan * narrow),
+      (depth * 0.6) / halfTan
+    );
     this.goal.target.set(aspect > 1.3 ? 20 : 0, 65, -38);
-    this.goal.distance = Math.max(285, 185 / Math.max(0.5, aspect));
     this.goal.elevation = 1.02;
     this.goal.azimuth = 0.14;
+    this.forestOverview = this.goal.distance;
   }
 
   focusTree(x: number, z: number): void {
+    this.autoByView[this.view] = false;
     this.goal.target.set(x, 69, z);
     this.goal.distance = 150;
   }
@@ -173,21 +294,85 @@ export class CameraRig {
     this.elevation = this.goal.elevation;
     this.azimuth = this.goal.azimuth;
     this.surfaceBlend = this.surfaceGoal;
+    this.crossing = false;
+    this.crossingElapsed = 0;
+    this.crossingDuration = 0;
     this.apply();
   }
 
-  /** Exponential smoothing toward the goal state; called once per frame. */
-  update(dt: number): void {
-    if (this.reducedMotion) { this.snap(); return; }
+  /**
+   * Capture where the picture is right now as the start of a new crossing.
+   *
+   * Duration follows how much blend is left to travel rather than a fixed
+   * number of seconds, which is what makes a reversal at half way take half as
+   * long and keeps the apparent speed of the sheet constant.
+   */
+  private beginCrossing(): void {
+    this.crossingFrom.target.copy(this.target);
+    this.crossingFrom.distance = this.distance;
+    this.crossingFrom.elevation = this.elevation;
+    this.crossingFrom.azimuth = this.azimuth;
+    this.crossingFromBlend = this.surfaceBlend;
+    const travel = Math.abs(this.surfaceGoal - this.surfaceBlend);
+    this.crossingDuration = Math.max(CROSSING_FLOOR_SECONDS, CROSSING_SECONDS * travel);
+    this.crossingElapsed = 0;
+    this.crossing = true;
+  }
+
+  /**
+   * Advance a crossing against the wall clock.
+   *
+   * `wallDt` is the real time since the previous frame, deliberately not the
+   * clamped step the simulation runs on: a machine too slow to keep up still
+   * finishes the rise in one and a half seconds.
+   */
+  private advanceCrossing(wallDt: number): void {
+    const wall = Number.isFinite(wallDt) ? Math.max(0, Math.min(CROSSING_MAX_STEP_SECONDS, wallDt)) : 0;
+    this.crossingElapsed += wall;
+    const t = this.crossingDuration > 0 ? Math.min(1, this.crossingElapsed / this.crossingDuration) : 1;
+    // Ease in and out, so the sheet settles into the new view rather than
+    // arriving at speed.
+    const e = t * t * (3 - 2 * t);
+    this.surfaceBlend = this.crossingFromBlend + (this.surfaceGoal - this.crossingFromBlend) * e;
+    this.target.lerpVectors(this.crossingFrom.target, this.goal.target, e);
+    this.distance = this.crossingFrom.distance + (this.goal.distance - this.crossingFrom.distance) * e;
+    this.elevation = this.crossingFrom.elevation + (this.goal.elevation - this.crossingFrom.elevation) * e;
+    this.azimuth = this.crossingFrom.azimuth + (this.goal.azimuth - this.crossingFrom.azimuth) * e;
+    if (t < 1) { this.apply(); return; }
+    this.snap();
+    if (this.reframePending) {
+      this.reframePending = false;
+      this.applyFraming();
+    }
+  }
+
+  /**
+   * Advance the rig one frame.
+   *
+   * A crossing runs on `wallDt`; ordinary camera smoothing runs on `dt`, the
+   * clamped step that keeps a long stall from making the rig diverge.
+   */
+  update(dt: number, wallDt: number = dt): void {
+    if (this.reducedMotion) {
+      this.snap();
+      // A reduced-motion rig never crosses, so a reframe deferred by a crossing
+      // would otherwise wait for one that will not happen.
+      if (this.reframePending) {
+        this.reframePending = false;
+        this.applyFraming();
+      }
+      return;
+    }
+    if (this.crossing) { this.advanceCrossing(wallDt); return; }
     // Never smooth with a negative or absurd step: the rig is the one piece of
     // state whose corruption is unrecoverable at runtime.
     const step = Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0;
-    const k = 1 - Math.exp(-step * (this.transitioning ? 3.2 : 7.5));
-    this.surfaceBlend += (this.surfaceGoal - this.surfaceBlend) * k;
+    const k = 1 - Math.exp(-step * 7.5);
     if (!Number.isFinite(this.distance) || !Number.isFinite(this.target.x)) {
       this.distance = this.goal.distance;
       this.target.copy(this.goal.target);
     }
+    this.surfaceBlend += (this.surfaceGoal - this.surfaceBlend) * k;
     this.target.lerp(this.goal.target, k);
     this.distance += (this.goal.distance - this.distance) * k;
     this.azimuth += (this.goal.azimuth - this.azimuth) * k;
