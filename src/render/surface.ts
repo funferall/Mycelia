@@ -5,6 +5,7 @@ import type { Tree, World } from '../sim/world';
 import { mulberry32 } from '../sim/rng';
 import { makeGlowTexture } from './textures';
 import { type AssetId, type AssetInstance, type AssetLibrary } from './assets';
+import type { QualityPreset } from './quality';
 
 const FLOOR = GRID.rows / 2;
 /** One stand is a square of ground this wide, in world units. */
@@ -79,6 +80,8 @@ export class SurfaceForest {
   private readonly dummy = new THREE.Object3D();
   private readonly floorMaterial: THREE.MeshStandardMaterial;
   private readonly selection: THREE.Mesh;
+  /** Baked tree shadows, kept in one group so the QA preset can omit them. */
+  private readonly shadows = new THREE.Group();
   private readonly shadowTexture = makeGlowTexture(64);
   private weather = 0;
   private propsPlaced = false;
@@ -106,6 +109,7 @@ export class SurfaceForest {
     floor.userData.standId = this.tile?.id ?? 0;
     this.pickTargets.push(floor);
     this.ground.add(floor);
+    this.ground.add(this.shadows);
     this.group.add(this.ground);
 
     // Ferns, grass, moss and litter keep the floor legible as a living habitat.
@@ -232,7 +236,7 @@ export class SurfaceForest {
     const shadow = new THREE.Mesh(new THREE.PlaneGeometry(h * 1.5, h * 1.5), new THREE.MeshBasicMaterial({ map: this.shadowTexture, color: '#121a0d', transparent: true, opacity: 0.7, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.set(home.x + 2, FLOOR + this.groundHeight(home.x, home.z) + 0.15, home.z);
-    this.ground.add(shadow);
+    this.shadows.add(shadow);
   }
 
   /**
@@ -282,6 +286,11 @@ export class SurfaceForest {
       this.propsPlaced = true;
       this.addProps();
     }
+  }
+
+  /** Apply the rendering preset's presentation-only switches. */
+  setQuality(quality: Pick<QualityPreset, 'surfaceShadows'>): void {
+    this.shadows.visible = quality.surfaceShadows;
   }
 
   /**

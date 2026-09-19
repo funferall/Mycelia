@@ -111,8 +111,9 @@ Append to the URL:
 | `?seed=old-growth` | Generate a named map instead of the default |
 | `?warm=300` | Fast-forward 300 simulated seconds before the first frame |
 | `?steward=1` | A stand-in player that bonds every tree it can reach |
+| `?qa=fast` | Opt into the fast visual-QA rendering preset |
 
-Both are deterministic, so a link like
+The seed, warm-up and steward are deterministic, so a link like
 `?seed=raven-wood&warm=300&steward=1` always opens the same grown match.
 
 ## Visual QA
@@ -141,6 +142,33 @@ node tools/shoot.mjs \
   --canvas-out design/shots/latest.png \
   --eval "window.mycelia.game.sim.player.tipCount"
 ```
+
+For fast iteration under software WebGL, pass `--qa fast` to any browser tool
+(or append `?qa=fast` to a URL). It halves the drawing-buffer resolution, turns
+off antialiasing and the baked tree-shadow decals, and bypasses bloom and the
+postprocessing composer. The CSS viewport, all nine stands, the simulation,
+tree selection, camera transitions and input are unchanged. It is a visual-QA
+preset, not a substitute for normal-quality verification or a performance
+measurement.
+
+```bash
+# Fast smoke capture
+node tools/shoot.mjs --qa fast \
+  --url "http://127.0.0.1:5173/?seed=raven-wood" \
+  --size 960x640 --at 1500 --freeze \
+  --canvas-out design/shots/qa-fast.png
+
+# Fast load/selection/round-trip smoke check, with its own preview server
+node tools/test-view.mjs --qa fast --smoke
+
+# Normal-quality verification
+npm run test:view
+npm run test:journey
+```
+
+Every browser tool prints the active preset and rendering backend before it
+starts, for example
+`QA: preset=fast backend=... css=1200x760 buffer=600x380 ...`.
 
 `npm run test:view` runs the game from the build in `dist/` (run `npm run build`
 first; `tools/shoot.mjs` can use either a preview or a dev server). It starts a

@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GRID } from '../sim/content';
 import { mulberry32 } from '../sim/rng';
 import { CameraRig } from './camera';
+import { NORMAL_QUALITY, qualityPixelRatio, type QualityPreset } from './quality';
 import { makePaperTexture, makeSkyTexture } from './textures';
 
 /** Half-width and half-height of the mount, in world units. */
@@ -26,6 +27,7 @@ export class Stage {
   readonly rig: CameraRig;
   readonly composer: EffectComposer;
   readonly bloom: UnrealBloomPass;
+  readonly quality: QualityPreset;
   /** Where the specimen and the sheet live, so callers can add to either. */
   readonly world = new THREE.Group();
   private readonly paper: THREE.Mesh;
@@ -35,13 +37,15 @@ export class Stage {
   private readonly atmosphere = new THREE.HemisphereLight('#cad6b2', '#362d1d', 0);
   private readonly fog = new THREE.FogExp2('#252c21', 0);
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, quality: QualityPreset = NORMAL_QUALITY) {
+    this.quality = quality;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: quality.antialias,
       alpha: false,
       powerPreference: 'high-performance',
     });
+    this.renderer.shadowMap.enabled = quality.shadowMaps;
     this.renderer.setClearColor(0x0b0908, 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -118,6 +122,7 @@ export class Stage {
     // Only the brightest cores of the network should bloom. A low threshold
     // catches the whole mass and turns it into a single white shape.
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.55, 0.44);
+    this.bloom.enabled = quality.bloom;
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
@@ -127,12 +132,69 @@ export class Stage {
   resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = qualityPixelRatio(this.quality, window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(width, height, false);
-    this.composer.setSize(width, height);
-    this.bloom.setSize(width, height);
+    // The normal path keeps its pre-existing postprocessing resolution. The
+    // fast path never reads these targets, so leave them at their tiny
+    // constructor size instead of allocating full-size half-float buffers.
+    if (this.quality.postprocessing) {
+      this.composer.setSize(width, height);
+      this.bloom.setSize(width, height);
+    }
     this.rig.resize(width / Math.max(1, height));
+  }
+
+  /**
+   * What the current renderer is actually doing.
+   *
+   * The browser tools print this before a check so a result names both the
+   * preset and the backend instead of assuming a machine and a quality level.
+   */
+  qualityReport(): {
+    preset: string;
+    backend: string;
+    software: boolean;
+    pixelRatio: number;
+    viewport: { width: number; height: number };
+    canvasCss: { width: number; height: number };
+    drawingBuffer: { width: number; height: number };
+    antialias: boolean;
+    shadowMaps: boolean;
+    groundShadows: boolean;
+    postprocessing: boolean;
+    bloom: boolean;
+  } {
+    const drawing = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    const canvas = this.renderer.domElement;
+    const backend = this.backendName();
+    return {
+      preset: this.quality.id,
+      backend,
+      software: /swiftshader|llvmpipe|software/i.test(backend),
+      pixelRatio: this.renderer.getPixelRatio(),
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      canvasCss: { width: canvas.clientWidth, height: canvas.clientHeight },
+      drawingBuffer: { width: drawing.width, height: drawing.height },
+      antialias: this.quality.antialias,
+      shadowMaps: this.renderer.shadowMap.enabled,
+      groundShadows: this.quality.surfaceShadows,
+      postprocessing: this.quality.postprocessing,
+      bloom: this.quality.postprocessing && this.bloom.enabled,
+    };
+  }
+
+  private backendName(): string {
+    const gl = this.renderer.getContext();
+    const debug = gl.getExtension('WEBGL_debug_renderer_info') as {
+      UNMASKED_RENDERER_WEBGL: number;
+    } | null;
+    if (debug) {
+      const name = gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) as string | null;
+      if (name) return name;
+    }
+    const version = this.renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1';
+    return `${version} (${String(gl.getParameter(gl.RENDERER))})`;
   }
 
   render(dt: number): void {
@@ -151,7 +213,8 @@ export class Stage {
     this.fog.density = blend * 0.001;
     this.scene.fog = blend > 0.01 ? this.fog : null;
     this.renderer.setClearColor(new THREE.Color('#0b0908').lerp(new THREE.Color('#12150f'), blend).multiplyScalar(0.18));
-    this.composer.render(dt);
+    if (this.quality.postprocessing) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.rig.camera);
   }
 }
 

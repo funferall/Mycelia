@@ -69,6 +69,11 @@ rocks. The six existing runtime paths carry the new art; the additional assets
 and LODs are delivered for the machinery lane to integrate. Seasonal tint and
 the underground environment remain procedural.
 
+The browser harness now has an opt-in fast visual-QA preset (`?qa=fast` and
+`--qa fast`). It keeps the CSS viewport, nine stands, simulation and
+interactions intact while reducing only drawing work; ordinary loads remain on
+the unchanged normal preset.
+
 ## Product direction that must be preserved
 
 - The game has **two connected views**: a dimensional bird's-eye forest and the
@@ -122,7 +127,7 @@ the underground environment remain procedural.
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
 | Authored models | `src/render/assets.ts`, `public/assets/forest-manifest.json`, `tools/{make-forest-assets.py,check-forest-assets.mjs}` | glTF intake and fallback; reproducible Blender art, separate LOD/variant files, and exported-pack QA |
 | Underground world | `src/render/{soil,forest,hyphae,living}.ts` | Soil, roots, networks, flow motes, mushrooms, spores, interaction feedback |
-| Shared stage | `src/render/{stage,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom |
+| Shared stage | `src/render/{stage,quality,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom, opt-in fast QA preset |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
 | Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand and for a region, browser checks for the connected views and for input, a whole match played through the interface, and screenshot/error capture |
@@ -377,7 +382,7 @@ Ecological references supporting this direction:
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
 | PERF-01 | Planned | Measured performance budget | Measure simulation time, render time, draw calls, GPU/CPU memory, and frame time at opening, mature match, and the configured network ceiling on stated hardware. |
-| PERF-02 | Planned | Scalable surface quality | Add foliage, weather, shadow, and pixel-ratio quality tiers after runtime LOD and profiling. Production JS remains about 746 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2, but only LOD0 is currently loaded. Triangle savings are not a measured frame-time or draw-call budget. |
+| PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) now halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Remaining: production quality tiers chosen from profiling, runtime LOD and foliage/weather tiers; the QA preset is not a measured performance budget. Production JS remains about 748 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2, but only LOD0 is currently loaded. Triangle savings are not a measured frame-time or draw-call budget. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
@@ -389,14 +394,64 @@ Work in this order unless the user explicitly changes priority.
 order (trees and variants, understory/deadwood, fungi, rocks). Runtime machinery
 remains separate: ASSET-03 LOD and instancing first, then wind hooks, intake
 failure/late-load validation, crown-anchor consumption, ecological placement and
-PERF-02 quality tiers. Seasons use procedural tint; underground structure stays
-procedural. The new art does not close any of those runtime gaps.
+the remaining PERF-02 production quality tiers; the opt-in fast QA preset is
+implemented, but it does not close the LOD or profiling gaps. Seasons use
+procedural tint; underground structure stays procedural. The new art does not
+close any of those runtime gaps.
 
 Stopping point requested by the user on 19 September: the asset pack and its
 rebuild/QA tooling are ready to commit. Resume with runtime LOD selection and
 foliage instancing (ASSET-03), using `forest-manifest.json`; then consume crown
 anchors and dead variants. Re-run the complete browser view suite independently
 of Blender rendering before claiming current-tree interaction verification.
+
+### Next asset machinery approach (ASSET-03, PERF-01, PERF-02)
+
+These are implementation notes, not completed work; feature statuses remain
+unchanged.
+
+1. Consume `forest-manifest.json` and select LOD by projected tree size on
+   screen. Use different thresholds for entering and leaving a tier
+   (hysteresis) to prevent flicker near a boundary.
+2. Batch wood and foliage by species, living/dead variant, LOD and material
+   using `InstancedMesh`. Carry health, seasonal tint and wind variation as
+   per-instance data so batching preserves each tree's state.
+3. Maintain an explicit instance-index-to-simulation-tree-ID mapping for
+   selection, including when instances move between batches. Preserve the
+   living model's scale, ground contact and crown anchor across tier/variant
+   changes; never feed presentation choices back into the simulation.
+4. Measure draw calls and frame time across all nine stands, then tune LOD
+   thresholds and quality tiers from those measurements. Lower triangle counts
+   alone do not establish a performance improvement.
+
+### Faster testing and render iteration
+
+The browser harness currently forces software WebGL and renders complete frames
+during many logic checks. Running Blender renders alongside it also introduces
+resource contention. The full interaction suite was excessive for the
+asset-only iteration; choose checks according to what changed.
+
+- **Routine edits:** run relevant fast checks such as `npm run test:assets`
+  and `npm run typecheck`. When implementing LOD/instancing, add focused tests
+  for threshold hysteresis, stable selection mappings and preserved transforms.
+  Separate state/transition calculations from drawing so logic tests can
+  advance without rendering every frame.
+- **Visual smoke checks:** the explicit `?qa=fast` / `--qa fast` preset is
+  implemented. It keeps the CSS viewport, scene graph and simulation intact,
+  halves the drawing-buffer resolution, disables antialiasing and baked
+  tree-shadow decals, and bypasses bloom and postprocessing.
+  `node tools/test-view.mjs --qa fast --smoke` checks load, all nine stands,
+  tree selection, descent and return; `tools/shoot.mjs --qa fast` captures.
+  Every browser tool prints the preset, backend, CSS size and drawing-buffer
+  size. Keep full-quality checks for defects the cheaper preset could hide: it
+  is not a performance measurement or an adaptive production quality tier.
+- **Blender drafts:** use lower resolution and fewer samples; use GPU rendering
+  when available and verified. Reserve final-resolution specimen sheets for
+  accepted geometry. Configurable draft rendering is still to be implemented.
+- **Milestones and relevant runtime changes:** run the full browser regression
+  and full-quality captures separately from Blender. Keep software rendering
+  for intentional slow-machine coverage; record the backend and quality preset
+  with results, and do not treat draft captures as performance measurements.
 
 ### P0 — stabilize and verify the connected views
 
@@ -566,6 +621,12 @@ either foundation.
 - Wind has no explicit shared vector or strength and leaves do not settle.
 - Surface performance has not been profiled; procedural tree geometry and one
   instanced foliage mesh per tree may become expensive on larger stands.
+- The fast QA preset is a visual smoke path, not an adaptive production quality
+  tier: it adds no LOD, instancing, foliage/weather tier, automatic selection or
+  measured frame-time budget. Its half-resolution, no-bloom image is unsuitable
+  for art acceptance or performance claims. The game has never enabled runtime
+  shadow maps, so fast mode removes the baked tree-shadow decals and leaves
+  `shadowMaps=false` rather than switching off an active shadow-map pass.
 - The botanical pack's lower tiers and dead variants are files only. Runtime
   still clones LOD0 per tree, tints foliage in winter without shedding authored
   leaves, and browns living models on death instead of selecting bare variants.
@@ -579,8 +640,48 @@ either foundation.
 
 ## Verification record
 
+### 19 September 2026: fast visual QA preset
+
+Implemented `src/render/quality.ts` and the `?qa=fast` / `--qa fast` preset in
+`tools/{shoot,test-view,test-journey}.mjs`. `tools/test-view.mjs --smoke` is the
+compact load/selection/round-trip check; every browser tool now prints the
+active preset, backend, CSS viewport, drawing buffer and rendering switches.
+
+- `npm run build` — **pass**. `tsc --noEmit` and Vite produced 748.24 kB JS /
+  15.78 kB CSS. Existing nonfatal Browserslist, Tailwind content and
+  chunk-size warnings remain.
+- `node tools/test-view.mjs --qa fast --smoke` — **pass: 9 checks**, no
+  console or page errors. The SwiftShader report was
+  `css=1200x760 buffer=600x380 pixelRatio=0.5 antialias=off shadows=off shadowMaps=off bloom=off postprocessing=off stands=9 trees=75`.
+  The check asserts that fast mode has antialiasing, ground shadow decals,
+  bloom, postprocessing and shadow maps off.
+  Selecting through `#forest-tree` produced “Northern red oak · 1 · your stand
+  -> Northern red oak · Living · Not yet bonded · your own stand”; descending
+  reached the underground view at blend 0 and returning reached the forest at
+  blend 1.
+- `node tools/test-view.mjs --qa normal --smoke` — **pass: 8 checks**, no
+  console or page errors. The same viewport and 9 stands / 75 trees reported
+  `buffer=1200x760 pixelRatio=1 antialias=on shadows=decals shadowMaps=off bloom=on postprocessing=on`;
+  the check asserts that normal keeps shipping antialiasing, ground shadow
+  decals, bloom and postprocessing on while shadow maps remain off.
+  selection and the forest/underground round trip behaved identically.
+- `node tools/shoot.mjs --qa fast --url "http://127.0.0.1:4173/?seed=raven-wood" --size 960x640 --at 1500 --freeze --canvas-out design/shots/qa-fast-smoke.png`
+  — **pass**. The fast drawing buffer was 480×320 in a 960×640 CSS viewport;
+  the direct-render canvas capture was written and inspected (forest visible,
+  no console or page errors). The capture is ignored and can be regenerated
+  with the command.
+- Not run in this changeset: the full `npm run test:view`,
+  `npm run test:journey`, `npm test`, `node tools/test-region.mjs`, asset QA and
+  Blender. The smoke path does not replace those checks. Fast mode was not
+  compared with normal as a controlled frame-time benchmark; the numbers above
+  are a rendering-setting check, not a performance claim. The outcome restart
+  that preserves `qa=fast` is a code-only change and was not exercised here.
+
 ### 19 September 2026: botanical asset pack
 
+- Subsequent notes-only update: recorded the proposed LOD/instancing sequence
+  and faster testing strategy above. No runtime or asset changes; verification
+  is limited to `git diff --check`, with no expensive suites repeated.
 - Blender 4.2.1 LTS: `& 'C:/Program Files/Blender Foundation/Blender 4.2/blender.exe' --background --factory-startup --python-exit-code 1 --python tools/make-forest-assets.py -- --render`
   builds 21 assets / 39 separate GLBs, with no downloaded content, textures or
   add-ons. Original living trees, stump, log and mushroom replace the six paths
@@ -840,6 +941,12 @@ verification entry—not a new document.
 
 ### 19 September 2026
 
+- Added the opt-in `?qa=fast` rendering preset and `--qa fast` support to
+  `shoot`, `test-view` and `test-journey`; browser output now names the preset,
+  backend and drawing-buffer size. Added `tools/test-view.mjs --smoke` for a
+  compact fast load/selection/round-trip check and recorded the normal-quality
+  comparison. `PERF-02` is now Partial, with production LOD/instancing and
+  measured budgets still open.
 - Replaced the six placeholder GLBs with original botanical low-poly art and
   delivered the rest of the requested pack: tree/dead/sapling LODs, understory,
   deadwood, reproductive bodies and rocks (`ASSET-02`, asset side of `ASSET-03`).

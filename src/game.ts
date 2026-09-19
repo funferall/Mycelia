@@ -15,6 +15,7 @@ import { HyphaeMesh, Motes } from './render/hyphae';
 import { SoilMesh } from './render/soil';
 import { Stage } from './render/stage';
 import { makeGlowTexture } from './render/textures';
+import type { QualityPreset } from './render/quality';
 import { deriveJourney, type Journey, type RootTarget } from './ui/journey';
 import { SheetUI, type OrderId } from './ui/sheet';
 
@@ -116,12 +117,12 @@ export class Game {
   private readonly plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly hit = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement, ui: SheetUI, seedText: string) {
+  constructor(canvas: HTMLCanvasElement, ui: SheetUI, seedText: string, quality: QualityPreset) {
     this.canvas = canvas;
     this.ui = ui;
     this.sim = new Simulation(seedText);
 
-    this.stage = new Stage(canvas);
+    this.stage = new Stage(canvas, quality);
     const glow = makeGlowTexture(64);
 
     this.soil = new SoilMesh(this.sim.world);
@@ -195,6 +196,7 @@ export class Game {
         originY: site.sy * TILE_SIZE,
         heightAt: (x, y) => this.region.heightAt(x, y),
       }, this.assets);
+      surface.setQuality(this.stage.quality);
       surface.group.position.set((site.sx - founding.sx) * TILE_SIZE, 0, -(site.sy - founding.sy) * TILE_SIZE);
       this.surfaces[site.id] = surface;
       this.stage.scene.add(surface.group);
@@ -341,6 +343,40 @@ export class Game {
       autoFraming: this.stage.rig.autoFraming,
       mount: { halfWidth: GRID.cols / 2, halfHeight: GRID.rows / 2 },
       target: { x: this.stage.rig.target.x, y: this.stage.rig.target.y, z: this.stage.rig.target.z },
+    };
+  }
+
+  /**
+   * The harness-facing rendering report: preset, backend, drawing-buffer size
+   * and the region the renderer is currently presenting.
+   */
+  renderReport(): {
+    preset: string;
+    backend: string;
+    software: boolean;
+    pixelRatio: number;
+    viewport: { width: number; height: number };
+    canvasCss: { width: number; height: number };
+    drawingBuffer: { width: number; height: number };
+    antialias: boolean;
+    shadowMaps: boolean;
+    groundShadows: boolean;
+    postprocessing: boolean;
+    bloom: boolean;
+    stands: number;
+    trees: number;
+    selectedStandId: number | null;
+    selectedTreeId: number | null;
+    simSeconds: number;
+  } {
+    const surfaces = this.surfaces.filter((surface): surface is SurfaceForest => Boolean(surface));
+    return {
+      ...this.stage.qualityReport(),
+      stands: surfaces.length,
+      trees: surfaces.reduce((total, surface) => total + surface.trees.length, 0),
+      selectedStandId: this.selectedStandId,
+      selectedTreeId: this.surfaces[this.region.foundingStand]?.selectedId ?? null,
+      simSeconds: Math.round(this.sim.time),
     };
   }
 
@@ -921,6 +957,9 @@ export class Game {
   private restart(): void {
     // A new seed is a new sheet; reload rather than rebuild every buffer.
     const next = Math.random().toString(36).slice(2, 9);
-    location.search = `?seed=${next}`;
+    // Keep the opt-in harness preset across a restart; ordinary matches have no
+    // QA parameter and keep their existing URL shape.
+    const qa = new URLSearchParams(location.search).get('qa') === 'fast' ? '&qa=fast' : '';
+    location.search = `?seed=${next}${qa}`;
   }
 }

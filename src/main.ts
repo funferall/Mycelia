@@ -1,5 +1,6 @@
 import './styles.css';
 import { Game } from './game';
+import { qualityFromSearch } from './render/quality';
 import { SheetUI } from './ui/sheet';
 
 /**
@@ -18,7 +19,7 @@ function boot(): void {
 
   let game: Game;
   try {
-    game = new Game(canvas, ui, seedFromLocation());
+    game = new Game(canvas, ui, seedFromLocation(), qualityFromSearch(location.search));
   } catch (error) {
     // WebGL is the one hard requirement. Say so in the sheet's own voice rather
     // than leaving a blank page.

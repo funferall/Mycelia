@@ -10,6 +10,53 @@ import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+export const QA_PRESETS = ['normal', 'fast'];
+
+/** Read `--qa fast` (or `--qa=fast`) from a browser tool's argv. */
+export function parseQaPreset(args = process.argv.slice(2)) {
+  const inline = args.find((argument) => argument.startsWith('--qa='));
+  const index = args.indexOf('--qa');
+  const value = inline ? inline.slice('--qa='.length) : index >= 0 ? args[index + 1] : undefined;
+  if (!value || value.startsWith('--')) return 'normal';
+  if (!QA_PRESETS.includes(value)) {
+    throw new Error(`unknown QA preset "${value}"; expected ${QA_PRESETS.join(' or ')}`);
+  }
+  return value;
+}
+
+/**
+ * Put the preset in the URL without disturbing seed, view, warm-up or any other
+ * query parameter. Normal mode removes an explicit `qa` flag.
+ */
+export function withQaPreset(url, preset) {
+  const target = new URL(url);
+  if (preset === 'fast') target.searchParams.set('qa', 'fast');
+  else target.searchParams.delete('qa');
+  return target.toString();
+}
+
+/** The game's own render report, or null when the page never booted. */
+export function readRenderReport(page) {
+  return page.evaluate(() => window.mycelia?.game?.renderReport?.() ?? null);
+}
+
+/** One line that makes a QA result interpretable after the fact. */
+export function formatRenderReport(report) {
+  if (!report) return 'QA: render report unavailable (the game did not boot)';
+  const shadows = report.groundShadows ? 'decals' : 'off';
+  const shadowMaps = report.shadowMaps ? 'on' : 'off';
+  return (
+    `QA: preset=${report.preset} backend=${report.backend}` +
+    `${report.software ? ' (software)' : ''}` +
+    ` css=${report.viewport.width}x${report.viewport.height}` +
+    ` buffer=${report.drawingBuffer.width}x${report.drawingBuffer.height}` +
+    ` pixelRatio=${report.pixelRatio} antialias=${report.antialias ? 'on' : 'off'}` +
+    ` shadows=${shadows} shadowMaps=${shadowMaps}` +
+    ` bloom=${report.bloom ? 'on' : 'off'} postprocessing=${report.postprocessing ? 'on' : 'off'}` +
+    ` stands=${report.stands} trees=${report.trees}`
+  );
+}
+
 /** Locate an installed Chromium, preferring a full build over the headless shell. */
 export function findChromium() {
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), 'AppData', 'Local', 'ms-playwright');

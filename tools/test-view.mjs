@@ -17,11 +17,20 @@
  *   npm run build && npm run test:view
  *   node tools/test-view.mjs --url http://127.0.0.1:4173   # use a server you started
  *   node tools/test-view.mjs --verbose                     # print every measurement
+ *   node tools/test-view.mjs --qa fast --smoke             # small fast smoke check
  *
  * `--url` is optional: without it the script starts `vite preview` on the build
  * in `dist/` and shuts it down again.
  */
-import { collectProblems, gridToPage, launchBrowser } from './browser.mjs';
+import {
+  collectProblems,
+  formatRenderReport,
+  gridToPage,
+  launchBrowser,
+  parseQaPreset,
+  readRenderReport,
+  withQaPreset,
+} from './browser.mjs';
 import { startPreview } from './preview.mjs';
 
 /** Must match CROSSING_SECONDS in `src/render/camera.ts`. */
@@ -36,6 +45,14 @@ const argOf = (name, fallback) => {
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
 const verbose = args.includes('--verbose');
+const smoke = args.includes('--smoke');
+let qa;
+try {
+  qa = parseQaPreset(args);
+} catch (error) {
+  console.error(`test-view: ${error.message}`);
+  process.exit(1);
+}
 const port = Number(argOf('port', 4173));
 const url = argOf('url', `http://127.0.0.1:${port}`);
 
@@ -66,6 +83,7 @@ if (!args.includes('--url')) {
 const browser = await launchBrowser();
 const problems = [];
 const contexts = [];
+let announcedQuality = false;
 
 async function open(path, viewport = { width: 1600, height: 1000 }, options = {}) {
   const context = await browser.newContext({
@@ -81,8 +99,12 @@ async function open(path, viewport = { width: 1600, height: 1000 }, options = {}
   // check: every click is still a real mouse event on the real control.
   page.setDefaultTimeout(120000);
   problems.push(...collectProblems(page));
-  await page.goto(url + path, { waitUntil: 'commit', timeout: 120000 });
+  await page.goto(withQaPreset(url + path, qa), { waitUntil: 'commit', timeout: 120000 });
   await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
+  if (!announcedQuality) {
+    announcedQuality = true;
+    console.log(formatRenderReport(await readRenderReport(page)));
+  }
   return page;
 }
 
@@ -122,6 +144,132 @@ const settle = async (page) => {
   await settleView(page);
   await settleFraming(page);
 };
+
+// ---------------------------------------------------------------------------
+// 0. A small opt-in smoke check, for fast visual iteration
+// ---------------------------------------------------------------------------
+if (smoke) {
+  const page = await open('/?seed=raven-wood', { width: 1200, height: 760 });
+  const loaded = await readRenderReport(page);
+  check(
+    'the smoke check is running the requested QA preset',
+    loaded?.preset === qa,
+    `requested ${qa}, reported ${loaded?.preset ?? 'nothing'}`
+  );
+  if (qa === 'fast') {
+    check(
+      'fast QA disables antialiasing, shadow decals, bloom and postprocessing',
+      loaded && !loaded.antialias && !loaded.groundShadows && !loaded.bloom && !loaded.postprocessing && !loaded.shadowMaps,
+      JSON.stringify({
+        antialias: loaded?.antialias,
+        groundShadows: loaded?.groundShadows,
+        bloom: loaded?.bloom,
+        postprocessing: loaded?.postprocessing,
+        shadowMaps: loaded?.shadowMaps,
+      })
+    );
+  } else {
+    check(
+      'normal QA keeps the shipping antialiasing, shadow decals, bloom and postprocessing',
+      loaded && loaded.antialias && loaded.groundShadows && loaded.bloom && loaded.postprocessing && !loaded.shadowMaps,
+      JSON.stringify({
+        antialias: loaded?.antialias,
+        groundShadows: loaded?.groundShadows,
+        bloom: loaded?.bloom,
+        postprocessing: loaded?.postprocessing,
+        shadowMaps: loaded?.shadowMaps,
+      })
+    );
+  }
+  check(
+    'all nine stands and their trees are present',
+    loaded?.stands === 9 && loaded.trees > 0,
+    `${loaded?.stands ?? 0} stands, ${loaded?.trees ?? 0} trees`
+  );
+
+  const layout = await page.evaluate(() => {
+    const canvas = document.querySelector('#gl');
+    const rect = canvas.getBoundingClientRect();
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      client: { width: canvas.clientWidth, height: canvas.clientHeight },
+      css: { width: rect.width, height: rect.height },
+      buffer: { width: canvas.width, height: canvas.height },
+      quality: window.mycelia.game.renderReport(),
+    };
+  });
+  const cssHolds =
+    layout.viewport.width === 1200 &&
+    layout.viewport.height === 760 &&
+    Math.abs(layout.client.width - 1200) < 1 &&
+    Math.abs(layout.client.height - 760) < 1 &&
+    Math.abs(layout.css.width - 1200) < 1 &&
+    Math.abs(layout.css.height - 760) < 1;
+  check('the CSS viewport is unchanged by the QA preset', cssHolds, JSON.stringify({ viewport: layout.viewport, client: layout.client }));
+  const expected = {
+    width: Math.floor(layout.css.width * layout.quality.pixelRatio),
+    height: Math.floor(layout.css.height * layout.quality.pixelRatio),
+  };
+  check(
+    'the drawing buffer follows the preset pixel ratio, not the CSS viewport',
+    Math.abs(layout.buffer.width - expected.width) <= 1 && Math.abs(layout.buffer.height - expected.height) <= 1,
+    `buffer ${layout.buffer.width}x${layout.buffer.height}, expected ${expected.width}x${expected.height} at ratio ${layout.quality.pixelRatio}`
+  );
+  if (qa === 'fast') {
+    check(
+      'fast QA lowers the drawing buffer below the CSS viewport',
+      layout.buffer.width < layout.client.width && layout.buffer.height < layout.client.height,
+      `buffer ${layout.buffer.width}x${layout.buffer.height}, CSS ${layout.client.width}x${layout.client.height}`
+    );
+  }
+
+  const selected = await page.evaluate(() => {
+    const select = document.querySelector('#forest-tree');
+    const option = [...select.options].find((entry) => entry.value !== '');
+    if (!option) return null;
+    select.value = option.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return {
+      value: option.value,
+      text: option.textContent?.trim() ?? '',
+      status: document.querySelector('#tree-status')?.textContent?.trim() ?? '',
+      report: window.mycelia.game.renderReport(),
+    };
+  });
+  check(
+    'a forest tree can still be selected through the real selector',
+    Boolean(selected) && selected.report.selectedTreeId !== null && /bonded|not yet bonded|deadwood|struggling/i.test(selected.status),
+    selected ? `${selected.text} -> "${selected.status}"` : 'no tree option'
+  );
+
+  await page.click('#descend-tree');
+  await settle(page);
+  const underground = await report(page);
+  check(
+    'the selected tree descends into the underground view',
+    underground.view === 'underground' && underground.blend === 0,
+    JSON.stringify({ view: underground.view, blend: underground.blend })
+  );
+  await page.click('#view-forest');
+  await settle(page);
+  const forest = await report(page);
+  check(
+    'the same page returns to the forest view',
+    forest.view === 'forest' && forest.blend === 1,
+    JSON.stringify({ view: forest.view, blend: forest.blend })
+  );
+
+  await contexts.pop().close();
+  await browser.close();
+  server?.stop();
+  for (const line of results) console.log('  ok - ' + line);
+  for (const line of failures) console.log('  FAIL - ' + line);
+  if (problems.length > 0) console.log('PROBLEMS:\n  ' + problems.slice(0, 20).join('\n  '));
+  else console.log('PROBLEMS: none');
+  if (failures.length > 0 || problems.length > 0) process.exit(1);
+  console.log(`PASS: ${results.length} smoke checks.`);
+  process.exit(0);
+}
 
 /**
  * Drive whole frames — simulation, overlays, renderer — from a synthetic clock,

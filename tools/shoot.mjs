@@ -8,10 +8,19 @@
  *
  *   node tools/shoot.mjs --url http://127.0.0.1:5174 --out design/shots/01.png
  *   node tools/shoot.mjs --out a.png --out b.png --at 12000 --size 1600x1000
+ *   node tools/shoot.mjs --qa fast --url http://127.0.0.1:5174 --canvas-out fast.png
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { collectProblems, launchBrowser, waitForGame } from './browser.mjs';
+import {
+  collectProblems,
+  formatRenderReport,
+  launchBrowser,
+  parseQaPreset,
+  readRenderReport,
+  waitForGame,
+  withQaPreset,
+} from './browser.mjs';
 
 function argAll(name) {
   const out = [];
@@ -26,6 +35,14 @@ function arg(name, fallback) {
 }
 
 const url = arg('url', 'http://127.0.0.1:5174');
+let qa;
+try {
+  qa = parseQaPreset();
+} catch (error) {
+  console.error(`shoot: ${error.message}`);
+  process.exit(1);
+}
+const targetUrl = withQaPreset(url, qa);
 const outs = argAll('out');
 const waitMs = Number(arg('at', 9000));
 // A warmed match runs its fixed steps before the first frame, and software
@@ -48,8 +65,9 @@ const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
 
 const problems = collectProblems(page);
-await page.goto(url, { waitUntil: 'commit', timeout: 120000 });
+await page.goto(targetUrl, { waitUntil: 'commit', timeout: 120000 });
 await waitForGame(page, bootTimeout).catch(() => problems.push('timed out waiting for window.mycelia'));
+console.log(formatRenderReport(await readRenderReport(page)));
 
 // Let the simulation run so the network has grown before we photograph it.
 await page.waitForTimeout(waitMs);
@@ -83,7 +101,7 @@ for (const out of canvasOuts) {
   const dataUrl = await page.evaluate(() => {
     const stage = window.mycelia?.game?.stage;
     if (!stage) return null;
-    stage.composer.render(0.016);
+    stage.render(0.016);
     return stage.renderer.domElement.toDataURL('image/png');
   });
   if (!dataUrl) {
@@ -113,6 +131,7 @@ const status = await page.evaluate(() => {
       const c = document.querySelector('#gl');
       return c ? `${c.width}x${c.height}` : null;
     })(),
+    render: window.mycelia?.game?.renderReport?.() ?? null,
   };
 });
 console.log('STATUS: ' + JSON.stringify(status, null, 2));

@@ -9,11 +9,20 @@
  *
  *   npm run build && npm run test:journey
  *   node tools/test-journey.mjs --seed old-growth --verbose
+ *   node tools/test-journey.mjs --qa fast --seed raven-wood
  *
  * It runs at the fastest pace the sheet offers, so a match takes minutes of
  * wall clock rather than the quarter of an hour a real player would spend.
  */
-import { collectProblems, gridToPage, launchBrowser } from './browser.mjs';
+import {
+  collectProblems,
+  formatRenderReport,
+  gridToPage,
+  launchBrowser,
+  parseQaPreset,
+  readRenderReport,
+  withQaPreset,
+} from './browser.mjs';
 import { startPreview } from './preview.mjs';
 
 const args = process.argv.slice(2);
@@ -22,6 +31,13 @@ const argOf = (name, fallback) => {
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
 const verbose = args.includes('--verbose');
+let qa;
+try {
+  qa = parseQaPreset(args);
+} catch (error) {
+  console.error(`test-journey: ${error.message}`);
+  process.exit(1);
+}
 const port = Number(argOf('port', 4174));
 const seed = argOf('seed', 'raven-wood');
 const url = argOf('url', `http://127.0.0.1:${port}`);
@@ -122,8 +138,9 @@ const visibleLabels = () =>
       .map((button) => `${button.textContent.trim()}${button.disabled ? ' [disabled]' : ''}`)
   );
 
-await page.goto(url + `/?seed=${seed}`, { waitUntil: 'commit', timeout: 120000 });
+await page.goto(withQaPreset(url + `/?seed=${seed}`, qa), { waitUntil: 'commit', timeout: 120000 });
 await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
+console.log(formatRenderReport(await readRenderReport(page)));
 
 // 1. The opening is the sheet's own button, and it takes you down to the soil.
 await page.click('#begin');
