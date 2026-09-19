@@ -1,6 +1,6 @@
 # Mycelia — authoritative project status and feature log
 
-Last updated: 18 September 2026.
+Last updated: 19 September 2026.
 
 This is the **single source of truth for implementation status, current
 priorities, verification, and future work**. Read this file before changing the
@@ -62,8 +62,12 @@ Surface art now arrives through an intake pipeline rather than only being
 generated in code. `src/render/assets.ts` loads authored glTF models, scales each
 one to the simulation's own tree, corrects it onto the ground, tints it by season
 and health, and falls back to the procedural stand whenever a file is missing.
-`tools/make-placeholder-assets.py` builds the current placeholder set with
-Blender, so the pipeline has real files to carry before the art pass lands.
+`tools/make-forest-assets.py` now builds an original botanical low-poly pack
+with Blender: living and dead/hollow oak, yellow birch and eastern hemlock,
+three tiers per tree and sapling, understory, deadwood, reproductive bodies and
+rocks. The six existing runtime paths carry the new art; the additional assets
+and LODs are delivered for the machinery lane to integrate. Seasonal tint and
+the underground environment remain procedural.
 
 ## Product direction that must be preserved
 
@@ -116,7 +120,7 @@ Blender, so the pipeline has real files to carry before the art pass lands.
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
-| Authored models | `src/render/assets.ts`, `public/assets/`, `tools/make-placeholder-assets.py` | glTF intake, scaling and ground contact, per-instance material tinting, procedural fallback, and the Blender build for the placeholder set |
+| Authored models | `src/render/assets.ts`, `public/assets/forest-manifest.json`, `tools/{make-forest-assets.py,check-forest-assets.mjs}` | glTF intake and fallback; reproducible Blender art, separate LOD/variant files, and exported-pack QA |
 | Underground world | `src/render/{soil,forest,hyphae,living}.ts` | Soil, roots, networks, flow motes, mushrooms, spores, interaction feedback |
 | Shared stage | `src/render/{stage,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
@@ -167,9 +171,9 @@ and equivalent useful details have been accounted for, then remove it.
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
-| ASSET-01 | Partial | Authored model intake | `src/render/assets.ts` loads every model named in `ASSETS`, scales a copy to the simulation's own tree height, applies the model's ground-contact correction, clones materials per instance, and reads material names to split foliage (season-tinted) from wood (health-tinted only). A missing or broken file is a recorded warning, never an error: the procedural stand keeps drawing, and `SurfaceForest.adoptAssets()` dresses trees that were built before art arrived. `npm run test:view` passes all 60 checks with the placeholder set in place, and a canvas capture reports every one of the region's 75 trees carrying a model with a clean console. Remaining: exercise the missing-file and late-load paths in a browser check, honour an authored `anchor_crown` once models carry one, and add LOD tiers and foliage instancing. |
-| ASSET-02 | Partial | Placeholder asset set | `tools/make-placeholder-assets.py` builds six deterministic low-poly GLBs with Blender 4.2 - oak, birch, hemlock, stump, fallen log and fruiting body - into `public/assets/`, with the origin at ground contact, metres, and foliage materials named for tinting. Every stand lays out three seeded props on its floor, and the capture above shows the three species reading differently across the region. Remaining: these are stand-ins rather than final art, the fruiting body is not yet wired into the underground view, and props are not yet chosen by community. |
-| ASSET-03 | Planned | Asset contract, LOD and validation | The contract is written down in `DESIGN.md`: glTF binary, metres, Y-up, origin at ground contact, `leaf`/`needle`/`foliage` in foliage material names, optional `anchor_crown`. Remaining: authored LOD tiers, foliage instancing, wind animation clips, and a check that holds a dropped-in file to the contract. |
+| ASSET-01 | Partial | Authored model intake | The existing registry loads six replacement botanical models; scaling, ground correction, seasonal/health material tint and procedural fallback are unchanged. Tree and sapling GLBs now contain `anchor_crown`; the loader still ignores it. Remaining: browser missing-file/late-load checks, anchor consumption, LOD selection, dead-variant switching and foliage instancing. Current art verification is recorded under 19 September below; the 18 September browser results describe the previous art. |
+| ASSET-02 | Partial | Botanical asset pack | `tools/make-forest-assets.py` builds 21 original low-poly assets / 39 GLBs: three living species and their dead/hollow variants, three saplings, fern, grass, stump, log, snag, root plate, four reproductive bodies and two rock props. The six original paths replace placeholders immediately; other files are listed in `forest-manifest.json` for integration. Remaining: art-direction acceptance, fruiting-body integration into LivingView/surface outcomes, community-driven prop placement, new understory/rock/spore usage, and runtime dead variants. This is a stylized botanical first pass, not photoreal scanned art. |
+| ASSET-03 | Partial | Asset contract, LOD and validation | `DESIGN.md` specifies separate tier files, 2,000/900/320 tree triangle budgets, 500 for props, Y-up metres, ground contact, named double-sided foliage and crown anchors. All trees, dead variants and saplings carry three tiers. `tools/check-forest-assets.mjs` checks the shipped pack through Three.js for exported counts, bounds, anchors, materials and budgets. Remaining: runtime LOD/instancing, wind clips, a general dropped-in-file validator, and camera-distance transition tuning. Pack QA does not cover loader failure paths. |
 
 ### Regional map, terrain, forest stands, and water
 
@@ -262,7 +266,7 @@ boundary conditions. The current grid can become that local unit.
 | ATM-01 | Partial | Wind-driven stand | Whole-tree anchored sway and faster per-leaf shader motion exist. Add one shared wind vector/strength, coherent gust fronts, and tree-size/species stiffness. |
 | ATM-02 | Partial | Detached drifting leaves | Bounded instanced leaves drift and increase in autumn; reduced motion and a Wind toggle suppress them. Add settling/fading at the floor and couple them to the shared wind model. |
 | ATM-03 | Partial | Weather | Rain follows authoritative simulation rainfall and is suppressed underground. Add clear/overcast transitions, mist, cloud shadow, restrained wetness, and surface/underground weather audio. Cosmetic weather must never create resources. |
-| ATM-04 | Partial | Four visible seasons | Color and deciduous leaf density blend from simulation season progress; hemlocks retain foliage. Add spring emergence, stronger drought stress, accumulating visual litter, cooler winter lighting, and clearer dormant-versus-dead silhouettes. |
+| ATM-04 | Partial | Four visible seasons | Seasonal tint is the chosen art contract; no four-mesh seasonal set. Procedural deciduous trees blend leaf density, while authored trees currently only change color; hemlocks retain foliage. Bare dead/hollow assets are delivered but not switched at runtime. Add authored foliage density, spring emergence, stronger drought stress, litter, winter lighting, and dormant-versus-dead selection. |
 | ATM-05 | Partial | Ecological surface truth | Health, maturity, death, bond text, rain, and season are simulation-driven. Confirm all visible outcomes on the same trees across both views and add fruiting bodies to the surface context where appropriate. |
 
 ### Ecological opposition, modes, and root architecture
@@ -373,13 +377,26 @@ Ecological references supporting this direction:
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
 | PERF-01 | Planned | Measured performance budget | Measure simulation time, render time, draw calls, GPU/CPU memory, and frame time at opening, mature match, and the configured network ceiling on stated hardware. |
-| PERF-02 | Planned | Scalable surface quality | Add foliage, weather, shadow, and pixel-ratio quality tiers only after profiling. Current production JS is about 746 kB and emits Vite chunk-size warning; roughly 80 kB of that is the glTF loader asset intake needs. Authored trees are far cheaper to draw than the procedural bodies they replace: a placeholder oak is about 1,200 faces against roughly 11,000 for the generated one, so the intake path is also the first real step toward the rendering budget. |
+| PERF-02 | Planned | Scalable surface quality | Add foliage, weather, shadow, and pixel-ratio quality tiers after runtime LOD and profiling. Production JS remains about 746 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2, but only LOD0 is currently loaded. Triangle savings are not a measured frame-time or draw-call budget. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
 ## Current priorities
 
 Work in this order unless the user explicitly changes priority.
+
+19 September art-lane override: build the botanical asset pack in the requested
+order (trees and variants, understory/deadwood, fungi, rocks). Runtime machinery
+remains separate: ASSET-03 LOD and instancing first, then wind hooks, intake
+failure/late-load validation, crown-anchor consumption, ecological placement and
+PERF-02 quality tiers. Seasons use procedural tint; underground structure stays
+procedural. The new art does not close any of those runtime gaps.
+
+Stopping point requested by the user on 19 September: the asset pack and its
+rebuild/QA tooling are ready to commit. Resume with runtime LOD selection and
+foliage instancing (ASSET-03), using `forest-manifest.json`; then consume crown
+anchors and dead variants. Re-run the complete browser view suite independently
+of Blender rendering before claiming current-tree interaction verification.
 
 ### P0 — stabilize and verify the connected views
 
@@ -549,6 +566,11 @@ either foundation.
 - Wind has no explicit shared vector or strength and leaves do not settle.
 - Surface performance has not been profiled; procedural tree geometry and one
   instanced foliage mesh per tree may become expensive on larger stands.
+- The botanical pack's lower tiers and dead variants are files only. Runtime
+  still clones LOD0 per tree, tints foliage in winter without shedding authored
+  leaves, and browns living models on death instead of selecting bare variants.
+  The manifest is not consumed by the game, and new props are not placed yet.
+  Authored animation clips are absent; whole-tree procedural sway still applies.
 - Responsive and keyboard affordances exist but are incompletely exercised.
 - `DESIGN.md` still needs a full token-level reconciliation after the forest
   visual direction is accepted.
@@ -556,6 +578,47 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 19 September 2026: botanical asset pack
+
+- Blender 4.2.1 LTS: `& 'C:/Program Files/Blender Foundation/Blender 4.2/blender.exe' --background --factory-startup --python-exit-code 1 --python tools/make-forest-assets.py -- --render`
+  builds 21 assets / 39 separate GLBs, with no downloaded content, textures or
+  add-ons. Original living trees, stump, log and mushroom replace the six paths
+  already used by the game. Additional files remain integration inputs.
+- Re-imported the exported GLBs into Blender and visually inspected all three
+  rendered sheets: `design/shots/forest-assets-{trees,props,lods}.png` (ignored,
+  regenerated by the command above). Living/dead silhouettes, hollow openings,
+  foliage undersides and prop shapes are visible. Lower tiers keep simplified
+  trunks and larger foliage blades; LOD2 is intentionally coarse and needs
+  distance tuning when runtime switching is implemented. Art acceptance and
+  animated LOD transitions remain unverified.
+- `npm run test:assets` — **pass** for all 39 exported GLBs (1,266.7 KiB total).
+  Uses the installed Three.js GLTFLoader, checking complete embedded GLB data,
+  one authored mesh with at most three material primitives, triangle/byte
+  counts, finite attributes, index ranges, metre-scale Y-up bounds, ground
+  contact, equal LOD heights/anchors, double-sided foliage, and no foliage on
+  dead variants. Trees/saplings meet 2,000/900/320 triangle ceilings; all other
+  props meet 500. This is shipped-pack QA, not a general glTF conformance test
+  or loader failure-path test.
+- Independent Blender rebuild with `--output` pointing at a new temporary
+  directory — **pass**: SHA-256 matches for all 39 GLBs and the manifest.
+- `npm run build` — **pass**, TypeScript and Vite, 746.18 kB JS / 15.78 kB CSS.
+  Existing nonfatal Browserslist, Tailwind content and chunk-size warnings remain.
+- In-game capture — **pass**, opening nine-stand forest and keyboard zoom, no
+  page/console errors. `node tools/shoot.mjs --url 'http://127.0.0.1:4173/?seed=raven-wood' --size 960x640 --canvas-out design/shots/forest-assets-game.png --at 1500 --freeze`;
+  the same command with seven `--key '='` options writes
+  `forest-assets-detail.png`. Inspected both captures: distinct broadleaf and
+  hemlock crowns render in the game's lighting. Existing terrain/slab seams
+  remain outside this art change. The in-app browser connection failed before
+  navigation (missing sandbox metadata); these captures use the existing
+  repository harness.
+- Full simulation/journey suites are not repeated for this asset-only change;
+  no simulation or runtime TypeScript was modified.
+- `npm run test:view` — **interrupted, no result**. The full software-WebGL
+  suite was still running without its final summary when the user requested a
+  usage-saving stopping point. It was stopped deliberately; do not treat the
+  earlier 60-check pass as evidence for this art tree. The separate opening and
+  zoom captures above completed cleanly. Re-run this suite on resume.
 
 ### 18 September 2026: region trees and authored surface art
 
@@ -774,6 +837,17 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 19 September 2026
+
+- Replaced the six placeholder GLBs with original botanical low-poly art and
+  delivered the rest of the requested pack: tree/dead/sapling LODs, understory,
+  deadwood, reproductive bodies and rocks (`ASSET-02`, asset side of `ASSET-03`).
+- Added the reproducible Blender authoring source, machine-readable manifest
+  and `npm run test:assets`. Lower tiers use deliberately simpler branches and
+  broader foliage blades; they do not decimate away the crown.
+- Specified procedural seasonal tint and procedural underground structure in
+  `DESIGN.md`; documented separate tier files and remaining runtime integrations.
 
 ### 18 September 2026
 

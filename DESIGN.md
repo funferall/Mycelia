@@ -313,8 +313,17 @@ and no authored mesh should replace them. The surface accepts authored models
 for the things a player knows by silhouette — trees, deadwood, fruiting bodies,
 ground props — and `src/render/assets.ts` is the only door they come through.
 Anything without a file keeps being drawn the way it is drawn now, so art can
-arrive one model at a time. The current placeholder set is built by
-`tools/make-placeholder-assets.py`.
+arrive one model at a time. The botanical low-poly pack is built by
+`tools/make-forest-assets.py`; `public/assets/forest-manifest.json` lists each
+asset, tier, triangle budget, byte size and crown anchor. The older
+`tools/make-placeholder-assets.py` remains a prototype generator and overwrites
+the six original paths if run.
+
+Seasons use **procedural foliage tint**, with density controlled by the renderer
+when supported, rather than four separately authored seasonal meshes. Living
+and dead/hollow trees are distinct models. Underground soil, roots, hyphae,
+cords and flow stay procedural; small authored reproductive bodies may sit
+within that environment without replacing it.
 
 ### The contract a model must meet
 
@@ -334,9 +343,22 @@ arrive one model at a time. The current placeholder set is built by
   a fraction of the model's own height.
 - **No baked lighting.** The stage supplies light, and the same model has to
   read at noon, in rain and in winter.
-- **One mesh object per asset** where practical, under roughly 2,000 faces for
-  a tree and 500 for a prop. Flat-shaded wood and smooth-shaded foliage is the
-  placeholder convention and reads correctly at the scale the forest is viewed.
+- **One mesh object per asset**, with at most three material primitives. Tree
+  and sapling budgets are 2,000 / 900 / 320 **exported triangles** at LOD0 / 1 / 2;
+  other props stay below 500. The botanical pack uses faceted wood and folded,
+  opaque, double-sided foliage blades. No alpha textures or baked lighting are
+  needed, and foliage can be extracted by material for future instancing.
+- **Separate GLBs for LODs.** `trees/oak.glb` is LOD0, with `oak-lod1.glb` and
+  `oak-lod2.glb` beside it; `oak-dead.glb` and its tiers form the dead/hollow
+  variant. The same naming applies to birch, hemlock and saplings. A GLB contains
+  exactly one tier, so the existing loader cannot accidentally draw all three.
+  Tiers retain the same ground plane, height and `anchor_crown`. When switching
+  living/dead variants, preserve the living model's scale rather than scaling
+  the dead tree's remaining branches up to the former leafy height.
+
+The manifest is art metadata, not an automatic runtime registry. LOD selection,
+dead-variant switching, anchor consumption, foliage instancing and authored wind
+clips require loader/render support; see `PROJECT_STATUS.md` for their status.
 
 ### What the game adds to a model
 

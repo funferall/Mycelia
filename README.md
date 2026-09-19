@@ -117,6 +117,20 @@ Both are deterministic, so a link like
 
 ## Visual QA
 
+The botanical GLB pack can be rebuilt locally with Blender 4.2 (no external
+assets or add-ons). In PowerShell:
+
+```powershell
+& 'C:/Program Files/Blender Foundation/Blender 4.2/blender.exe' --background --factory-startup --python-exit-code 1 --python tools/make-forest-assets.py -- --render
+npm run test:assets
+```
+
+This writes the assets and manifest to `public/assets/`, plus tree, LOD and prop
+preview sheets to ignored `design/shots/`. `--output <directory>` builds an
+isolated copy. The six existing game paths use the new art; additional props,
+dead variants and lower LODs await runtime integration. The asset contract is
+in `DESIGN.md` and remaining integration work is in `PROJECT_STATUS.md`.
+
 ```bash
 npm test            # headless simulation regression
 node tools/test-region.mjs  # the regional world: terrain, water, spores

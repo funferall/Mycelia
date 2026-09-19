@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node tools/test-sim.mjs",
+    "test:assets": "node tools/check-forest-assets.mjs",
     "test:view": "node tools/test-view.mjs",
     "test:journey": "node tools/test-journey.mjs",
     "cf:login": "wrangler login",

@@ -1,0 +1,406 @@
+{
+  "schemaVersion": 1,
+  "generator": "tools/make-forest-assets.py",
+  "seed": 20260919,
+  "units": "metres",
+  "upAxis": "Y",
+  "seasonMode": "procedural-tint",
+  "assets": [
+    {
+      "id": "tree.oak",
+      "lods": [
+        {
+          "file": "trees/oak.glb",
+          "triangles": 1568,
+          "maxTriangles": 2000,
+          "bytes": 108476
+        },
+        {
+          "file": "trees/oak-lod1.glb",
+          "triangles": 800,
+          "maxTriangles": 900,
+          "bytes": 56208
+        },
+        {
+          "file": "trees/oak-lod2.glb",
+          "triangles": 266,
+          "maxTriangles": 320,
+          "bytes": 19300
+        }
+      ],
+      "variant": "living",
+      "species": "oak",
+      "anchorCrown": [
+        0.15,
+        8.47,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.birch",
+      "lods": [
+        {
+          "file": "trees/birch.glb",
+          "triangles": 1596,
+          "maxTriangles": 2000,
+          "bytes": 110764
+        },
+        {
+          "file": "trees/birch-lod1.glb",
+          "triangles": 800,
+          "maxTriangles": 900,
+          "bytes": 56208
+        },
+        {
+          "file": "trees/birch-lod2.glb",
+          "triangles": 266,
+          "maxTriangles": 320,
+          "bytes": 19296
+        }
+      ],
+      "variant": "living",
+      "species": "birch",
+      "anchorCrown": [
+        0.15,
+        9.24,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.hemlock",
+      "lods": [
+        {
+          "file": "trees/hemlock.glb",
+          "triangles": 1594,
+          "maxTriangles": 2000,
+          "bytes": 104756
+        },
+        {
+          "file": "trees/hemlock-lod1.glb",
+          "triangles": 810,
+          "maxTriangles": 900,
+          "bytes": 57724
+        },
+        {
+          "file": "trees/hemlock-lod2.glb",
+          "triangles": 298,
+          "maxTriangles": 320,
+          "bytes": 21376
+        }
+      ],
+      "variant": "living",
+      "species": "hemlock",
+      "anchorCrown": [
+        0.15,
+        10.395,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.oak-dead",
+      "lods": [
+        {
+          "file": "trees/oak-dead.glb",
+          "triangles": 720,
+          "maxTriangles": 2000,
+          "bytes": 41496
+        },
+        {
+          "file": "trees/oak-dead-lod1.glb",
+          "triangles": 464,
+          "maxTriangles": 900,
+          "bytes": 28972
+        },
+        {
+          "file": "trees/oak-dead-lod2.glb",
+          "triangles": 242,
+          "maxTriangles": 320,
+          "bytes": 15976
+        }
+      ],
+      "variant": "dead-hollow",
+      "species": "oak",
+      "anchorCrown": [
+        0.15,
+        8.47,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.birch-dead",
+      "lods": [
+        {
+          "file": "trees/birch-dead.glb",
+          "triangles": 720,
+          "maxTriangles": 2000,
+          "bytes": 41512
+        },
+        {
+          "file": "trees/birch-dead-lod1.glb",
+          "triangles": 464,
+          "maxTriangles": 900,
+          "bytes": 28988
+        },
+        {
+          "file": "trees/birch-dead-lod2.glb",
+          "triangles": 242,
+          "maxTriangles": 320,
+          "bytes": 15988
+        }
+      ],
+      "variant": "dead-hollow",
+      "species": "birch",
+      "anchorCrown": [
+        0.15,
+        9.24,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.hemlock-dead",
+      "lods": [
+        {
+          "file": "trees/hemlock-dead.glb",
+          "triangles": 920,
+          "maxTriangles": 2000,
+          "bytes": 51356
+        },
+        {
+          "file": "trees/hemlock-dead-lod1.glb",
+          "triangles": 424,
+          "maxTriangles": 900,
+          "bytes": 26596
+        },
+        {
+          "file": "trees/hemlock-dead-lod2.glb",
+          "triangles": 266,
+          "maxTriangles": 320,
+          "bytes": 17436
+        }
+      ],
+      "variant": "dead-hollow",
+      "species": "hemlock",
+      "anchorCrown": [
+        0.15,
+        10.395,
+        -0.0
+      ]
+    },
+    {
+      "id": "understory.oak-sapling",
+      "lods": [
+        {
+          "file": "understory/oak-sapling.glb",
+          "triangles": 898,
+          "maxTriangles": 2000,
+          "bytes": 61768
+        },
+        {
+          "file": "understory/oak-sapling-lod1.glb",
+          "triangles": 460,
+          "maxTriangles": 900,
+          "bytes": 32596
+        },
+        {
+          "file": "understory/oak-sapling-lod2.glb",
+          "triangles": 194,
+          "maxTriangles": 320,
+          "bytes": 14580
+        }
+      ],
+      "anchorCrown": [
+        0.03,
+        1.694,
+        -0.0
+      ]
+    },
+    {
+      "id": "understory.birch-sapling",
+      "lods": [
+        {
+          "file": "understory/birch-sapling.glb",
+          "triangles": 926,
+          "maxTriangles": 2000,
+          "bytes": 64052
+        },
+        {
+          "file": "understory/birch-sapling-lod1.glb",
+          "triangles": 460,
+          "maxTriangles": 900,
+          "bytes": 32588
+        },
+        {
+          "file": "understory/birch-sapling-lod2.glb",
+          "triangles": 194,
+          "maxTriangles": 320,
+          "bytes": 14572
+        }
+      ],
+      "anchorCrown": [
+        0.03,
+        1.848,
+        -0.0
+      ]
+    },
+    {
+      "id": "understory.hemlock-sapling",
+      "lods": [
+        {
+          "file": "understory/hemlock-sapling.glb",
+          "triangles": 994,
+          "maxTriangles": 2000,
+          "bytes": 65188
+        },
+        {
+          "file": "understory/hemlock-sapling-lod1.glb",
+          "triangles": 510,
+          "maxTriangles": 900,
+          "bytes": 36504
+        },
+        {
+          "file": "understory/hemlock-sapling-lod2.glb",
+          "triangles": 190,
+          "maxTriangles": 320,
+          "bytes": 14276
+        }
+      ],
+      "anchorCrown": [
+        0.03,
+        2.079,
+        -0.0
+      ]
+    },
+    {
+      "id": "understory.fern",
+      "lods": [
+        {
+          "file": "understory/fern.glb",
+          "triangles": 384,
+          "maxTriangles": 500,
+          "bytes": 28436
+        }
+      ]
+    },
+    {
+      "id": "understory.grass",
+      "lods": [
+        {
+          "file": "understory/grass.glb",
+          "triangles": 84,
+          "maxTriangles": 500,
+          "bytes": 6388
+        }
+      ]
+    },
+    {
+      "id": "prop.stump",
+      "lods": [
+        {
+          "file": "props/stump.glb",
+          "triangles": 206,
+          "maxTriangles": 500,
+          "bytes": 12516
+        }
+      ]
+    },
+    {
+      "id": "prop.log",
+      "lods": [
+        {
+          "file": "props/log.glb",
+          "triangles": 104,
+          "maxTriangles": 500,
+          "bytes": 7092
+        }
+      ]
+    },
+    {
+      "id": "prop.snag",
+      "lods": [
+        {
+          "file": "props/snag.glb",
+          "triangles": 148,
+          "maxTriangles": 500,
+          "bytes": 9424
+        }
+      ]
+    },
+    {
+      "id": "prop.root-plate",
+      "lods": [
+        {
+          "file": "props/root-plate.glb",
+          "triangles": 382,
+          "maxTriangles": 500,
+          "bytes": 22096
+        }
+      ]
+    },
+    {
+      "id": "fungus.fruitingBody",
+      "lods": [
+        {
+          "file": "fungi/fruiting-body.glb",
+          "triangles": 150,
+          "maxTriangles": 500,
+          "bytes": 6408
+        }
+      ]
+    },
+    {
+      "id": "fungus.fruiting-cluster",
+      "lods": [
+        {
+          "file": "fungi/fruiting-cluster.glb",
+          "triangles": 450,
+          "maxTriangles": 500,
+          "bytes": 13848
+        }
+      ]
+    },
+    {
+      "id": "fungus.underground-fruiting-body",
+      "lods": [
+        {
+          "file": "fungi/underground-fruiting-body.glb",
+          "triangles": 208,
+          "maxTriangles": 500,
+          "bytes": 13552
+        }
+      ]
+    },
+    {
+      "id": "fungus.spore-body",
+      "lods": [
+        {
+          "file": "fungi/spore-body.glb",
+          "triangles": 180,
+          "maxTriangles": 500,
+          "bytes": 5128
+        }
+      ]
+    },
+    {
+      "id": "prop.boulder",
+      "lods": [
+        {
+          "file": "props/boulder.glb",
+          "triangles": 52,
+          "maxTriangles": 500,
+          "bytes": 4544
+        }
+      ]
+    },
+    {
+      "id": "prop.stream-rocks",
+      "lods": [
+        {
+          "file": "props/stream-rocks.glb",
+          "triangles": 156,
+          "maxTriangles": 500,
+          "bytes": 9156
+        }
+      ]
+    }
+  ]
+}
