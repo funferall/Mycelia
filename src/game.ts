@@ -9,6 +9,7 @@ import { createStandWorld } from './sim/world';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
+import { AssetLibrary } from './render/assets';
 import { ForestView } from './render/forest';
 import { HyphaeMesh, Motes } from './render/hyphae';
 import { SoilMesh } from './render/soil';
@@ -76,6 +77,8 @@ export class Game {
    */
   private readonly surfaces: SurfaceForest[] = [];
   private readonly region: Region;
+  /** Authored models, if any have been built yet; the game runs without them. */
+  private readonly assets = new AssetLibrary();
   /** Stand the selected crown stands in, or null while nothing is chosen. */
   private selectedStandId: number | null = null;
   /** Everything drawn inside the soil, faded as one body during a crossing. */
@@ -138,6 +141,9 @@ export class Game {
     this.stage.scene.add(this.forest.group);
     this.region = createRegion(seedText);
     this.buildRegionStand();
+    // Art is opportunistic: the stand above is already drawn procedurally, and
+    // whatever loads is handed over as it arrives.
+    void this.assets.load().then(() => this.adoptAssets());
     this.living = new LivingView(this.sim);
     this.stage.scene.add(this.living.group);
     this.overlays = new OverlayFade([
@@ -188,7 +194,7 @@ export class Game {
         originX: site.sx * TILE_SIZE,
         originY: site.sy * TILE_SIZE,
         heightAt: (x, y) => this.region.heightAt(x, y),
-      });
+      }, this.assets);
       surface.group.position.set((site.sx - founding.sx) * TILE_SIZE, 0, -(site.sy - founding.sy) * TILE_SIZE);
       this.surfaces[site.id] = surface;
       this.stage.scene.add(surface.group);
@@ -198,6 +204,17 @@ export class Game {
   /** The region's surfaces, in stand order. Used by the browser checks. */
   get regionSurfaces(): SurfaceForest[] {
     return this.surfaces;
+  }
+
+  /**
+   * Give every stand the art that has loaded, and say out loud what is missing.
+   *
+   * A missing model is a warning rather than an error: the procedural stand is
+   * the fallback, and the browser checks must keep passing while art is made.
+   */
+  private adoptAssets(): void {
+    for (const surface of this.surfaces) surface?.adoptAssets();
+    for (const note of this.assets.failures) console.warn(`mycelia: ${note}`);
   }
 
   /** The stand the player can enter: the one their colony stands in. */
@@ -368,7 +385,13 @@ export class Game {
     // switching off at a threshold, so the terrain closes over the network on
     // the way up and they return as it opens on the way down.
     const overlay = 1 - THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
-    this.surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
+    // Every stand in the region is a window onto the same forest, so every
+    // surface is stepped: without this a neighbouring tile draws its floor but
+    // its trees stay at their unplaced origin, buried under the slab.
+    for (const surface of this.surfaces) {
+      if (!surface) continue;
+      surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
+    }
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');

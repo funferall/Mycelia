@@ -53,7 +53,8 @@ src/sim/      the whole game, headless and deterministic
 src/render/   Three.js presentation of simulation state
 src/ui/       the printed interface (semantic HTML, not canvas text)
 src/game.ts   the loop that joins them
-tools/        visual QA harness
+public/       authored 3D models, served beside the bundle
+tools/        visual QA harness and the Blender asset builder
 design/       the approved composition comps and QA screenshots
 ```
 
@@ -72,6 +73,14 @@ a readout of the economy rather than an ambient effect.
 **The interface is printed, not drawn.** All text is real HTML in EB Garamond
 and Courier Prime. The depth rail is generated from the map's own strata, so it
 cannot disagree with the soil it measures.
+
+**Surface art is optional by construction.** `src/render/assets.ts` loads the
+glTF models listed in `public/assets/`, scales each one to the simulation's own
+tree, corrects it onto the ground, and falls back to generated geometry whenever
+a file is missing, so art can arrive one model at a time without the game
+depending on it. `tools/make-placeholder-assets.py` rebuilds the current
+placeholder set in Blender 4.2, and the conventions a model has to follow are
+written down under "Authored 3D assets" in `DESIGN.md`.
 
 ## Controls
 

@@ -75,6 +75,11 @@ async function open(path, viewport = { width: 1600, height: 1000 }, options = {}
   });
   contexts.push(context);
   const page = await context.newPage();
+  // Software WebGL spends seconds inside a single frame once the whole region
+  // is drawn, so an ordinary click can wait out Playwright's 30s default while
+  // the main thread is busy. This is an action budget, not a relaxation of any
+  // check: every click is still a real mouse event on the real control.
+  page.setDefaultTimeout(120000);
   problems.push(...collectProblems(page));
   await page.goto(url + path, { waitUntil: 'commit', timeout: 120000 });
   await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
@@ -94,8 +99,16 @@ const settleView = (page, timeout = 60000) =>
     { timeout, polling: 'raf' }
   );
 
-/** Wait for the camera to finish gliding to its framing. */
-const settleFraming = (page, timeout = 60000) =>
+/**
+ * Wait for the camera to finish gliding to its framing.
+ *
+ * The glide is frame-rate limited on purpose: ordinary camera smoothing runs
+ * on the clamped step, not the wall clock, so a machine drawing the whole
+ * region under software WebGL takes roughly twenty frames to land rather than
+ * five. At the frame times that renderer produces, that is well over a minute,
+ * so the budget is sized for it while the property being checked is unchanged.
+ */
+const settleFraming = (page, timeout = 180000) =>
   page.waitForFunction(
     () => {
       const state = window.mycelia?.game?.viewReport?.();
@@ -294,10 +307,14 @@ function movement(series) {
   {
     const selected = await page.evaluate(() => {
       const select = document.querySelector('#forest-tree');
+      // The selector is region-wide since the region renders: an option names
+      // the stand the crown stands in as well as the tree, as `stand:tree`. The
+      // first option belongs to the colony's own stand, which is the only
+      // ground a descent can enter.
       const option = [...select.options].find((entry) => entry.value !== '');
       select.value = option.value;
       select.dispatchEvent(new Event('change', { bubbles: true }));
-      return Number(option.value);
+      return Number(option.value.split(':')[1]);
     });
     await page.click('#view-forest');
     await settle(page);
@@ -340,15 +357,20 @@ function movement(series) {
           const game = window.mycelia.game;
           const samples = [];
           let previous = performance.now();
-          const tick = () => {
+          const sample = () => {
             const now = performance.now();
             const state = game.viewReport();
             samples.push({ frame: samples.length, gap: now - previous, ...state });
             previous = now;
-            if (state.crossing) requestAnimationFrame(tick);
-            else resolve(samples);
+            return state.crossing;
           };
+          const tick = () => (sample() ? requestAnimationFrame(tick) : resolve(samples));
           document.querySelector('#view-underground').click();
+          // Sample in the same task as the click. Under software WebGL a frame
+          // can outlast the whole 1.5s crossing, so a sampler that starts on the
+          // next frame can miss a crossing that already began and finished and
+          // report that it observed nothing.
+          sample();
           requestAnimationFrame(tick);
         })
     );
@@ -700,7 +722,10 @@ function movement(series) {
     await settle(page);
   }
 
-  // Wheel descent: one notch is not enough to cross, a handful of notches is.
+  // Wheel descent: one notch is not enough to cross, and continuing to zoom in
+  // is. The threshold is an absolute distance while the overview is framed to
+  // the whole region, so the region needs roughly twice the notches the single
+  // stand did; the button and the keyboard remain the short ways down.
   {
     const before = await state();
     await page.mouse.move(640, 400);
@@ -713,7 +738,7 @@ function movement(series) {
     );
     let notches = 1;
     let now = once;
-    while (now.view === 'forest' && notches < 12) {
+    while (now.view === 'forest' && notches < 16) {
       await page.mouse.wheel(0, -400);
       await page.waitForTimeout(120);
       now = await state();

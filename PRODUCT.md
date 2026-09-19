@@ -107,10 +107,14 @@ film you can play."* Specifically:
   and pulses. Forest sound carries the game's state: woodpeckers mean health,
   silence means something is wrong.
 
-The art direction is explicitly **shader-driven and not asset-heavy**:
-procedural hyphal growth, particle flows, and lighting do the work. This is
-stated in the spec as the reason a web build is feasible, so it constrains the
-technical approach as much as the visual one.
+The art direction is **hybrid**. The underground is shader-driven and not
+asset-heavy: procedural hyphal growth, particle flows, and lighting do the work,
+and that is what makes a web build feasible. The surface accepts authored 3D
+models for the few things a player reads by silhouette — trees, deadwood,
+fruiting bodies, ground props — with generated geometry still standing in for
+anything that has not been modelled yet. The asset contract lives in
+`DESIGN.md`; the intake pipeline never makes the game depend on a file being
+present.
 
 ## Evidence on Hand
 

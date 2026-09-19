@@ -4,12 +4,25 @@ import { GRID, SEASONS, type SeasonId } from '../sim/content';
 import type { Tree, World } from '../sim/world';
 import { mulberry32 } from '../sim/rng';
 import { makeGlowTexture } from './textures';
+import { type AssetId, type AssetInstance, type AssetLibrary } from './assets';
 
 const FLOOR = GRID.rows / 2;
 /** One stand is a square of ground this wide, in world units. */
 export const TILE_SIZE = GRID.cols;
 export const FOREST_DEPTH = TILE_SIZE;
 const PALETTE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
+/** Which authored model dresses each species. */
+const TREE_ASSET: Record<string, AssetId> = { oak: 'tree.oak', birch: 'tree.birch', hemlock: 'tree.hemlock' };
+const DEAD_COLOR = new THREE.Color('#6c5840');
+const HEMLOCK_LEAF = new THREE.Color('#496448');
+
+/** Release the geometry of a procedural body that an authored model replaced. */
+function disposeBody(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh) mesh.geometry?.dispose();
+  });
+}
 
 /**
  * Where a stand sits in the region, and how high the ground is there.
@@ -46,6 +59,8 @@ interface StandingTree {
   group: THREE.Group;
   leaves: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   material: THREE.MeshStandardMaterial;
+  /** An authored model, once one is loaded for this species. */
+  model: AssetInstance | null;
   leafCount: number;
   home: THREE.Vector3;
   initialMaturity: number;
@@ -66,9 +81,10 @@ export class SurfaceForest {
   private readonly selection: THREE.Mesh;
   private readonly shadowTexture = makeGlowTexture(64);
   private weather = 0;
+  private propsPlaced = false;
   selectedId: number | null = null;
 
-  constructor(private readonly world: World, private readonly tile?: ForestTile) {
+  constructor(private readonly world: World, private readonly tile?: ForestTile, private readonly assets?: AssetLibrary) {
     const rng = mulberry32(world.seed ^ 0x6f123);
     const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE, 68, 68);
     floorGeometry.rotateX(-Math.PI / 2);
@@ -171,10 +187,14 @@ export class SurfaceForest {
       const a = i * Math.PI * 0.4;
       addBranch(new THREE.Vector3(Math.cos(a) * 2, 0.05, Math.sin(a) * 2), new THREE.Vector3(0, 1.7, 0), 0.22);
     }
+    // The procedural body keeps its own group so an authored model can replace
+    // it wholesale without disturbing the selector volume or the tree's anchors.
+    const body = new THREE.Group();
+    body.userData.proceduralBody = true;
     const woodMaterial = new THREE.MeshStandardMaterial({ color: tree.species === 'birch' ? '#aaa58d' : '#65533d', roughness: 1 });
     const wood = new THREE.Mesh(mergeGeometries(parts), woodMaterial);
     parts.forEach(part => part.dispose());
-    group.add(wood);
+    body.add(wood);
 
     const material = new THREE.MeshStandardMaterial({ color: PALETTE.spring, roughness: 0.85, side: THREE.DoubleSide });
     material.onBeforeCompile = shader => {
@@ -192,7 +212,8 @@ export class SurfaceForest {
       leaves.setMatrixAt(i, this.dummy.matrix);
       leaves.setColorAt(i, new THREE.Color().setScalar(0.65 + rng() * 0.5));
     });
-    group.add(leaves);
+    body.add(leaves);
+    group.add(body);
     // An invisible volume makes crowns easy to select, even between individual leaves.
     const pick = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ visible: false }));
     pick.position.y = h * 0.72;
@@ -202,7 +223,11 @@ export class SurfaceForest {
     group.add(pick);
     this.pickTargets.push(pick);
     this.group.add(group);
-    this.trees.push({ tree, group, leaves, material, leafCount: leaves.count, home, initialMaturity: tree.maturity });
+    const entry: StandingTree = { tree, group, leaves, material, model: null, leafCount: leaves.count, home, initialMaturity: tree.maturity };
+    this.trees.push(entry);
+    // If art is already loaded, the stand opens with it rather than swapping a
+    // frame later in front of the player.
+    this.dress(entry);
 
     const shadow = new THREE.Mesh(new THREE.PlaneGeometry(h * 1.5, h * 1.5), new THREE.MeshBasicMaterial({ map: this.shadowTexture, color: '#121a0d', transparent: true, opacity: 0.7, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
@@ -218,6 +243,71 @@ export class SurfaceForest {
   private groundHeight(localX: number, localZ: number): number {
     if (!this.tile) return relief(localX, localZ);
     return this.tile.heightAt(this.tile.originX + localX + GRID.cols / 2, this.tile.originY - localZ);
+  }
+
+  /**
+   * Dress one tree in the authored model for its species, if there is one.
+   *
+   * The same path serves a stand built after art has loaded and a stand built
+   * before it, so a model arriving late swaps in rather than requiring a reload.
+   * Scale comes from the simulation's own tree height, which is what keeps art
+   * and simulation the same picture across both views.
+   */
+  private dress(entry: StandingTree): void {
+    if (!this.assets || entry.model) return;
+    const id = TREE_ASSET[entry.tree.species];
+    const model = id
+      ? this.assets.instance(id, entry.tree.height * (0.7 + entry.tree.maturity * 0.5))
+      : null;
+    if (!model) return;
+    const body = entry.group.children.find((child) => child.userData.proceduralBody);
+    if (body) {
+      entry.group.remove(body);
+      disposeBody(body);
+    }
+    entry.group.add(model.object);
+    entry.model = model;
+  }
+
+  /**
+   * Take delivery of art that finished loading after this stand was built.
+   *
+   * Idempotent by construction: a tree already wearing a model is skipped, and
+   * the floor props are laid out once.
+   */
+  adoptAssets(): void {
+    if (!this.assets) return;
+    for (const entry of this.trees) this.dress(entry);
+    if (!this.propsPlaced) {
+      this.propsPlaced = true;
+      this.addProps();
+    }
+  }
+
+  /**
+   * Scatter the authored deadwood a forest floor is missing.
+   *
+   * Seeded and presentation-only. A stand with no art is the procedural stand,
+   * not a stand with holes in it, so every prop is skipped when its model is
+   * absent rather than replaced with a stand-in.
+   */
+  private addProps(): void {
+    const rng = mulberry32(this.world.seed ^ 0x5eed1);
+    for (let i = 0; i < 3; i++) {
+      const id: AssetId = rng() < 0.6 ? 'prop.stump' : 'prop.log';
+      const instance = this.assets?.instance(id, id === 'prop.stump' ? 1.5 : 1.1);
+      if (!instance) continue;
+      instance.object.userData.assetProp = id;
+      const x = (rng() - 0.5) * (GRID.cols - 14);
+      const z = -6 - rng() * (TILE_SIZE - 18);
+      // The instance carries its own ground-contact correction in `position.y`,
+      // so the terrain height is added to it rather than replacing it.
+      instance.object.position.x += x;
+      instance.object.position.y += FLOOR + this.groundHeight(x, z);
+      instance.object.position.z += z;
+      instance.object.rotation.y = rng() * Math.PI * 2;
+      this.ground.add(instance.object);
+    }
   }
 
   crownPosition(treeId: number): THREE.Vector3 | null {
@@ -265,9 +355,22 @@ export class SurfaceForest {
       const gust = Math.sin(t * 0.48 + v.home.x * 0.055) * 0.008 + Math.sin(t * 1.1 + v.home.z) * 0.002;
       v.group.rotation.z = reduced ? 0 : gust;
       v.group.rotation.x = reduced ? 0 : gust * 0.5;
-      v.material.color.copy(v.tree.species === 'hemlock' ? new THREE.Color('#496448') : color).lerp(new THREE.Color('#6c5840'), 1 - health);
-      v.material.color.multiplyScalar(0.48 + blend * 0.52);
-      v.leaves.count = Math.floor(v.leafCount * (v.tree.species === 'hemlock' ? 0.95 : density) * health);
+      const dim = 0.48 + blend * 0.52;
+      if (v.model) {
+        // Authored foliage takes the season's colour; bark keeps the artist's
+        // and only browns as the tree's health falls.
+        const leaf = v.tree.species === 'hemlock' ? HEMLOCK_LEAF : color;
+        for (const tint of v.model.foliage) {
+          tint.material.color.copy(leaf).lerp(DEAD_COLOR, 1 - health).multiplyScalar(dim);
+        }
+        for (const tint of v.model.wood) {
+          tint.material.color.copy(tint.base).lerp(DEAD_COLOR, (1 - health) * 0.7).multiplyScalar(dim);
+        }
+      } else {
+        v.material.color.copy(v.tree.species === 'hemlock' ? HEMLOCK_LEAF : color).lerp(DEAD_COLOR, 1 - health);
+        v.material.color.multiplyScalar(dim);
+        v.leaves.count = Math.floor(v.leafCount * (v.tree.species === 'hemlock' ? 0.95 : density) * health);
+      }
     }
     const selected = this.trees.find(v => v.tree.id === this.selectedId);
     this.selection.visible = !!selected && blend > 0.8;

@@ -305,6 +305,47 @@ interface element has a radius.
 
 ## Components
 
+## Authored 3D assets
+
+The visual system is hybrid by construction. The underground stays procedural:
+hyphae, cords, flow motes and soil strata are shaders and generated geometry,
+and no authored mesh should replace them. The surface accepts authored models
+for the things a player knows by silhouette — trees, deadwood, fruiting bodies,
+ground props — and `src/render/assets.ts` is the only door they come through.
+Anything without a file keeps being drawn the way it is drawn now, so art can
+arrive one model at a time. The current placeholder set is built by
+`tools/make-placeholder-assets.py`.
+
+### The contract a model must meet
+
+- **glTF 2.0 binary** (`.glb`), exported Y-up. Blender's default export is
+  already correct.
+- **Metres.** A model is scaled to the simulation's own tree height when it is
+  placed, so absolute size is a starting point rather than a promise.
+  Proportion is what carries over.
+- **Origin at ground contact** — the base of the trunk, or the underside of a
+  prop. The game puts the model on terrain by that point and adds the ground
+  height to it.
+- **Foliage materials carry `leaf`, `needle` or `foliage` in their name.** Those
+  take the season's colour. Every other material keeps the artist's colour and
+  only browns as the tree's health falls.
+- **An empty named `anchor_crown`** marks the point the game selects, frames the
+  camera on and hangs airborne effects from. Without one, the game falls back to
+  a fraction of the model's own height.
+- **No baked lighting.** The stage supplies light, and the same model has to
+  read at noon, in rain and in winter.
+- **One mesh object per asset** where practical, under roughly 2,000 faces for
+  a tree and 500 for a prop. Flat-shaded wood and smooth-shaded foliage is the
+  placeholder convention and reads correctly at the scale the forest is viewed.
+
+### What the game adds to a model
+
+Per-instance scale, position from the simulation, sway from the shared gust,
+seasonal colour on foliage, health browning, the ground-contact correction, and
+the same fog and bloom pass as everything else in the scene. A model that
+arrives after the stand was built is swapped in; a model that never arrives
+changes nothing about how the game plays.
+
 ### Order rows
 
 - **Shape:** no box, no radius; a single hairline rule beneath each row.
