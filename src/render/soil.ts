@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GRID, STRATA, type StratumId } from '../sim/content';
 import { mulberry32 } from '../sim/rng';
-import { idx, rowDepthCm, type World } from '../sim/world';
+import { groundwaterSaturation, idx, rowDepthCm, type World } from '../sim/world';
 
 /**
  * The mount: a slab of soil built from instanced grit.
@@ -181,9 +181,8 @@ export class SoilMesh {
       // beneath it. Both are nearly gritless, so the tint carries the shape.
       if (cell.stream) {
         const gy = Math.floor(cellIndex / GRID.cols);
-        const submerged = rowDepthCm(gy) >= world.waterTableCm;
-        color.copy(submerged ? _stream : _notch);
-        color.multiplyScalar(submerged ? 0.9 + Math.max(0, 0.3 - cell.water * 0.2) : 0.85);
+        const wet = groundwaterSaturation(world, rowDepthCm(gy));
+        color.copy(_notch).lerp(_stream, wet).multiplyScalar(0.85);
         this.baseColor[p * 3] = color.r;
         this.baseColor[p * 3 + 1] = color.g;
         this.baseColor[p * 3 + 2] = color.b;
@@ -206,7 +205,7 @@ export class SoilMesh {
       // Everything below the water table reads as saturated ground: cooler and
       // a shade darker, so the table itself is legible as a horizon.
       const gy = Math.floor(cellIndex / GRID.cols);
-      if (rowDepthCm(gy) >= world.waterTableCm) color.lerp(_saturated, 0.38);
+      color.lerp(_saturated, 0.38 * groundwaterSaturation(world, rowDepthCm(gy)));
 
       // Light spilling from network packed into this cell.
       if (cell.occupancy > 0.01) {

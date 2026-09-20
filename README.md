@@ -170,6 +170,34 @@ node tools/shoot.mjs \
   --eval "window.mycelia.game.sim.player.tipCount"
 ```
 
+For a direct, paused feature fixture, run `npm run dev` and open
+`http://localhost:5173/?lab=water` (add `&qa=fast` for cheaper rendering).
+The **Test specimen** bench switches between water, forest, a region with all
+stands funded, 30 seconds of steward-assisted growth, and the headless crossing
+fixture that grows one colony across a stand boundary. It includes a live
+water-depth slider and a ten-second fixed-step advance. These are explicitly
+synthetic fixtures; ordinary URLs keep the normal opening and economy. The
+crossing fixture is simulated and reported in the bench only - nothing is drawn
+from it yet.
+Scene changes reload the seed for repeatable comparisons. Close the disclosure
+when reviewing the artwork, or use **Exit testing** to return to a normal game.
+
+```bash
+npm run test:feature -- --list          # all feature suites
+npm run test:feature -- water           # sub-second hydrology checks
+npm run test:feature -- water --browser # rebuild + focused browser check
+npm run test:feature -- water --browser --normal # full-quality water check
+npm run test:feature -- spatial         # coordinates and the shared soil volume
+npm run test:feature -- crossing        # one colony across one stand edge
+npm run test:feature -- views           # rebuild + fast view smoke
+npm run test:feature -- views --full    # complete view regression
+```
+
+The same dispatcher covers simulation, region, LOD, batches, assets,
+navigation and the full player journey. It runs headless checks where available;
+browser runs rebuild first and default to fast quality. Complete simulation,
+navigation and journey suites still take longer than the focused water check.
+
 For fast iteration under software WebGL, pass `--qa fast` to any browser tool
 (or append `?qa=fast` to a URL). It halves the drawing-buffer resolution, turns
 off antialiasing and the baked tree-shadow decals, and bypasses bloom and the

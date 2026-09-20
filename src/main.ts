@@ -45,6 +45,8 @@ function boot(): void {
 
   // A handle for the visual QA harness and for poking at a match from devtools.
   (window as unknown as { mycelia?: unknown }).mycelia = { game, ui };
+  const lab = new URLSearchParams(location.search).get('lab');
+  if (lab !== null) void import('./dev/lab').then(({ mountLab }) => void mountLab(game, lab));
 }
 
 /**

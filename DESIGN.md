@@ -438,3 +438,18 @@ changes nothing about how the game plays.
   different hue, so the distinction survives colour-vision deficiency.
 - **Don't** let the canopy become a bright mass. It is a near-silhouette
   (#151c0f in spring, dropping to #0c0b08 in winter) against the lit paper.
+
+
+## Water in the living specimen
+
+Water uses muted teal depth, sage shallows and restrained pale reflections.
+The forest brook follows the drainage course with rounded bends, soft wet
+banks, occasional low stones and slow currents and eddies. It stays below the
+hyphae's brightness and does not acquire an emissive outline.
+
+Below ground, an eight-centimetre capillary fringe dissolves into darker
+saturated soil. The channel uses the same depth transition and softens into
+its bed; the gradient belongs to the specimen, not to interface surfaces.
+The lower edge of the reachable fringe is the simulation's live water table.
+Seasonal depth changes remain legible with motion disabled. Water motion follows
+the existing ambient-motion control and system reduced-motion preference.

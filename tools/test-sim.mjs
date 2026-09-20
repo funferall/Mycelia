@@ -16,7 +16,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile only the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-sim-'));
-for (const name of ['content', 'rng', 'region', 'world', 'network', 'sim', 'match']) {
+for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'network', 'sim', 'match']) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
   writeFileSync(join(output, `${name}.mjs`), compiled.replace(/from '(.+?)'/g, "from '$1.mjs'"));

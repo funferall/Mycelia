@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Mycelia — an ecological real-time strategy game about growing a fungal network through living forest soil.",
+  "description": "Mycelia \u2014 an ecological real-time strategy game about growing a fungal network through living forest soil.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -18,7 +18,12 @@
     "test:view": "node tools/test-view.mjs",
     "test:journey": "node tools/test-journey.mjs",
     "cf:login": "wrangler login",
-    "deploy": "npm run build && wrangler pages deploy"
+    "deploy": "npm run build && wrangler pages deploy",
+    "test:water": "node tools/test-water.mjs",
+    "test:feature": "node tools/test-feature.mjs",
+    "test:region": "node tools/test-region.mjs",
+    "test:spatial": "node tools/test-spatial.mjs",
+    "test:crossing": "node tools/test-crossing.mjs"
   },
   "dependencies": {
     "three": "^0.186.0"

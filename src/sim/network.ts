@@ -1,8 +1,16 @@
-import { ECON, GRID, STRATA, type Stratum } from './content';
-import { inBounds, idx, type World } from './world';
+import { ECON, GRID } from './content';
+import { passableAt, type NetworkWorld, type Tree, type World } from './world';
 import type { Rng } from './rng';
+import { distanceCm } from './spatial';
 
 export type Owner = 'player' | 'rival';
+
+/** One tree's demand against the junction that feeds it. */
+export interface TreeSpeciesDemand {
+  waterDemand: number;
+  nutrientDemand: number;
+  patience: number;
+}
 
 export interface HyphaNode {
   id: number;
@@ -12,6 +20,14 @@ export interface HyphaNode {
   /** Grid cell this node currently occupies. */
   gx: number;
   gy: number;
+  /**
+   * Horizontal region coordinate across the growth plane. Zero on the flat
+   * transect; on a spatial colony it is the stand-crossing axis, so a strand
+   * that runs east keeps its depth and width while its stand index changes.
+   */
+  y: number;
+  /** Stand this strand currently stands in, or -1 on the flat transect. */
+  standId: number;
   /** Continuous position for rendering — tips glide between grid cells. */
   wx: number;
   wy: number;
@@ -118,6 +134,15 @@ export interface Network {
   resting: boolean;
   /** Set once nothing living remains. */
   extinct: boolean;
+  /**
+   * The growth plane this network may occupy, in columns and rows.
+   *
+   * A single stand's transect is `GRID.cols` wide. A colony that grows across
+   * a stand boundary lives on one wider plane, so its horizon of addressable
+   * cells is the region's, not one square's. This is a property of the colony,
+   * not of whichever stand happens to be on screen.
+   */
+  bounds: { cols: number; rows: number };
   rng: Rng;
   /** Waypoints the player has queued, oldest first. */
   waypoints: Array<{ gx: number; gy: number }>;
@@ -143,6 +168,8 @@ export function createNetwork(
     children: [],
     gx,
     gy,
+    y: 0,
+    standId: -1,
     wx: gx + 0.5,
     wy: gy + 0.5,
     targetGx: gx,
@@ -187,6 +214,7 @@ export function createNetwork(
     surplus: 0,
     resting: false,
     extinct: false,
+    bounds: { cols: GRID.cols, rows: GRID.rows },
     rng,
     waypoints: [],
   };
@@ -230,10 +258,11 @@ export function spawnTip(
   // Bias tips downward at first: the surface is bright and crowded, and the
   // interesting soil is below.
   if (rng() < 0.55) ty = Math.max(ty, from.gy);
-  if (!inBounds(tx, ty)) {
-    tx = Math.max(0, Math.min(GRID.cols - 1, tx));
-    ty = Math.max(0, Math.min(GRID.rows - 1, ty));
-  }
+  // Clamp to the colony's own growth plane, which is a region's worth of
+  // columns once it has crossed a stand edge.
+  const { cols, rows } = net.bounds;
+  tx = Math.max(0, Math.min(cols - 1, tx));
+  ty = Math.max(0, Math.min(rows - 1, ty));
 
   // Draw the child's starting body out of the parent. Water and mineral are
   // taken proportionally and may be thin; carbon is what a strand really has to
@@ -255,6 +284,8 @@ export function spawnTip(
     children: [],
     gx: from.gx,
     gy: from.gy,
+    y: from.y,
+    standId: from.standId,
     wx: from.wx,
     wy: from.wy,
     targetGx: tx,
@@ -283,24 +314,12 @@ export function spawnTip(
   return node;
 }
 
-/** Resistance of the cell a tip is about to enter, and what it costs to enter. */
-function entryCost(world: World, gx: number, gy: number): { cost: number; stratum: Stratum } {
-  const cell = world.cells[idx(gx, gy)];
-  const stratum = STRATA[cell ? cell.stratum : 'bedrock'];
-  // Hard, dense soil costs more; loose organic litter costs less.
-  const hardness = cell ? cell.hardness : 1;
-  const cost = stratum.growthCost * (0.75 + hardness * 0.7) * GRID.cmPerRow;
-  return { cost, stratum };
-}
-
+/**
+ * The flat transect's passability rule, kept as a named helper for the commands
+ * and tests that speak in grid coordinates rather than in nodes.
+ */
 export function isPassable(world: World, gx: number, gy: number): boolean {
-  if (!inBounds(gx, gy)) return false;
-  const cell = world.cells[idx(gx, gy)];
-  // Bedrock and open water both refuse hyphae, but for different reasons: rock
-  // is impassable ground and the stream is not ground at all. The channel is a
-  // threshold rather than a boundary because its bed is passable and its bank
-  // is the wettest soil in the stand.
-  return Boolean(cell) && cell.stratum !== 'bedrock' && !cell.stream;
+  return passableAt(world, gx, gy);
 }
 
 /**
@@ -311,7 +330,7 @@ export function isPassable(world: World, gx: number, gy: number): boolean {
  * their previous heading so strands run rather than wander, and are nudged away
  * from cells the network already occupies.
  */
-function chooseTarget(net: Network, world: World, tip: HyphaNode, rng: Rng): void {
+function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
   const wantOrder = net.waypoints.length > 0;
   if (wantOrder) {
     const wp = net.waypoints[0] as { gx: number; gy: number };
@@ -324,13 +343,13 @@ function chooseTarget(net: Network, world: World, tip: HyphaNode, rng: Rng): voi
       const step = 1.6;
       let tx = Math.round(tip.gx + (dx / dist) * step);
       let ty = Math.round(tip.gy + (dy / dist) * step);
-      if (!isPassable(world, tx, ty)) {
+      if (!world.passableFrom(tip, tx - tip.gx, ty - tip.gy)) {
         // Deflect around the obstruction rather than stalling against it.
         const sign = rng() < 0.5 ? 1 : -1;
         tx = Math.round(tip.gx + (-dy / dist) * sign * step);
         ty = Math.round(tip.gy + (dx / dist) * sign * step);
       }
-      if (isPassable(world, tx, ty)) {
+      if (world.passableFrom(tip, tx - tip.gx, ty - tip.gy)) {
         tip.targetGx = tx;
         tip.targetGy = ty;
         tip.ordered = true;
@@ -355,9 +374,9 @@ function chooseTarget(net: Network, world: World, tip: HyphaNode, rng: Rng): voi
       if (ox === 0 && oy === 0) continue;
       const tx = tip.gx + ox;
       const ty = tip.gy + oy;
-      if (!isPassable(world, tx, ty)) continue;
-      const cell = world.cells[idx(tx, ty)];
+      const cell = world.cellFrom(tip, ox, oy);
       if (!cell) continue;
+      if (!world.passableFrom(tip, ox, oy)) continue;
 
       // Nutrient and water sensing: the "read the soil" verb.
       let score =
@@ -392,7 +411,7 @@ function chooseTarget(net: Network, world: World, tip: HyphaNode, rng: Rng): voi
 }
 
 export interface StepContext {
-  world: World;
+  world: NetworkWorld;
   /** Photosynthesis multiplier for the current season. */
   light: number;
   /** Growth slowed by cold. */
@@ -455,7 +474,7 @@ function updateTipCeiling(net: Network): void {
  * for a while and starve — cutting a cord must be felt in real time, not
  * immediately deletes the strand.
  */
-function markConnectivity(net: Network): void {
+export function markConnectivity(net: Network): void {
   const nodes = net.nodes;
   for (const n of nodes) n.connected = false;
   const stack: number[] = [net.rootId];
@@ -482,11 +501,11 @@ function markConnectivity(net: Network): void {
  * Take in what the network is standing in. Two sources: bonded tree roots ship
  * carbon down, and every node draws a little water and nitrogen from its cell.
  */
-function harvest(net: Network, world: World, ctx: StepContext): void {
+function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
   const { dt } = ctx;
   for (const node of net.nodes) {
     if (!node.alive || !node.connected) continue;
-    const cell = world.cells[idx(node.gx, node.gy)];
+    const cell = world.cellOf(node);
     if (!cell) continue;
 
     // Water: drawn from the soil, replenished by rain and the water table.
@@ -779,6 +798,19 @@ function extendTips(net: Network, ctx: StepContext): void {
   for (const node of net.nodes) {
     if (!node.alive || !node.isTip) continue;
 
+    // Recheck before committing as well as moving: a rising table may have
+    // flooded a target since this tip paid for it. Existing strands persist,
+    // but flooded tips cannot extend until the water recedes.
+    if (!world.passableFrom(node, 0, 0)) continue;
+    const toTargetX = node.targetGx - node.gx;
+    const toTargetY = node.targetGy - node.gy;
+    if (!world.passableFrom(node, toTargetX, toTargetY)) {
+      node.wx = node.gx + 0.5;
+      node.wy = node.gy + 0.5;
+      chooseTarget(net, world, node, net.rng);
+      continue;
+    }
+
     const tx = node.targetGx + 0.5;
     const ty = node.targetGy + 0.5;
     const dx = tx - node.wx;
@@ -792,9 +824,9 @@ function extendTips(net: Network, ctx: StepContext): void {
 
     // Entering a new cell has a one-time cost; moving within the current cell
     // is cheap. Pay on the frame the tip crosses the boundary.
-    const entering = node.targetGx !== node.gx || node.targetGy !== node.gy;
-    const { cost, stratum } = entryCost(world, node.targetGx, node.targetGy);
-    if (!Number.isFinite(cost) || !isPassable(world, node.targetGx, node.targetGy)) {
+    const entering = toTargetX !== 0 || toTargetY !== 0;
+    const { cost, stratum } = world.costFrom(node, toTargetX, toTargetY);
+    if (!Number.isFinite(cost) || !world.passableFrom(node, toTargetX, toTargetY)) {
       // Impassable target: pick again rather than stalling against stone.
       chooseTarget(net, world, node, net.rng);
       node.retargetAt = nextRetarget(net);
@@ -847,7 +879,7 @@ function nextRetarget(net: Network): number {
 }
 
 /** A tip has arrived: it becomes a strut, and sprouts the next generation. */
-function commitTip(net: Network, world: World, node: HyphaNode, ctx: StepContext): void {
+function commitTip(net: Network, world: NetworkWorld, node: HyphaNode, ctx: StepContext): void {
   node.wx = node.targetGx + 0.5;
   node.wy = node.targetGy + 0.5;
   node.gx = node.targetGx;
@@ -855,9 +887,11 @@ function commitTip(net: Network, world: World, node: HyphaNode, ctx: StepContext
   node.isTip = false;
   net.tipCount--;
 
-  const cell = world.cells[idx(node.gx, node.gy)];
+  const cell = world.cellOf(node);
   if (cell) cell.occupancy = Math.min(1, cell.occupancy + 0.34);
   net.lengthCm += GRID.cmPerRow;
+  // A regional world re-files the strand into the stand it just crossed into.
+  world.commit(node);
 
   const rng = net.rng;
   // A strand that has run a while tends to keep running; occasionally it forks.
@@ -891,7 +925,7 @@ function commitTip(net: Network, world: World, node: HyphaNode, ctx: StepContext
  * starts to matter: the cords that emerge follow the routes the economy
  * actually uses, so the picture of the network is a picture of the decisions.
  */
-function thicken(net: Network, world: World, dt: number): void {
+function thicken(net: Network, world: NetworkWorld, dt: number): void {
   for (const node of net.nodes) {
     if (!node.alive || node.isTip) continue;
     const traffic = Math.abs(node.flow);
@@ -902,7 +936,7 @@ function thicken(net: Network, world: World, dt: number): void {
       node.thickness += (target - node.thickness) * Math.min(1, dt * 0.08);
     }
     if (node.thickness > 0.62 && Math.abs(node.flow) > 0.05) {
-      const cell = world.cells[idx(node.gx, node.gy)];
+      const cell = world.cellOf(node);
       if (cell) cell.occupancy = Math.min(1, cell.occupancy + 0.02 * dt);
     }
   }
@@ -913,7 +947,7 @@ function thicken(net: Network, world: World, dt: number): void {
  * being nodes and become the soil's problem — decomposable matter for whoever
  * gets there first.
  */
-function decay(net: Network, world: World, dt: number): void {
+function decay(net: Network, world: NetworkWorld, dt: number): void {
   for (const node of net.nodes) {
     if (!node.alive) continue;
     if (!node.connected) {
@@ -941,10 +975,10 @@ function decay(net: Network, world: World, dt: number): void {
 }
 
 /** Remove a node, converting its body into soil organic matter. */
-function killNode(net: Network, world: World, node: HyphaNode, organicReturn: number): void {
+function killNode(net: Network, world: NetworkWorld, node: HyphaNode, organicReturn: number): void {
   node.alive = false;
   if (node.isTip) net.tipCount = Math.max(0, net.tipCount - 1);
-  const cell = world.cells[idx(node.gx, node.gy)];
+  const cell = world.cellOf(node);
   if (cell) {
     cell.occupancy = Math.max(0, cell.occupancy - 0.3);
     // Death feeds the forest. This is deliberate: losses are not just losses.
@@ -1088,6 +1122,82 @@ export function updateTotals(net: Network): void {
   if (living === 0) net.extinct = true;
 }
 
+// ---------------------------------------------------------------------------
+// Tree trade
+//
+// A tree's side of the partnership used to be written out inside `Simulation`.
+// It lives here now because a colony that crosses a stand boundary trades with
+// the destination stand's trees through exactly the same rules, and one copy of
+// "what a partner costs and how it reacts" is the whole point of the migration.
+// ---------------------------------------------------------------------------
+
+/**
+ * The junction currently feeding a tree, if any.
+ *
+ * A junction that has been severed from the root is not supplying anything,
+ * however much of it is still standing: the tree feels the cut as an unmet
+ * demand and counts down to leaving.
+ */
+export function bondedJunction(net: Network, tree: Tree): HyphaNode | null {
+  for (const tip of tree.rootTips) {
+    if (tip.bondedTo === null) continue;
+    const node = net.nodes[tip.bondedTo];
+    if (node && node.alive && node.connected) return node;
+  }
+  return null;
+}
+
+/** True when a tree still believes it is bonded to something. */
+export function holdsAnyBond(tree: Tree): boolean {
+  return tree.rootTips.some((tip) => tip.bondedTo !== null);
+}
+
+/**
+ * One tree drinks what it needs out of the junction that feeds it, and the tree
+ * answers: a partner that is satisfied recovers, a short one loses patience,
+ * and a partner that has gone without long enough gives the bond up.
+ *
+ * @returns true when the bond should be severed.
+ */
+export function drawTreeDemand(
+  tree: Tree,
+  junction: HyphaNode,
+  spec: TreeSpeciesDemand,
+  dt: number
+): boolean {
+  const wantWater = spec.waterDemand * dt * (0.5 + tree.maturity * 0.8);
+  const wantNutrient = spec.nutrientDemand * dt * (0.5 + tree.maturity * 0.8);
+  const gotWater = Math.min(junction.water, wantWater);
+  const gotNutrient = Math.min(junction.nitrogen, wantNutrient);
+  junction.water -= gotWater;
+  junction.nitrogen -= gotNutrient;
+  tree.waterReceived = gotWater / Math.max(1e-6, wantWater);
+  tree.nutrientReceived = gotNutrient / Math.max(1e-6, wantNutrient);
+
+  const satisfaction = Math.min(tree.waterReceived, tree.nutrientReceived);
+  if (satisfaction > 0.85) {
+    tree.patience = Math.min(spec.patience, tree.patience + dt * 2);
+    tree.health = Math.min(1, tree.health + dt * 0.02 * satisfaction);
+    return false;
+  }
+  tree.patience -= dt * (1.6 - satisfaction);
+  tree.health = Math.max(0.05, tree.health - dt * 0.012 * (1 - satisfaction));
+  return tree.patience <= 0;
+}
+
+/**
+ * A tree still holding a bond whose strand is dead or cut off from the root.
+ *
+ * @returns true when the tree gives the bond up.
+ */
+export function starveBondedTree(tree: Tree, dt: number): boolean {
+  tree.waterReceived = 0;
+  tree.nutrientReceived = 0;
+  tree.patience -= dt * 1.6;
+  tree.health = Math.max(0.05, tree.health - dt * 0.012);
+  return tree.patience <= 0;
+}
+
 /** Transfer a founding kit out of connected stores, atomically and in node order. */
 export function payColonyFund(net: Network, cost: { carbon: number; water: number; nitrogen: number }): boolean {
   markConnectivity(net);
@@ -1113,8 +1223,20 @@ export function payColonyFund(net: Network, cost: { carbon: number; water: numbe
 // ---------------------------------------------------------------------------
 
 /** Send the growth frontier toward a point. Ordered tips break off first. */
-export function orderWaypoint(net: Network, gx: number, gy: number, world?: World): void {
-  if (!inBounds(gx, gy)) return;
+export function orderWaypoint(net: Network, gx: number, gy: number, world?: NetworkWorld): void {
+  // The order has to land on the colony's own growth plane, not on one stand's
+  // width: a strand that has crossed a boundary can be sent further into the
+  // neighbouring square.
+  if (
+    !Number.isFinite(gx) ||
+    !Number.isFinite(gy) ||
+    gx < 0 ||
+    gy < 0 ||
+    gx >= net.bounds.cols ||
+    gy >= net.bounds.rows
+  ) {
+    return;
+  }
   net.resting = false;
   net.waypoints.length = 0;
   net.waypoints.push({ gx, gy });
@@ -1131,10 +1253,12 @@ export function orderWaypoint(net: Network, gx: number, gy: number, world?: Worl
  */
 export function tryBond(
   net: Network,
-  world: World,
+  world: NetworkWorld,
   treeId: number,
   rootTipId: number,
-  reach = 3.5
+  // Reach is a real 3D distance now, so the flat transect's old 3.5 grid cells
+  // becomes the same number of centimetres rather than a different scale.
+  reach = 3.5 * GRID.cmPerRow
 ): boolean {
   const tree = world.trees[treeId];
   const tip = tree?.rootTips[rootTipId];
@@ -1142,9 +1266,10 @@ export function tryBond(
 
   let best: HyphaNode | null = null;
   let bestDist = Infinity;
+  const tipPosition = world.rootTipPosition(tree, tip);
   for (const node of net.nodes) {
     if (!node.alive || !node.connected || node.bondedTree >= 0) continue;
-    const d = Math.hypot(node.wx - (tip.gx + 0.5), node.wy - (tip.gy + 0.5));
+    const d = distanceCm(world.nodePosition(node), tipPosition);
     if (d < bestDist) {
       bestDist = d;
       best = node;

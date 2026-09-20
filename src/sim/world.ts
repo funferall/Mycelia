@@ -31,9 +31,9 @@ export interface SoilCell {
   occupancy: number;
   /**
    * True in the open channel of a stream: from the surface down to the bed this
-   * is water and air rather than soil, and hyphae cannot grow into it. It is a
-   * threshold, not a wall — the network can pass beneath the bed, and the bank
-   * beside it is the wettest ground in the stand.
+   * is water and air rather than soil, and hyphae cannot grow into it. The bank
+   * beside it is wet, reachable ground. Soil beneath the bed is only passable
+   * once the water table recedes below it.
    */
   stream: boolean;
   /** 0..1 dampness from the stream: 1 in the channel, fading over the bank. */
@@ -70,13 +70,69 @@ export interface Tree {
   seed: number;
 }
 
-export interface World {
+/** A 3D position in simulation space. See `src/sim/spatial.ts` for the rules. */
+export interface NodePosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The part of a node a world lookup needs to know.
+ *
+ * `gx`/`gy` are the growth plane: a column and a depth row on the flat
+ * transect, and the same two axes on a spatial section. `y` is the horizontal
+ * coordinate *across* that plane, which the flat transect leaves at zero and a
+ * spatial colony carries on every strand.
+ */
+export interface PositionedNode {
+  gx: number;
+  gy: number;
+  /** Stand this strand stands in, or -1 on a single-stand world. */
+  standId: number;
+  /** Continuous position within the growth plane; tips glide between cells. */
+  wx: number;
+  wy: number;
+  y: number;
+}
+
+/**
+ * What a fungal network needs from the ground it grows in.
+ *
+ * There are two implementations and one economy. `createStandWorld` below is
+ * the flat two-dimensional transect the prototype has always used; the region's
+ * shared soil volume implements the same interface for a colony that crosses
+ * stand boundaries. Growth, harvest, decay and bonding all go through these
+ * calls, so a regional strand is not a second species with its own rules.
+ */
+export interface NetworkWorld {
+  /** Every tree this colony can reach, in one stable table. */
+  readonly trees: Tree[];
+  /** Current rainfall multiplier, read by fruiting. */
+  readonly rainfall: number;
+  /** Read-only material `dx`/`dy` steps from a node's own cell. */
+  cellFrom(node: PositionedNode, dx: number, dy: number): SoilCell | null;
+  /** Material at a node's own committed cell; writing to it records a change. */
+  cellOf(node: PositionedNode): SoilCell | null;
+  /** Whether a hypha may occupy a neighbouring cell. */
+  passableFrom(node: PositionedNode, dx: number, dy: number): boolean;
+  /** Resistance and material of a neighbouring cell. */
+  costFrom(node: PositionedNode, dx: number, dy: number): { cost: number; stratum: Stratum };
+  /** A node's own position, in simulation space. */
+  nodePosition(node: PositionedNode): NodePosition;
+  /** Where a root tip actually is, in simulation space. */
+  rootTipPosition(tree: Tree, tip: RootTip): NodePosition;
+  /** Called once when a tip arrives, so a spatial world can re-bucket it. */
+  commit(node: PositionedNode): void;
+}
+
+export interface World extends NetworkWorld {
   seed: number;
   cols: number;
   rows: number;
   /** Row-major: index = gy * cols + gx. */
   cells: SoilCell[];
-  /** Depth of the water table in centimetres. Lower means deeper. */
+  /** Depth of the water table in centimetres. Larger means deeper. */
   waterTableCm: number;
   /**
    * The depth this stand's water table settles to in an ordinary season.
@@ -113,7 +169,46 @@ export const rowDepthCm = (gy: number): number => (gy + 0.5) * GRID.cmPerRow;
 export const rowAtDepthCm = (cm: number): number =>
   Math.max(0, Math.min(GRID.rows - 1, Math.round(cm / GRID.cmPerRow - 0.5)));
 
-function stratumAtDepth(cm: number): StratumId {
+/** Moist capillary fringe above the oxygen-poor, saturated ground. */
+export const WATER_FRINGE_CM = 8;
+
+/** Shared by soil colour and growth: the upper fringe is reachable. */
+export function groundwaterSaturation(world: World, depthCm: number): number {
+  const t = Math.max(0, Math.min(1, (depthCm - world.waterTableCm + WATER_FRINGE_CM) / WATER_FRINGE_CM));
+  return t * t * (3 - 2 * t);
+}
+
+export const belowWaterTable = (world: World, gy: number): boolean =>
+  rowDepthCm(gy) > world.waterTableCm;
+
+/**
+ * The shared growth rule.
+ *
+ * Bedrock and open water both refuse hyphae, but for different reasons: rock is
+ * impassable ground and the stream is not ground at all. Saturated ground also
+ * stops extension, while the upper fringe stays reachable for water.
+ */
+export function passableAt(world: World, gx: number, gy: number): boolean {
+  if (!inBounds(gx, gy)) return false;
+  const cell = world.cells[idx(gx, gy)];
+  return Boolean(cell) && cell.stratum !== 'bedrock' && !cell.stream && !belowWaterTable(world, gy);
+}
+
+/** Resistance of a cell and what entering it costs. One formula, every world. */
+export function entryCostFor(cell: SoilCell | null | undefined): { cost: number; stratum: Stratum } {
+  const stratum = STRATA[cell ? cell.stratum : 'bedrock'];
+  // Hard, dense soil costs more; loose organic litter costs less.
+  const hardness = cell ? cell.hardness : 1;
+  const cost = stratum.growthCost * (0.75 + hardness * 0.7) * GRID.cmPerRow;
+  return { cost, stratum };
+}
+
+export function entryCostAt(world: World, gx: number, gy: number): { cost: number; stratum: Stratum } {
+  return entryCostFor(inBounds(gx, gy) ? world.cells[idx(gx, gy)] : undefined);
+}
+
+/** Which horizon a depth falls in, before the local warp is applied. */
+export function stratumAtDepth(cm: number): StratumId {
   for (const band of HORIZON_PROFILE) {
     if (cm <= band.depthCm) return band.id;
   }
@@ -202,6 +297,17 @@ export function createStandWorld(seed: number, conditions: StandConditions = {})
     litterfall: 0.25,
     trees: [],
     forestBiomass: 0,
+
+    // The flat transect as a `NetworkWorld`. Its growth plane is (column,
+    // depth); across-plane `y` is zero, and every node is in the same stand the
+    // world already is, so arriving somewhere changes no bucket.
+    cellFrom: (node, dx, dy) => cellAt(world, node.gx + dx, node.gy + dy),
+    cellOf: (node) => cellAt(world, node.gx, node.gy),
+    passableFrom: (node, dx, dy) => passableAt(world, node.gx + dx, node.gy + dy),
+    costFrom: (node, dx, dy) => entryCostAt(world, node.gx + dx, node.gy + dy),
+    nodePosition: (node) => ({ x: node.wx, y: node.wy, z: 0 }),
+    rootTipPosition: (_tree, tip) => ({ x: tip.gx + 0.5, y: tip.gy + 0.5, z: 0 }),
+    commit: () => {},
   };
 
   seedForest(world, rng, mix);
@@ -216,8 +322,8 @@ export function createStandWorld(seed: number, conditions: StandConditions = {})
  * little below the local water table: a cross-section through a stream shows
  * air above the water line and water beneath it, so `stream` cells are water or
  * air rather than soil and the network cannot grow into them. Everything under
- * the bed is still soil, saturated but passable, which is what makes a stream a
- * threshold to work around rather than a boundary that closes a stand off.
+ * the bed is still soil; it becomes passable only when the water table recedes
+ * beneath it. The capillary fringe remains reachable along the banks.
  *
  * The bank either side carries `streamNear`, so the soil beside the channel
  * holds more water than the same depth further away. That is the whole point of

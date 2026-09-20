@@ -19,7 +19,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-region-'));
-const modules = ['content', 'rng', 'region', 'world', 'network', 'sim', 'match', 'survey'];
+const modules = ['content', 'rng', 'region', 'world', 'spatial', 'network', 'sim', 'match', 'survey'];
 for (const name of modules) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
@@ -632,7 +632,8 @@ function dump(region, seed) {
 
   const centre = Math.round(site.stream.centreGx);
   assert.equal(isPassable(world, centre, 0), false, 'a hypha cannot grow into open water');
-  assert.equal(isPassable(world, centre, GRID.rows - 1), true, 'the ground under the bed is still soil');
+  assert.equal(world.cells[idx(centre, GRID.rows - 1)].stream, false, 'the ground under the bed is still soil');
+  assert.equal(isPassable(world, centre, GRID.rows - 1), false, 'saturated ground under the bed blocks growth');
   const bank = Math.min(GRID.cols - 2, centre + Math.ceil(site.stream.widthGx / 2) + 1);
   assert.equal(isPassable(world, bank, 6), true, 'the bank is growable');
 

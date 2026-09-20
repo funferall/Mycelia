@@ -1,6 +1,6 @@
 # Mycelia — authoritative project status and feature log
 
-Last updated: 19 September 2026.
+Last updated: 20 September 2026.
 
 This is the **single source of truth for implementation status, current
 priorities, verification, and future work**. Read this file before changing the
@@ -47,9 +47,9 @@ point, dissolves the contents of the soil instead of switching them off, and
 re-derives its viewport-dependent framing when the window changes shape.
 
 The connected forest view and this log were committed as `89ee3cb`. The
-wall-clock crossing, the overlay fade, the viewport re-framing, and the browser
-check that covers them are local working-tree changes and have not been
-committed or deployed.
+wall-clock crossing, the overlay fade, the viewport re-framing, the flowing
+water, the test bench and the spatial stages recorded below have since been
+committed together; none of it has been deployed.
 
 The regional world model is being built underneath the running game: the region,
 the stand generator's site conditions and the regional match are in the tree,
@@ -59,17 +59,30 @@ colonized stand. Local soil, roots, networks, rewards and UI are rebound on entr
 every colony continues running while another stand is viewed. The established
 founding world is retained; other stands use regional site conditions.
 
+The spatial migration has begun underneath that: the simulation now owns
+regional XYZ coordinates and one shared soil volume (`MAP-14` stages 1-2), and
+`?lab=crossing` grows a single colony across a real stand boundary through it
+(`MAP-07` stages 3-4, headless). The running match and the renderer are still on
+the flat transect; promoting the fixture's coordinator into `RegionalMatch` and
+then adding sections and the forest reveal are the next gates.
+
 The forest carries a regional survey layer (`MAP-11`): `S`, or **Survey the
 region**, opens a printed ledger of the nine stands with their community, water,
 colony state, broad forest health, founding parent and lineage continuity. It is
 a record rather than a map, and it prints unsurveyed ground as unsurveyed.
 
-The region's stream is now visible in both views. Above ground it is a wet bank
-and a water ribbon lying on the forest floor along the generator's own course.
-Below ground that same stream is a threshold rather than a wall: the open
-channel is water a colony cannot grow into, the ground beneath its bed is still
-passable, and the bank beside it is the wettest soil in the stand, so a network
-cannot cross the water and does not need to.
+The region's stream is visible in both views, with slow shader currents,
+rounded surface bends, wet banks and instanced brook stones. Below ground the
+channel and water table fade through an eight-centimetre capillary fringe.
+Hyphae can reach that fringe but cannot extend below the live water table.
+The stream bed remains soil, reachable only when groundwater recedes below it.
+This supersedes the earlier unconditional under-bed crossing behavior.
+
+An explicit `?lab=water` test bench opens a crossed stand immediately; forest,
+region, grown-network and headless-crossing fixtures, a water-depth slider and
+fixed-step advance make visual iteration independent of a whole played match.
+`test:feature` selects existing feature suites and rebuilds before browser
+checks.
 
 Surface art now arrives through an intake pipeline rather than only being
 generated in code. `src/render/assets.ts` loads authored glTF models, scales each
@@ -96,8 +109,8 @@ the unchanged normal preset.
   forest-stand squares**, not a single isolated stand. Stand boundaries support
   simulation, streaming, ownership, and navigation, but the rendered landscape
   should read as one continuous forest rather than a visible chessboard.
-- Every logical stand square is **one above-ground tile with its own persistent
-  underground transect**, and the mycelium must be able to grow across a shared
+- Every logical stand square is **one above-ground tile with persistent
+  underground state**, and the mycelium must be able to grow across a shared
   boundary into the neighbouring tile's soil. Crossing a stand edge with hyphae,
   cords, water or roots is ordinary growth through a boundary portal, not only a
   spore that founds a separate colony. The region is one contiguous forest over
@@ -105,6 +118,13 @@ the unchanged normal preset.
   ownership, and must never fence the network in. `MAP-07`, `MAP-08`, `MAP-11`
   and the local underground model below are all written to this intent, and no
   interface may present the stands as isolated boxes.
+- 20 September spatial-view direction: underground sections are selectable
+  windows into one spatial network, and the forest can reveal that same
+  network from above. Both views must use simulation-owned horizontal position
+  and depth; presentation-only offsets cannot stand in for the third axis.
+  Browsing underground must preserve the forest location from which the player
+  descended. The staged implementation specification below supersedes the
+  earlier recommendation to stop at independent 2D transects.
 - Regional generation must produce coherent terrain and hydrology first, then
   derive soil, forest communities, tree ages, deadwood, and threats from those
   conditions. Streams, ponds, wetlands, springs, slopes, ridges, and clearings
@@ -144,6 +164,9 @@ the unchanged normal preset.
 | Simulation | `src/sim/{sim,network,world,content,rng}.ts` | One stand: seeded soil, fixed timestep, resources, network growth, tree trade, seasons, fruiting, outcomes |
 | Region | `src/sim/region.ts` | The 3×3 stand mosaic: one heightfield, drainage and streams, water table, communities, adjacency, wind, seed validation |
 | Regional match | `src/sim/match.ts` | Every stand in a region, stepped in a fixed order, with spores carried between neighbours and colonies founded for what the parent paid |
+| Shared spatial coordinates | `src/sim/spatial.ts` | Regional `x`/`y`, absolute `z` and derived depth; half-open stand ownership; stable node/tree/root-tip references; supercover segment traversal; the invertible Three.js adapter; simulation-owned tree placement (`MAP-14` stage 1) |
+| Regional soil volume | `src/sim/soil-volume.ts` | One analytic material field over global coordinates plus a sparse map of changed voxels, a continuous regional groundwater elevation and a distance-to-course stream query (`MAP-14` stage 2) |
+| Crossing fixture | `src/sim/crossing.ts` | One colony graph spanning two adjacent stands on a fixed section plane, stepped by the shared economy over the shared soil volume (`MAP-07` stages 3-4) |
 | Integration | `src/game.ts`, `src/main.ts` | Regional fixed-step loop, stand switching, local view rebinding, input, UI/audio synchronization |
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
@@ -156,13 +179,24 @@ the unchanged normal preset.
 | Shared stage | `src/render/{stage,quality,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom, opt-in fast QA preset |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region and for LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-spatial.mjs`, `tools/test-crossing.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region, for the shared coordinates and soil volume and for the two-stand crossing, LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
 
-The simulated soil is still a two-dimensional transect. Each simulated tree has
-one horizontal `gx` coordinate and stable root IDs. `treeSurfacePosition()` in
-`src/render/surface.ts` gives the same tree a seeded presentation-only depth on
-the forest floor. Descending maps the selected crown back to that tree's real
-root target. Do not imply that arbitrary surface depth is simulated terrain.
+The ordinary match's soil is still a two-dimensional transect. Each simulated
+tree has one horizontal `gx` coordinate and stable root IDs.
+`treeSurfacePosition()` in `src/render/surface.ts` gives the same tree a seeded
+presentation-only depth on the forest floor - a formula the simulation now also
+owns as `treeLocalOffset()` in `src/sim/spatial.ts`, which is where the surface
+renderer should read it from next. Descending maps the selected crown back to
+that tree's real root target. Do not imply that arbitrary surface depth is
+simulated terrain.
+
+The spatial path (`MAP-14` stages 1-2) has real coordinates and a shared soil
+volume, and the crossing fixture (`MAP-07` stages 3-4) grows one colony across a
+real stand boundary through it. That is a two-stand fixture on one section
+plane, not the ordinary match: `RegionalMatch` still steps one local
+`Simulation` per colonized stand, and the renderer still draws the flat
+transect. Promoting the fixture's coordinator and world view into the running
+game is the next gate, and it must not be described as done before it is.
 
 The current `136 × 112` world is one local stand-sized transect, not the final
 regional map. The planned regional architecture treats it as a local simulation
@@ -197,6 +231,9 @@ and equivalent useful details have been accounted for, then remove it.
 | VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
 | VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
 | VIEW-05 | Verified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. `npm run test:view` now covers the cases the row was waiting on: a drag pans instead of ordering while a tap on soil orders, a refused order is refused out loud and changes nothing, a cancelled pointer issues nothing and leaves the canvas still able to pan, a click during a crossing issues nothing, one wheel notch does not cross while six do, a key typed into the tree selector does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and Space, and a burst of five view changes lands in the view asked for last with input still live afterwards. |
+| VIEW-06 | Planned | Browse persistent underground sections | Select and flip through real spatial sections, retain each section's framing, follow cross-stand strands, and restore the original forest location on ascent. See the spatial-growth implementation sequence below. |
+| VIEW-07 | Planned | Forest network reveal | A Network button shows the same XYZ strands beneath the forest, with a cheap surface projection first and optional transparent-ground inspection. No presentation-only spread or duplicate simulation. |
+| VIEW-08 | Planned | Natural forest-floor materials and ground contact | Replace diagonal floor bands and uniform scatter with regional material patches, restrained surface detail, grounded props and canopy/contact shading. Preserve authoritative terrain, stream alignment and cutaway behavior. |
 
 ### Authored surface art
 
@@ -205,24 +242,26 @@ and equivalent useful details have been accounted for, then remove it.
 | ASSET-01 | Partial | Authored model intake | The existing registry loads six replacement botanical models; scaling, ground correction, seasonal/health material tint and procedural fallback are unchanged. Tree and sapling GLBs now contain `anchor_crown`; the loader still ignores it. Manifest LOD and regional wood/foliage batching are implemented. Remaining: browser missing-file/late-load checks, anchor consumption and dead-variant switching. Current art verification is recorded under 19 September below; the 18 September browser results describe the previous art. |
 | ASSET-02 | Partial | Botanical asset pack | `tools/make-forest-assets.py` builds 21 original low-poly assets / 39 GLBs: three living species and their dead/hollow variants, three saplings, fern, grass, stump, log, snag, root plate, four reproductive bodies and two rock props. The six original paths replace placeholders immediately; other files are listed in `forest-manifest.json` for integration. Remaining: art-direction acceptance, fruiting-body integration into LivingView/surface outcomes, community-driven prop placement, new understory/rock/spore usage, and runtime dead variants. This is a stylized botanical first pass, not photoreal scanned art. |
 | ASSET-03 | Partial | Asset contract, LOD and validation | Manifest-driven projected-size LOD with 15% hysteresis is retained. Region-wide TreeBatches groups authored parts by asset, tier, geometry and material; instance matrices retain placement, growth and wind, and instance colours retain health and season. Stable stand:tree mappings survive slot/tier changes; crown proxies remain selectable. Focused batch tests cover transforms, colours, buffer growth, tier migration and re-entry. Remaining: authored wind clips, dropped-in-file validation, loader failure/late-load QA, crown anchors, dead variants and distance-transition tuning. |
+| ASSET-04 | Planned | Dense non-interactive forest dressing | Reuse the existing tree/understory/prop pack in deterministic, community-driven batches. Background vegetation has no playable Tree identity, roots, economy or picking proxy. See the fuller-forest plan in Current priorities. |
 
 ### Regional map, terrain, forest stands, and water
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
 | MAP-01 | Partial | Multi-stand regional map | All nine stands render continuously and colonized stands can be entered through Survey a stand or a selected crown. Game steps RegionalMatch; the original founding world is retained for opening compatibility. Remaining: shipping region size and complete terrain/soil boundary integration. |
-| MAP-02 | Partial | Continuous regional surface | There is one `heightAt` for the whole region, the shared edges of neighbouring stands agree exactly, and the renderer draws every stand floor and its trees as one continuous forest rather than one stand of floor. The region's stream is now drawn as a wet bank and a water ribbon lying on that floor, following the same `heightAt` and the same `streamPath` the generator carved, and it folds with the ground during a view crossing. Remaining: ponds and exposed rock are not drawn yet, and the tiles nearest the camera still lose their floor below the slab. |
+| MAP-02 | Partial | Continuous regional surface | Shared terrain and all nine stands render continuously. The drainage ribbon now has rounded bends, soft banks, slow shader currents and instanced brook stones; it folds and rebases with the landscape. Focused water browser checks exercise actual shader output at fast and normal quality. Remaining: ponds, broader exposed rock placement, and near-camera floor/slab defects. |
 | MAP-03 | Partial | Terrain-first generation | Elevation, a regional fall line, a valley, drainage from a priority flood, flow accumulation and aspect are all generated before anything is placed, deterministically from the seed. Remaining: exposed rock, parent material and deadwood are still local, and there is no generator-version field. |
-| MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and it is now drawn above ground. Below ground the same stream is a real threshold rather than scenery: the region gives each stand it crosses a channel in that stand's own transect (`StandSite.stream`), `SoilCell.stream` marks the open channel from the surface to a bed just below the water table, hyphae cannot grow into it (`isPassable`), the ground under the bed stays passable, and `SoilCell.streamNear` keeps the bank the wettest soil in the stand — every depth beside the channel draws extra water. The water table is shaded below ground as a cool saturated horizon with a rule across the specimen, and it rises and falls with the season. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and true saturation barriers; the channel is a projection of a diagonal crossing onto one mean column rather than a 3D course. |
+| MAP-04 | Partial | Hydrology and water features | The region owns the stream course, stand channel and wet banks. Surface water has analytic flow and eddies; underground water and soil share an 8 cm capillary gradient above the live table. Hyphae can touch that upper fringe but cannot extend into saturated ground, including paid targets invalidated by a rising table. Existing submerged strands persist but stop extending; soil under the stream bed only becomes passable as the table recedes. `src/sim/soil-volume.ts` now answers the spatial path with a continuous regional groundwater elevation and a distance-to-course channel query sharing the bed and table elevations, so one segment is refused by the same water from either stand. Focused headless and rendered checks are recorded below. Remaining: ponds, vernal pools, springs, seasonal channels, erosion, oxygen stress on existing strands, and the ordinary transect's own mean-column projection, which is still what the running game draws. |
 | MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. Remaining: density, age structure, canopy openness, understory, litter and deadwood still do not vary by community, and the floor props are seeded per stand rather than chosen by the community. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
-| MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. Growth across a shared edge must become an ordinary local order — hyphae and cords continuing into the neighbouring stand's own transect — with the wind-borne spore kept as an additional route rather than the only one; see the product direction above. |
+| MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Stages 3-4 now land as the `?lab=crossing` fixture: one colony graph grows across a real shared edge in two adjacent stands on one section plane in about six seconds of ordinary growth, keeping one root, one node budget and one set of stores; parent links span the seam; a seam crossing changes only the strand's stand bucket; the destination stand's own trees are activated by the simulation rather than by being viewed; growth pays the ordinary entry price with no seam tax; the destination voxel is consumed once per arrival; a remote bonded tree in the far stand pays the same connected body; cutting every seam-spanning strand severs and starves the far side without erasing it; a cord pays its charge; a flooded target is refused; all four edge directions cross; and watching a section changes no simulation state. Remaining: the ordinary match is not yet the spatial coordinator (`RegionalMatch` still steps one local `Simulation` per stand), cords do not cross a seam in play, no section browsing (`VIEW-06`) or forest reveal (`VIEW-07`) exists, and infection, warnings and roots crossing a boundary are untouched. Follow the staged spatial-growth specification in Current priorities. |
 | MAP-08 | Partial | Regional exploration and information | Stand survey and crown selection lead into a colonized stand's persistent underground context. Orders, catalogue, rail, roots, rewards and networks use that stand; the forest camera is rebased with the landscape so return preserves context. Uncolonized ground explains why descent is unavailable. Remaining: water-feature selection, incomplete surveys and network sensing. |
 | MAP-09 | Partial | Generated-map fairness | Validation refuses a region whose stands cannot be reached from the founding stand, or whose founding stand has no water in reach; the founding stand is chosen for habitable ground near water on the way down. Remaining: no repair pass, no threat-counterplay check, and no check that a loss is recoverable. |
 | MAP-10 | Partial | Regional colonization loop | The browser now runs regional spore release and announces daughter stands. A colony's outcome offers exploration when another colony exists. Fixed founding resources: the parent pays actual connected node stores in carbon, water and nitrogen; the daughter keeps these in its nodes rather than losing summary-only reserves on the next tick. Remaining: drawn spore hops, a regional victory objective and balance of unattended daughter colonies. All stands now share a regional seasonal clock, including dormant ground and completed colonies. |
 | MAP-11 | Partial | Regional atlas interface | `S` or **Survey the region** opens a printed ledger of all nine stands in the sheet's own field-record language. Each line carries the stand, its community, whether a colony holds it, its water-table band and depth, its broad forest health and standing trees once a colony has held the stand, the stand it was founded from, and whether every colony still connects to the founding stand. Unknowns are printed as unknowns: ground never held reads "not surveyed beneath". Lines are buttons that select the stand, so surveying and choosing are one move. It is deliberately a ledger rather than a minimap — no grid, no tiles, no icons, no per-stand markers. Remaining: an infection field (no infection state exists until `ADV-01`/`ADV-02`), water-feature entries, fog of war finer than held-versus-unheld, and network sensing. |
 | MAP-12 | Partial | Simulation streaming and level of detail | Every colonized stand steps at full fidelity every tick, in stand order, and ground with no colony in it is not simulated at all, which is what keeps nine stands affordable. Moving between stands provably changes no number (asserted against an unwatched match). Remaining: coarse cadence for distant colonies, rendering LOD, pooled geometry and bounded particles. |
 | MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
+| MAP-14 | Partial | Shared spatial network and soil coordinates | Stages 1-2 landed. `src/sim/spatial.ts` is the pure coordinate module: regional horizontal `x`/`y`, absolute `z`, derived depth, half-open stand ownership, stable `NodeRef`/`TreeRef`/`RootTipRef`, a supercover segment traversal that cannot skip a shared edge, the invertible Three.js adapter, and simulation-owned tree placement that keeps the seeded location the forest already used; `SPATIAL_VERSION` is defined. `src/sim/soil-volume.ts` is the shared material record: one analytic field over global coordinates, so a stand id cannot change a sample; a sparse map of changed voxels advanced in stable key order on the soil's own cadence; a continuous regional groundwater elevation; a distance-to-course stream query; and segment queries that test every crossed voxel. Remaining: the renderer and the ordinary match still read the flat transect, `src/render/surface.ts` still computes its own placement formula, soil organic/mineral regrowth is not yet shared with the transect worlds, and no save format carries the version. |
 
 #### Regional generation order
 
@@ -250,9 +289,10 @@ crowns can overhang adjacent stands, and fungal connections can cross edges.
 
 #### Local underground model
 
-The recommended first architecture is a regional surface grid whose stands each
-own a persistent local soil transect derived from the shared regional seed and
-boundary conditions. The current grid can become that local unit.
+The implementation currently uses one persistent 2D transect per stand.
+The 20 September spatial-growth specification below replaces that target with
+simulation-owned XYZ nodes and sampled soil volumes. Transects become views
+of persistent state, not separate copies of a colony or its resources.
 
 - Descending on a tree, patch, or water feature opens the corresponding stand's
   persistent underground context; it must not generate a new disposable slice.
@@ -270,9 +310,9 @@ boundary conditions. The current grid can become that local unit.
 - Distant stands may use coarser update intervals, but camera movement cannot
   change simulation results. Re-entering a stand must show everything that
   happened while it was out of view.
-- A future arbitrary 3D soil volume is not required for the first regional
-  version. Do not fake arbitrary underground depth while still simulating only
-  local transects.
+- A dense 3D voxel simulation is not required. Use a sparse spatial network
+  and deterministic soil sampling, with persistent state only where material
+  has changed. Do not fabricate top-down spread from a 2D network.
 
 #### Stand examples
 
@@ -412,13 +452,31 @@ Ecological references supporting this direction:
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
 | PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960×640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles, with authored trees batched into 12 draws over 150 parts. Remaining: hardware-GPU measurements, simulation and network-ceiling budgets, and byte-accurate GPU memory. |
-| PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 762.97 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle counts alone are not a frame-time budget. |
+| PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 783.73 kB (209.03 kB gzip), plus the opt-in 1.14 kB test bench with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle counts alone are not a frame-time budget. |
+| QA-01 | Partial | Feature testing and direct scene fixtures | `test:feature -- --list` routes water, simulation, region, LOD, batches, assets, views, navigation and journey checks; browser routes build current code first and default to fast quality. `?lab=water`, `forest`, `region`, and `growth` opt into synthetic paused fixtures with depth control and fixed-step advance. Water has a sub-second headless suite and focused renderer check. Remaining: other broad suites still need feature-level subdivision; future features must add their own bounded checks. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
 ## Current priorities
 
 Work in this order unless the user explicitly changes priority.
+
+Latest additional 20 September request: plan fuller forest tiles using
+non-interactive background trees and more realistic ground. The fuller-forest
+specification below is an independent implementation lane; it does not replace
+the cross-stand spatial-growth plan or require that migration to finish first.
+This turn authorizes planning, not implementation. No full suites are requested.
+
+Latest 20 September user priority: plan cross-stand hyphal growth, browsable
+underground sections that preserve the forest return location, and a forest
+network-reveal button. The specification below is the next implementation
+sequence for DeepSeek. This is planning only; no spatial functionality is
+claimed implemented. The user's instruction not to run full test suites
+remains in force.
+
+20 September user override: serene shader water, groundwater/stream gradients,
+a reachable fringe with a saturation barrier, and faster testing. Implementation
+and current verification are recorded below.
 
 19 September user override: implement neighboring-stand exploration first, then
 forest batching and performance. Navigation is implemented and its focused
@@ -440,6 +498,539 @@ rebuild/QA tooling are ready to commit. Runtime LOD selection reads
 and dead variants remain separate future work. Re-run the complete browser view suite
 independently of Blender rendering before claiming current-tree interaction
 verification; the combined checks for this work are recorded below.
+
+### Fuller forest and natural ground: implementation sequence for DeepSeek
+
+**Desired result.** The regional forest should read as connected woodland with
+overlapping canopy groups, understory, leaf litter, occasional deadwood and
+clearings. It should not look like a sparse set of playable trees placed on
+striped tiles. Some trees remain the game's interactive partners; most added
+vegetation is atmosphere. Preserve the quiet botanical style while making
+materials, placement and ground contact more convincing. This is runtime
+integration and rendering work using existing assets, not a new asset-art task.
+
+**Current causes to address.** `SurfaceForest` currently draws the simulation's
+roughly 7-10 trees per stand. Its floor colours use
+`sin(x * 0.14 + z * 0.17)`, which produces visible diagonal bands; each stand
+then scatters 2,200 grass instances and 1,600 litter pieces uniformly. Authored
+prop placement adds only three stumps/logs. Much of the delivered botanical
+pack is not exposed by the runtime `AssetId`/registry yet. Increasing the
+existing scatter counts alone will increase clutter without making a forest.
+
+#### A. Separate playable trees from background vegetation (`ASSET-04`)
+
+- Keep `World.trees` as the authoritative playable population. Add a separate
+  renderer-side `ForestDecoration` record with stable decoration ID, kind,
+  species/asset, regional position, size, orientation and wind phase. Do not
+  construct fake `Tree` objects or add decorative trees to simulation arrays.
+- Decorations have no root tips, bonds, harvestable stores, colony influence,
+  selection ring, crown proxy or entry in the tree selector. Exclude their
+  geometry explicitly from picking instead of hoping raycast order ignores it.
+  Give decoration keys a separate namespace from `standId:treeId`.
+- Cosmetic season tint and wind use the same environmental clock/preferences
+  as the forest. Static diversity does not require per-tree ecology. Decorative
+  foliage may respond gently to regional weather, but do not give it invented
+  individual health, deaths or fake gameplay responses.
+- The player's actual partners must remain readable among the added trees.
+  Reserve space around their trunks/crowns, keep current selection markers
+  unobstructed and retain the selector as a reliable fallback. For dense views,
+  support a restrained selected-tree silhouette and fade only obstructing
+  decorative foliage. Do not outline every tree or turn all scenery into UI.
+- Additional greenery must not hide the forest's gameplay feedback: bond,
+  stress and death remain visibly attached to the real partner tree, and
+  health/biomass readouts still count only simulated trees.
+
+Acceptance: with dressing enabled, the same seed has exactly the same
+playable tree/root IDs, initial simulation checksum and selector entries as
+with dressing disabled. Clicking background vegetation never issues a tree
+order, selects a fake partner or blocks access to a real crown underneath.
+
+#### B. Generate clusters and gaps across tile boundaries (`ASSET-04`, `MAP-05`)
+
+Implement a pure, seedable placement helper, for example
+`src/render/forest-dressing-layout.ts`. It accepts regional terrain/community,
+stream and playable-tree locations; it does not consume a simulation RNG.
+
+- Use regional coordinates for low-frequency density fields and candidate
+  hashes. Generate candidates in spatial cells with stable IDs and deterministic
+  priorities. Evaluate neighboring cells across a tile boundary when enforcing
+  spacing; use half-open ownership bounds so a tree is emitted once. This
+  avoids square planting patterns, seams and stand-load-order dependence.
+- Make clustered canopy groups, thinner connecting woodland and deliberate
+  gaps. Use a spacing radius based on crown size, not a perfect grid or one
+  radius for every age. Vary height/width and yaw modestly; do not scatter
+  extreme scale variants or tilt mature trunks like loose props.
+- Blend community influence near borders. Starting composition: oak ridges
+  have more open patches and dry litter; hemlock ravines have denser shade and
+  mossy understory; birch hollows have mixed young growth; stream corridors
+  retain an open channel with clustered vegetation on the banks; recovering
+  clearings use saplings and grass with fewer mature crowns.
+- Reserve exclusion masks for the actual stream, large ground discontinuities,
+  playable trunks and important interaction sightlines. Trees and props must
+  sit on the region's own `heightAt`; do not float them above valleys or put
+  trunks in open water. Occasional crown overhang is allowed; planting a root
+  anchor inside a channel is not.
+- Start with configurable density bands of roughly 24, 48 and 72 background
+  canopy trees per stand, then tune from normal-quality overview and close-up
+  captures. These are trial counts, not acceptance criteria. The desired
+  density is a convincing canopy silhouette with visible clearings, not a
+  blanket hiding every stream and playable tree.
+- Add lower layers selectively: young trees at canopy gaps, ferns/shrubs in
+  moist shade, grass in brighter openings, fallen branches and litter beneath
+  crowns. Rework the existing uniform grass/litter instances into those masks
+  instead of retaining them and adding another indiscriminate layer.
+
+Acceptance: deterministic placement for a seed, stable IDs after stand re-entry,
+no duplicate edge candidates, no channel/planted-trunk conflicts, and clearly
+different forest density/composition in at least three community fixtures.
+Cross-border density changes must read as habitat transitions, not tile edges.
+
+#### C. Render the added forest cheaply (`ASSET-03`, `ASSET-04`, `PERF-02`)
+
+- First expose only the already-delivered tree LODs, saplings, fern/grass,
+  small rocks and needed deadwood assets in `assets.ts`. Validate manifest
+  lookup and ground correction. Missing files keep a bounded procedural
+  fallback or omit a minor prop; never trigger thousands of individual
+  fallback tree objects while assets load.
+- Add dedicated instanced decoration batches sharing geometry/material by
+  asset, part and LOD. The current `TreeBatches.sync()` walks each playable
+  model's object hierarchy every frame; do not copy that object-heavy path
+  for hundreds of static background trees. Store placement in typed buffers;
+  update static transforms only when created or moved between LOD groups.
+- Use the existing projected-size LOD logic and hysteresis. Most background
+  trees should use LOD1/LOD2; LOD0 is earned by close screen size. Frustum-cull
+  moderate spatial chunks with correct bounds, avoiding one enormous always-
+  visible forest batch and avoiding one draw call per tree.
+- Wind belongs in a shared shader with per-instance phase/stiffness, or a
+  low-cadence bounded update until that exists. Reduced motion freezes it.
+  Do not rebuild instance matrices for all decorative trees every frame.
+- Cap foliage overdraw. Prefer opaque authored foliage or cutout material
+  where required; avoid stacks of large translucent cards. Use shared canopy
+  shadow masks/contact shading rather than hundreds of new shadow lights or
+  per-tree dynamic shadow maps.
+- Keep normal and `qa=fast` on the same placement and identity set. Fast QA
+  must not conceal planting/selection defects by removing all background
+  trees. Any later production scenery-density setting is separate and must
+  never change simulation state.
+
+Acceptance: decoration draw calls scale with visible asset/LOD groups and
+chunks, not tree count; simulation node/tree counts remain unchanged; no
+continuous per-tree object allocation; GPU resources stabilize after repeated
+stand switching. Record before/after draw calls, triangles and backend at a
+fixed seed/camera. Tune density to measured results instead of claiming that
+instancing alone guarantees a frame rate.
+
+#### D. Replace striped ground with natural material patches (`VIEW-08`)
+
+Keep authoritative terrain elevation and existing stream geometry. Improve
+its surface material first; a new terrain generator is not a prerequisite.
+
+- Remove the sine-band colour recipe. Build region-space material weights
+  from slope, relative elevation, stream distance/wetness, canopy coverage,
+  community and seeded irregular patch noise at several scales. Adjacent
+  tiles must evaluate the same field at a shared world point.
+- Use a compact set of ground materials: dark leaf humus, drier leaf litter,
+  shaded moss, sparse exposed mineral earth, and gravel/stone near channels
+  or steep exposed patches. Wet banks darken and gain a restrained sheen;
+  dry soil stays rough. Avoid making the entire forest green lawn.
+- Begin with baked regional masks/vertex weights plus one shared material.
+  Add reusable albedo/normal/roughness detail only where close-up views need
+  it. Use world-space sampling with consistent texture scale and mipmaps;
+  noise must not restart at each tile or turn into sparkling pixels at a
+  distance. Surface patterns stay fixed when the stand/render origin rebases.
+- Distinguish fine material relief from terrain shape. Small normals/bump
+  detail can suggest litter, roots and pebbles without changing collision or
+  water height. If vertex displacement is later introduced, route it through
+  the shared terrain sampler so trunks, props, water and picking still agree.
+- Add clustered leaf fragments, partially embedded pebbles, a few roots at
+  real trunk bases and fallen branches where they improve silhouette. Place
+  low props with sampled support heights/normals so logs do not balance on
+  their centres over slopes. Decorative rocks/logs grant no resources or
+  stream-crossing ability; avoid suggesting a playable bridge where none
+  exists.
+- Add restrained canopy/contact darkening at tree bases and beneath foliage,
+  including decoration clusters. Prefer a coarse shared mask over per-tree
+  transparent shadow decals. Do not bake sunlight in conflicting directions
+  into albedo or mistake near-black ground for material realism.
+- Revisit the known near-camera ground/backing defect: the ground should not
+  disappear while trees float above the slab. Correct the backing extent,
+  terrain skirt or transition mask in `stage.ts`/`surface.ts`; do not hide it
+  by planting more trees over the seam. Inspect the region edge and the
+  forest-to-underground crossing after the change.
+
+No purchased textures, Blender generation or new scanned-asset pipeline is
+required for the first pass. Reuse local assets and generated/baked detail.
+If those cannot deliver acceptable close-up material, record the exact missing
+asset as a gap rather than expanding this task into asset production.
+
+Acceptance: no diagonal stripe repetition at overview; close-up ground reads
+as litter/moss/earth rather than flat vertex colours; stream banks remain
+aligned and visible; no material seam at shared edges; tree/log/rock bases
+contact the ground; orbiting does not expose a floating foreground forest.
+
+#### E. Integration, scoped testing and delivery order
+
+Suggested responsibilities: `forest-dressing-layout.ts` for pure placement;
+`forest-dressing.ts` for instanced drawing; `assets.ts`/manifest for existing
+asset exposure; a small `ground-material.ts` for terrain materials;
+`surface.ts`/`stage.ts` for integration and cutaway behavior. Keep community
+tuning centralized instead of scattering density constants through rendering.
+
+Use stable regional coordinates compatible with the planned `MAP-14`
+convention, but keep scenery independent of the spatial simulation migration.
+Background trees never become extra network roots. `VIEW-07` network reveal
+must be able to dim decorative canopy without changing instances' identities;
+normal opacity returns when reveal is disabled. During descent, decorative
+vegetation follows the surface fade/fold and does not leave invented roots
+drawn inside the underground specimen.
+
+Implement as separate reviewable changesets:
+
+1. Pure placement and background-only data model, then an immediate forest
+   fixture using a few existing LOD2 assets. Confirm unchanged gameplay state.
+2. Clustered instanced canopy with playable-tree picking preserved. This is
+   the first visually useful density improvement; do not wait for every prop.
+3. Replace ground stripes/material weights and redistribute existing litter
+   and understory. Add optional detail maps after the coarse composition works.
+4. Ground contact, backing/cutaway fixes, near/far LOD tuning and integration
+   with the water and planned network-reveal controls.
+
+Extend the existing `?lab=forest` bench with dressing on/off, reproducible
+overview/close camera poses and a small community selector. Add focused
+`test:dressing` checks for determinism, masks, seams, ownership and unchanged
+playable state, then a bounded forest-dressing browser smoke using the same
+fixture. Expose it through `test:feature`. Capture the same camera before/after
+so density improvement and selection readability can be judged directly.
+
+Use typecheck and the relevant small headless checks during implementation;
+one focused browser pass when the visible change is complete. Do not run full
+simulation, region, view or journey suites without a new user request. Report
+normal/fast preset, backend and visible decoration count with any measurements.
+No tests are needed for this planning-only update. Mark `ASSET-04`/`VIEW-08`
+Verified only after the associated behavior and images have been checked;
+update `MAP-05`, `ASSET-03` and `PERF-02` only for gaps actually closed.
+
+**DeepSeek starting task:** implement A and the pure placement part of B;
+then render one community fixture with batched existing LOD2 background trees.
+Do not increase `World.trees` or simulate more tree partners. Once that is
+reviewable, expand placement across the region and improve ground materials.
+Keep all durable progress and verification in this file.
+
+### Cross-stand spatial growth and connected views: implementation sequence
+
+**Scope and architectural decision.** Implement one sparse spatial fungal
+network, partitioned by stand for indexing, with underground sections and the
+forest reveal as projections of that same state. Nodes have genuine XYZ
+positions. Soil is sampled deterministically and only changed cells retain
+mutable state; do not allocate nine dense 136 x 136 x 112 volumes. No new 3D
+assets are required. Do not rotate today's flat network onto the forest floor,
+randomly scatter its nodes, or duplicate a colony for every displayed slice.
+
+**Player-facing result.** Descend beneath a selected tree or network strand.
+Inspect a vertical section, flip to neighboring sections or follow a strand
+across a stand boundary, and optionally compare two sections. Every section
+shows the continuing simulation. Return to the forest at the original camera
+location. A **Network** button in the forest reveals the connected network
+beneath the terrain; selecting a visible strand opens the section containing
+that strand. Ordinary forest tree selection remains available with reveal off.
+
+#### 1. Establish shared spatial coordinates (`MAP-14`)
+
+Implement small pure helpers in `src/sim/spatial.ts`, with render conversion
+in a separate module. Use these conventions consistently:
+
+- Simulation `x`, `y`: horizontal regional coordinates, matching today's
+  `Region.heightAt(x, y)`; `z`: absolute elevation, positive upward. Depth is
+  derived: `depthCm = (heightAt(x, y) - z) * GRID.cmPerRow`.
+- Stand ownership comes from horizontal position alone, using half-open
+  bounds. Internal edges belong to exactly one stand; coordinates outside
+  the region are invalid. No diagonal jump may skip testing a shared edge.
+- Three.js adapter: `(x - originX, FLOOR + z, originY - y)`. Keep any visual
+  vertical exaggeration in this adapter, with an inverse for picking. Never
+  add random render depth to a simulation coordinate.
+- Add stable `ColonyId`, `NodeRef { colonyId, nodeId }`, `TreeRef { standId,
+  treeId }` and root-tip references. Local numeric tree/node IDs currently
+  collide across stands. View buffers can have slots; those slots are not IDs.
+- Move the seeded horizontal placement now inside `treeSurfacePosition()`
+  into simulation-owned tree data. Preserve its seeded location where
+  possible. Root tips must have real positions under that tree; root depth
+  and bonding distances must be computed in 3D, not from the nearest screen
+  label or a matching horizontal column.
+- Define a generator/spatial version. Keep a narrow adapter for existing 2D
+  fixtures while migrating callers; do not silently label old flat saves or
+  tests as spatial. There is no released save format to migrate today.
+
+Acceptance: round-trip coordinate conversion; negative/outside coordinates
+rejected; all four stand edges resolve consistently; equal absolute elevation
+does not change at a stand seam; the same tree/root has matching coordinates
+in both projections. This first change need not alter ordinary gameplay.
+
+#### 2. Make soil and water queryable in 3D (`MAP-14`, `MAP-04`)
+
+Introduce `SoilVolume.sample(position, time)` and an explicit mutation path,
+backed by regional seeded fields plus a sparse map of changed soil cells.
+Reuse current horizon/economy parameters; do not rewrite balance as part of
+this migration. Material queries and view sampling must be read-only.
+
+- One canonical voxel key uses global coordinates and a documented resolution
+  (initially one game-space unit per axis). Shared-boundary queries address
+  the same physical material; stand ID must not change the noise sample.
+- Soil organic matter, minerals, harvest depletion and occupancy have one
+  persistent record per affected voxel. Opening another section must neither
+  create new resource stocks nor copy a depleted cell's resources.
+- Keep analytic initial material and a simulation-owned active/dirty-cell
+  set. Advance changed cells on the existing soil cadence in stable key order;
+  do not iterate the entire volume or let render sampling determine updates.
+  If inactive-cell recovery is lazy, calculate it from recorded simulation
+  time and environmental history, never the wall clock or time last viewed.
+- Expose a continuous regional groundwater elevation, derived from the
+  generator's water field, not nine discontinuous stand-average depths.
+  Convert it to local depth for the existing 8 cm fringe. Apply season changes
+  on the regional clock, including newly reached ground.
+- Replace the mean-column stream obstruction for the spatial path with a
+  distance-to-course/channel-bed query against the region's actual stream.
+  Both views must use the same course and water/bed elevations. Preserve the
+  old mean-column representation only in explicitly legacy 2D fixtures.
+- Every growth segment checks all crossed material cells (bounded grid
+  traversal), not just its endpoint. Otherwise diagonal or long steps can
+  tunnel through streams, thin rock, saturated ground or stand corners.
+
+Acceptance: a boundary sample agrees from either stand; viewing/slicing does
+not change a state hash; two sections through the same voxel see the same
+depletion; groundwater and a stream block the same segment in every view.
+Update stream rendering from this shared query when enabling spatial mode,
+rather than leaving a different visual waterline above the actual barrier.
+
+#### 3. Deliver one real crossing before broadening scope (`MAP-07`)
+
+Start with a funded near-edge fixture in **two east-west adjacent stands**,
+one narrow spatial section and one cross-boundary growth order. Its positions
+are already XYZ, but holding horizontal `y` constant in this fixture keeps the
+first implementation small. This is a test fixture, not a claim that the full
+region has become volumetric.
+
+- A colony owns one node/edge graph for its entire extent. Crossing a stand
+  boundary changes the node's spatial index bucket, not its colony, parent,
+  ownership or resource inventory. RegionalMatch becomes the coordinator;
+  local Simulation instances must stop independently stepping portions of
+  the same colony. `MAX_NODES` and tip capacity remain per colony, not multiplied
+  by the number of occupied stands.
+- Retain parent/children as an acyclic growth tree initially. Parent links
+  may span stands and use stable references. Derive the visible seam/portal
+  record from a real edge intersection; it is not a second node, reservoir or
+  teleporter. Defer anastomosis and graph loops to a later feature.
+- Pay the ordinary length-based growth and branching costs exactly once.
+  A boundary has no founding kit or extra colony tax. Do not call
+  `foundColony()` or `createNetwork()` to continue a strand: those create
+  a root and starting tips and would mint a second body.
+- Activate the destination stand's local ecology when reached by simulation,
+  even if it has never been viewed. Remove the assumption that `hasColony`
+  means an independently founded local player graph. Local views enumerate
+  regional nodes present in that stand, including disconnected remnants.
+- Spore-founded colonies remain separate graphs with their paid founding
+  resources. Entering a stand already containing a friendly colony does not
+  merge resource stores automatically. Contact and joining can be added later.
+- The goal of this stage is a short boundary crossing, not long-distance path
+  finding through the entire region. Start with an explicit adjacent target,
+  bounded local path planning and the existing growth steering. Return a
+  useful refusal when there is no passable route; no teleporting around water.
+
+Refactor existing network operations behind region-aware world/tree lookup
+interfaces rather than maintaining a second copy of the economy. Concrete
+hotspots: `isPassable`, `chooseTarget`, `extendTips`, `commitTip`, `tryBond`,
+`markConnectivity`, `transport`, and `RegionalMatch.step`.
+
+Acceptance: one tip grows across the seam at normal speed, with unchanged
+colony identity and an unbroken parent edge. Exactly the construction cost
+leaves the total resources. Destination soil is consumed once, and crossing
+works without switching the active camera/stand. Preserve this as the small
+`?lab=crossing` fixture, not a long warmed match.
+
+#### 4. Carry resources and connectivity across the region (`MAP-07`, `MAP-10`)
+
+Make the crossing a functioning body before adding visual breadth:
+
+- Use a fixed phase order: regional environment; connectivity per colony;
+  local harvest/trade; transport over the complete colony tree; respiration,
+  growth and decay; fruiting and totals. Advance each node and edge once.
+  Sort work by stable colony/node IDs; stand iteration or camera order cannot
+  give one side a second transport pass or a new source of carbon.
+- Adapt existing inward/outward resource sweeps to the complete tree; keep
+  storage limits, supply reserves and throughput limits. Cross-boundary cords
+  use the same reinforcement costs and capacities as local cords. A transfer
+  always subtracts and adds the same amount in the same resource.
+- Connectivity starts at the colony's genuine living founder. A seam is
+  never an extra supply root. Severing its only connection disconnects distal
+  strands and stops their tree trade/fruiting supply using existing starvation
+  rules. Persistent distal tissue is not deleted merely because it is unseen.
+- Standing biomass, funded resources and root bonds belong to actual nodes,
+  edges and trees. Local readouts are filtered summaries; regional totals
+  count every object once. Record growth crossings separately from spore
+  arrivals so survey lineage is not confused with physical supply continuity.
+- A local two-bloom outcome must not freeze one piece of a spanning network.
+  Separate local milestone presentation from colony stepping; regional play
+  can continue, with the existing stop/restart choice. Keep the old two-bloom
+  endpoint for legacy single-stand fixtures. Do not invent a regional victory
+  rule during this work.
+- Generalize to north/south and west/east movement with 3D neighborhood costs
+  based on actual segment length. Prevent zero-length repeat crossings,
+  duplicate boundary nodes and diagonal corner tunnelling.
+
+Acceptance: carbon/water/mineral conservation across a seam; a remote bonded
+tree feeds the same connected body; a cut stops remote supply; a cord changes
+throughput and pays its cost; flooded targets are rechecked before commit;
+unwatched and watched runs produce identical state. Include all four edge
+directions and a corner case. These are small headless fixtures.
+
+#### 5. Browse real underground sections (`VIEW-06`, `MAP-08`)
+
+Add `SectionSpec { id, origin, along, normal, halfWidth, extent }`, using a
+vertical plane and finite thickness in canonical coordinates. Begin with
+east-west and north-south sections; arbitrary orientation is optional later.
+Suggested starting thickness is 4 game-space units, configurable in the test
+fixture rather than silently widened to include every strand.
+
+- Show one full interactive section first. Controls: **Previous section**,
+  **Next section**, **Follow connection**, **Return to forest**. A stand/section
+  label names the location and orientation. Navigating a section changes only
+  viewing state; an explicit growth order is required to change the frontier.
+- Clip edges against the section slab, including segments that intersect it
+  while both endpoint nodes are outside. Draw a continuation mark where a
+  strand exits; selecting it moves to the section containing that same edge.
+  Do not terminate the simulated strand or invent a cross-section junction.
+- Choose the opening section through the selected tree/root or strand. A
+  completely empty section is valid; say that no network is present rather
+  than injecting decorative strands. Initially permit browsing the active
+  stand and directly sensed/reached neighbors, not undiscovered regional soil.
+- Screen-to-world growth orders land on the active plane. Show the target
+  position before submission; label/passability checks use that same point.
+  Roots outside the slab must not be selectable via projected labels.
+- After single-section browsing works, add optional **Compare sections** with
+  the active section plus one read-only pinned section. Use one WebGL canvas
+  with viewport/scissor rendering, not separate Game/Simulation instances.
+  Match simulation time and depth datum; distinguish the interactive section.
+  Limit comparison to two panels initially, with a narrow-screen fallback to
+  flipping. Do not instantiate full soil grit for all nine stands at once.
+
+**Camera contract:** capture `ForestReturnContext` on initial descent: camera
+target in absolute regional coordinates, distance, azimuth, elevation, framing
+mode, selected tree/stand and reveal state. Store underground poses by
+`standId + sectionId`, not only by view type. Section changes never overwrite
+the forest snapshot. Restore the same world target and orientation on return,
+recomputing only the viewport/aspect requirements. Offer a separate **Surface
+here** action when the player intentionally wants to emerge over the browsed
+stand. Snapshot capture and restore must also work with interrupted crossings,
+resize and reduced motion.
+
+Current `CameraRig.rebaseForest()` deletes the underground memory, and Game
+repositions the landscape on stand entry. Either keep that render-origin
+optimization and transform all saved poses through absolute coordinates, or
+keep a stable regional render origin. Do not apply origin shifts twice to a
+saved forest target. Add explicit capture/restore APIs instead of reaching into
+the camera's private maps from UI code.
+
+Acceptance: descend at tree A, browse B and C, return to the same forest pose
+and selection at A. The general Underground action reopens the last browsed
+section C; an explicit Descend at tree A instead opens A's root section.
+Keep forest selection, inspected section and simulation ownership separate.
+Follow a real seam edge in either direction. A click in the pinned comparison
+view never issues a growth order. Both panels show the same ongoing tick.
+
+#### 6. Reveal the network from above (`VIEW-07`)
+
+Add one accessible **Network** toggle to the forest controls, off by default,
+with pressed state and a keyboard-accessible inspection path. Implement the
+cheap version first:
+
+- Draw a surface projection of the **real** XYZ edges at their actual x/y
+  locations, sampled onto the terrain with a small rendering offset. This
+  is explicitly a projection: depth affects line weight/opacity, and picking
+  returns the original NodeRef/edge reference and its real depth.
+- Use restrained amber, normal blending and bounded highlights; active flow
+  or connectedness is derived from simulation. Differentiate disconnected
+  remnants without colour alone. No animated pretend growth and no full-screen
+  bloom requirement: this must remain readable in `qa=fast`.
+- Clicking a projected strand opens the exact section through it. At stacked
+  depths, resolve candidates by screen distance and explicit depth selection,
+  not whichever mesh happens to win a raycast. Tree/reveal picking modes must
+  be unambiguous, with roots and strands retaining their identities.
+- Next add optional **Ground: translucent** while reveal is on: retain the
+  network at real elevation, fade terrain and the backing/slab that currently
+  occlude it, and dim foliage only as needed. Restore every modified material
+  when leaving the mode. Handle shared/batched materials deliberately; do not
+  clone a material per tree or disable depth testing throughout the scene.
+- Keep projection and true-depth inspection separate modes. Transparent
+  ground should show actual depth/parallax; it must not display a flattened
+  projection as if it were subterranean geometry. If transparency sorting is
+  not stable, ship projection first and retain an explicit remaining gap.
+
+Reuse instanced strand geometry or batched line segments with per-view buffer
+slots, updating dirty edges only. A second renderer is unnecessary. Bound
+display LOD to screen-space strand size; lowering visual detail must not remove
+simulation nodes. A short slice-plane marker can show where the last inspected
+section cuts the forest; do not introduce a floating dashboard or checkerboard.
+
+Acceptance: the same selected edge has matching horizontal endpoints in
+forest projection, true-depth mode and its underground section; crossing a
+stand seam introduces no gap; toggling reveal changes no simulation checksum;
+normal forest materials and picking return exactly after toggle-off. Preserve
+water flow, reduced motion and existing forest camera navigation.
+
+#### 7. Integration gates, files and small-test workflow
+
+Implement in the numbered order as reviewable changesets. Finish each gate
+before moving on; one prompt should not attempt the complete rewrite.
+Suggested file responsibilities (names may follow existing conventions):
+
+| Area | Implementation responsibility |
+|---|---|
+| `src/sim/spatial.ts` | Pure positions, references, ownership and segment traversal |
+| `src/sim/world.ts`, new `soil-volume.ts`, `region.ts` | Spatial tree/root data, shared soil/water queries and sparse material state |
+| `src/sim/network.ts`, `sim.ts`, `match.ts` | One colony graph across stands, region-aware lookups and one deterministic tick pipeline |
+| `src/render/sections.ts`, `hyphae.ts`, `soil.ts`, `forest.ts`, `water.ts` | Section queries/clipping and projection of shared state; no simulation copies |
+| `src/render/camera.ts`, `src/game.ts`, `src/ui/` | Saved forest context, section browsing, picking and local readout rebinding |
+| new `src/render/network-reveal.ts`, `surface.ts`, `stage.ts` | Surface projection, optional true-depth transparency, reversible material state |
+| `src/dev/lab.ts`, `tools/test-feature.mjs` | Immediate crossing/section/reveal fixtures and scoped check entry points |
+
+Add `test:spatial`, `test:crossing` and a focused section/reveal browser smoke
+route as those features land. Suggested fixtures: two stands with one funded
+tip beside an edge; a three-stand chain with a remote bond; a wet blocked seam;
+two depth-separated edges sharing x/y; and a cut remote branch. Seed fixtures
+directly through explicit testing APIs, without simulating a mature match or
+running every browser suite. Reuse one browser session for focused view checks.
+
+Routine verification: typecheck plus the newly affected headless fixture.
+Run the scoped browser smoke only for a completed renderer/input change. No
+full simulation, region, view, navigation or journey suite without a new user
+request. Existing results remain historical until rerun; do not mark new
+spatial behavior Verified on the strength of old 2D tests.
+
+Measure node/edge visits per tick, active voxel count, draw calls and GPU
+resources on repeated section changes. CPU work should scale with active
+graphs/material, not total region volume; render memory should stabilize with
+one active and one optional comparison section. Record backend, preset and
+node count when reporting timing. No hardware-FPS promise from SwiftShader.
+
+Initial delivery is complete when a player can grow a supplied strand across
+one shared boundary, inspect it from either underground section, cut its
+supply, return to the same forest location, and select that exact strand from
+the forest Network view. Full four-direction spatial growth, two-section
+comparison and true-depth transparency have their own gates above; keep them
+Planned/Partial until exercised. Defer graph fusion, arbitrary slice rotation,
+full fluid simulation, new root artwork, disease and new regional victory
+rules. None is a prerequisite for the first connected playable crossing.
+
+**DeepSeek starting task: done for stages 1-4.** Stage 1 (`src/sim/spatial.ts`)
+and its pure-coordinate checks landed first; stage 2's minimal soil-query
+interface (`src/sim/soil-volume.ts`) followed, needed by the two-stand fixture;
+stages 3-4 landed as the `?lab=crossing` fixture (`src/sim/crossing.ts`) with
+`tools/test-crossing.mjs`. The completed water work was preserved: the water
+diff is untouched, and the network refactor these stages needed was verified
+against `npm test`, `tools/test-region.mjs` and the focused water browser check
+before this entry was written. Section and reveal UI (`VIEW-06`, `VIEW-07`) has
+deliberately not been started, and the ordinary match is still the flat
+transect: promoting the fixture's coordinator into `RegionalMatch` is the next
+gate, not a claim of this changeset.
 
 ### Next asset machinery approach (ASSET-03, PERF-01, PERF-02)
 
@@ -464,6 +1055,25 @@ unchanged.
 
 ### Faster testing and render iteration
 
+
+Current fast entry points (20 September): `npm run test:feature -- water`
+exercises hydrology without a renderer; `--browser` adds only the water/bench
+checks and builds first, with `--normal` for full-quality verification.
+`npm run test:feature -- spatial` runs the shared coordinates and the soil
+volume, and `npm run test:feature -- crossing` runs the two-stand crossing
+fixture; both are headless and finish in seconds. `npm run test:feature --
+--list` exposes all existing feature suites. The views route uses `--smoke`
+unless `--full` is supplied. Other existing broad suites remain slow; this
+dispatcher does not claim to shorten a full match regression.
+
+For manual checks use `?lab=water`, `?lab=forest`, `?lab=region` or
+`?lab=growth`, optionally with `&qa=fast`; `?lab=crossing` opens the headless
+spatial crossing fixture, which is stepped and reported in the bench and not
+drawn yet. Fixtures use explicit synthetic resources and pause at entry; the
+test bench can change groundwater depth or advance ten fixed-step seconds
+without rendering intermediate frames. Normal loads do not create the bench or
+fund extra colonies.
+
 The browser harness currently forces software WebGL and renders complete frames
 during many logic checks. Running Blender renders alongside it also introduces
 resource contention. The full interaction suite was excessive for the
@@ -474,8 +1084,8 @@ asset-only iteration; choose checks according to what changed.
   for threshold hysteresis, stable selection mappings and preserved transforms.
   Separate state/transition calculations from drawing so logic tests can
   advance without rendering every frame. `tools/test-lod.mjs` and the browser
-  tier checks now cover the LOD half of that; instancing still needs its
-  instance-to-tree mapping test.
+  tier checks now cover the LOD half of that; instancing has focused
+  instance-to-tree mapping checks in `test:batches`.
 - **Keep the slow loop for the end.** The headless checks are the fast iteration
   loop: `npm run test:lod` finishes in seconds and `node tools/test-region.mjs`
   in about a minute, and between them they cover the simulation and its derived
@@ -634,6 +1244,16 @@ either foundation.
 
 - The forest is a seeded presentation strip over a 2D soil simulation, not a
   fully simulated 3D terrain volume.
+- The spatial migration is real but partial, and must not be described as more
+  than it is: `MAP-14` stages 1-2 give the simulation coordinates and one shared
+  soil volume, and `MAP-07` stages 3-4 grow one colony across a real seam in the
+  two-stand `?lab=crossing` fixture. The ordinary match still steps one local
+  `Simulation` per colonized stand, still draws the flat transect, and has no
+  cross-stand cords. The fixture holds horizontal `y` constant, browses one
+  section plane, and generates the destination stand's trees from that stand's
+  own transect world while the colony's material comes from the shared volume -
+  two soil models still coexist, and unifying them is part of promoting the
+  fixture into `RegionalMatch`. Nothing is drawn from the fixture yet.
 - The match renders nine stands and players can enter colonized underground
   transects. A local view is rebuilt and its owned GPU resources disposed on
   each stand change; this bounds residency but may hitch on entry. There is no
@@ -695,6 +1315,258 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 20 September 2026: one colony across one stand edge (`MAP-07` stages 3-4)
+
+Landed `src/sim/crossing.ts` and `tools/test-crossing.mjs`, and wired the
+headless `?lab=crossing` bench entry. This is the two-stand fixture the staged
+specification asks for before any section or reveal UI: one colony, one section
+plane, one shared edge.
+
+What is implemented:
+
+- **One body.** `CrossingMatch` owns a single `Network` whose growth plane is the
+  region's width rather than one stand's transect. Crossing the seam changes a
+  strand's stand bucket and nothing else: no `foundColony`, no `createNetwork`,
+  no second root, no per-stand node budget. `Network.bounds` carries the colony's
+  own horizon, so an order can be sent past a boundary without the stand it
+  happens to be standing in clamping it.
+- **One economy.** The fixture runs `stepNetwork` unchanged, over a
+  `CrossingWorldView` that resolves a growth-plane cell to the region's own
+  voxel. The tree-demand rules were extracted from `Simulation.stepTrees` into
+  `network.ts` (`bondedJunction`, `drawTreeDemand`, `starveBondedTree`) so the
+  flat transect and the spanning colony trade with their partners by one copy of
+  the same arithmetic.
+- **One pipeline.** Per tick: regional environment and one `SoilVolume.step`;
+  then, per colony in stable id order, tree demand and trade, `stepNetwork`
+  (connectivity, intake, transport, respiration, growth, decay, fruiting,
+  totals), then activation of any stand the colony has just reached. Nothing
+  reads a camera, a view slot or a render origin.
+- **Seam records are derived, not stored.** `portals()` reads the real graph: a
+  pair of parent/child strands in different stands, with the seam coordinate and
+  the edge direction. There is no portal object, reservoir or teleporter.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` and `npm run build` - pass. Production JS is 787.68 kB
+  (210.53 kB gzip); the crossing fixture is code-split into its own 15.85 kB
+  chunk plus a 1.64 kB bench chunk, so the ordinary bundle carries only the
+  coordinates and the world interface.
+- `npm run test:crossing` - 11 checks pass in 5.20s. The fixture funds one colony
+  beside one shared edge; a tip grows across the seam in 6.03s of ordinary
+  stepping, with the same root, the same tip ceiling and an unbroken parent walk
+  back to the founder; the destination voxel is priced identically from either
+  side of the seam and costs one ordinary entry, not a colony tax; arriving in a
+  cell adds a whole hyphal load and nothing else once thickening is accounted
+  for; water and mineral are conserved exactly across the seam once stores are
+  inside their working caps; a bonded tree in the far stand pays the same
+  connected body more than a severed control run; cutting every seam-spanning
+  strand leaves the far tissue standing, severed, disconnected and losing
+  health; a cord pays its charge and carries more; a flooded target is refused
+  before commit; all four edge directions cross from the centre stand and a
+  corner step is tested on every square meeting there; and a run that samples
+  two sections every tick hashes identically to an unwatched run.
+- `npm test` - 10 checks pass with unchanged numbers (`raven-wood` 2 blooms, 480
+  spores, 354s, 198 living strands). The tree-trade extraction and the
+  `NetworkWorld` refactor did not move the verified journey.
+- `node tools/test-region.mjs` - 18 checks pass, unchanged.
+- `node tools/test-water.mjs` - 5 checks pass, and
+  `npm run test:feature -- water --browser` - 13 checks pass at `qa=fast` with no
+  browser errors (69.7s, `added=3` surface water draws), which is the scoped
+  check for the async bench entry. The preserved water changeset still behaves.
+
+Not verified, and the honest state of this work: the running game still steps
+one local `Simulation` per colonized stand, so a played match has no spanning
+colony; the fixture holds horizontal `y` constant and browses one plane; no cord
+has been laid across a seam in play; the destination stand's trees are generated
+by its own transect world while the colony's material comes from the shared
+volume, so two soil models still coexist; and nothing is drawn from the fixture.
+
+### 20 September 2026: the shared soil volume (`MAP-14` stage 2)
+
+Landed `src/sim/soil-volume.ts` and the region-aware world interface the fixture
+needs, with stage-2 checks added to `tools/test-spatial.mjs`.
+
+- **One material field.** Strata, organic matter, minerals and hardness are pure
+  functions of global coordinates, so a stand id cannot change a sample and a
+  shared boundary agrees from either side. Strata come from the same horizon
+  profile and depth warp the transect uses.
+- **Sparse state.** A voxel earns a record only when the simulation writes to
+  it. `sample` and `sampleSection` never materialise anything, so browsing a
+  slice cannot move the state hash; `step` advances the changed voxels in
+  canonical key order on the soil's own cadence and returns how many it visited.
+- **One water surface.** `waterTableDepthCm` and `groundwaterElevationAt` derive
+  a continuous regional groundwater elevation from the generator's own water
+  field plus the season's offset, and the stream is a distance-to-course query
+  with the bed a little below the live table, replacing the mean-column
+  obstruction on the spatial path.
+- **Whole-segment queries.** `segment` walks every voxel between two points with
+  the supercover traversal, so a diagonal or long step cannot tunnel through
+  thin stone, saturated ground, the stream or a stand corner.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` - pass.
+- `npm run test:spatial` - 18 checks pass in 0.27s: the 11 stage-1 coordinate
+  checks, then the versioned volume with a zero-offset season; a seam sample that
+  agrees from either stand and is continuous across it; 400 samples plus two
+  sections leaving the hash and the materialised count untouched; two different
+  sections reporting the same depletion and occupancy in one shared voxel; the
+  real course reading as the channel, a segment refused as `stream` from either
+  direction, saturated ground refused as `groundwater` while the fringe above it
+  is reachable, and a long diagonal refused at a crossed cell; the seasonal
+  offset deepening the whole water surface by one rule; and a step visiting only
+  the changed voxels, in order, with an identical twin run.
+
+Not verified: nothing in the running game reads the volume yet, its organic and
+mineral regrowth is not yet shared with the transect worlds, and no save format
+exists to carry `SOIL_VOLUME_VERSION`.
+
+### 20 September 2026: shared spatial coordinates (`MAP-14` stage 1)
+
+Implemented `src/sim/spatial.ts` and `tools/test-spatial.mjs`. Nothing in the
+running game reads the new module yet: this changeset is the coordinate contract
+the rest of the staged migration is written against, and it adds no second
+economy and no renderer change.
+
+What the contract fixes:
+
+- `x`/`y` are horizontal regional coordinates matching `Region.heightAt`; `z` is
+  absolute elevation, positive upward, and depth is always derived as
+  `(heightAt(x, y) - z) * GRID.cmPerRow`. A stored depth can therefore never
+  drift from the ground it was measured against.
+- Stand ownership is half-open: the seam belongs to the eastern or southern
+  square, coordinates outside the region are invalid rather than clamped, and
+  all four edges of a square report the same coordinate from either side.
+- `NodeRef`, `TreeRef` and `RootTipRef` are the stable references. Local numeric
+  tree and node ids collide across stands, which is why the region needs these
+  before any regional view can address a strand.
+- `traverseSegment` is a supercover traversal: a segment that runs through an
+  edge or a corner reports every cell meeting there, so a diagonal step cannot
+  tunnel past a shared boundary or a thin obstruction.
+- `toRender`/`fromRender` are the only place the simulation's axes are
+  re-expressed for Three.js, with vertical exaggeration confined to the adapter
+  and undone by its inverse.
+- `treeLocalOffset` moves the seeded placement the forest already draws out of
+  `src/render/surface.ts` and into the simulation, using the same generator and
+  the same formula, so every tree keeps the exact place it stood on screen.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` - pass.
+- `npm run test:spatial` - 11 checks pass in 0.16s: the version and voxel
+  resolution; half-open ownership including negative, non-finite and
+  out-of-region positions; all four edges resolving to one seam from both sides;
+  depth/elevation round trips and a seam that does not move the ground; the
+  render adapter inverting exactly with and without vertical exaggeration;
+  global voxel keys; supercover diagonals and corner crossings; a segment that
+  leaves the region; the seam each cross-boundary segment actually crosses; the
+  seeded tree placement matching the raw generator; a tree and root tip keeping
+  matching coordinates in the forest and section projections with a real 3D
+  bonding distance; and reference keys that distinguish two stands' tree 3.
+
+Not verified: nothing renders from these coordinates yet, `src/render/surface.ts`
+still computes its own placement, and no save format exists to carry a
+`SPATIAL_VERSION`.
+
+### 20 September 2026: fuller-forest planning only
+
+Inspected the current floor colour/scatter implementation, playable-tree
+placement, regional tree batching, available asset manifest and QA presets.
+Added the fuller-forest implementation sequence and Planned entries
+`ASSET-04`/`VIEW-08`. Background vegetation is explicitly presentation-only;
+existing `MAP-05`, `ASSET-03` and `PERF-02` gaps remain open until implemented
+and checked. This update changes only PROJECT_STATUS.md. No builds, tests,
+asset generation or runtime changes were performed.
+
+
+### 20 September 2026: spatial-growth planning only
+
+Read the current regional coordinator, local network assumptions, tree
+placement, camera rebasing and feature register. Added the staged
+cross-stand/section/reveal specification and Planned entries `MAP-14`,
+`VIEW-06`, `VIEW-07`; `MAP-07` remains Partial with no new implementation claim.
+This update changes documentation only. No builds or tests were run.
+
+
+### 20 September 2026: flowing water, saturation barrier and direct feature testing
+
+Affected: `MAP-02`, `MAP-04`, `PERF-02`, `QA-01`. Water uses an analytic
+fragment shader on the existing Three.js basic-material pipeline, retaining
+fog, colour conversion and overlay opacity. No water textures, reflection
+passes or render targets are added. Surface banks, the flow ribbon and all
+brook stones take three draw calls in total; underground water uses two planes
+in a crossed stand. The shader clock is independent of simulation speed, stops
+when the water is hidden, and follows ambient/reduced-motion settings.
+
+The shared simulation rule exposes an 8 cm capillary fringe. Ground below the
+live table refuses new growth, including a paid target reached just as the
+water rises. Existing flooded strands persist and can resume after recession;
+oxygen-driven damage remains unimplemented. Stream bed soil is no longer
+unconditionally passable. The old 19 September under-bed test was updated to
+assert soil identity and saturated refusal separately.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck`, `npm run build`, and the build/typecheck route through
+  `npm run test:feature -- views` pass. Main JS: **783.73 kB / 209.03 kB gzip**;
+  opt-in lab chunk: **1.14 kB / 0.65 kB gzip**. Existing chunk-size,
+  Browserslist-age and Tailwind-content warnings remain.
+- `npm run test:feature -- water`: **5 focused headless checks**, **0.33 s**
+  in the dispatcher run. They exercise smooth fringe values, exact boundary
+  access, channel/bed behavior during recession, specific refusal wording,
+  funded growth to the fringe and a paid target invalidated before commit.
+- `npm test`: **10 checks pass**, including complete public-order journeys on
+  `raven-wood` (354 s simulated), `old-growth` (652 s), and `ironwood` (354 s);
+  each finishes with two blooms and 480 spores, plus determinism, conservation,
+  trade, severing, fruiting supply and outcome guards.
+- `node tools/test-region.mjs`: **18 checks pass**, including wet banks,
+  stream geometry, groundwater refusal, region determinism and colony funding.
+- `node tools/test-water-view.mjs --qa fast`: **13 checks pass**, no browser or
+  shader errors, **69.3 s** including additional fixture loads. Covers rendered
+  pixel changes in both views, water draw count, actual system reduced-motion
+  changes, keyboard depth control, region/growth fixtures, fixed-step advance
+  and ordinary entry isolation. CSS viewport **1200x800**, buffer **600x400**,
+  SwiftShader software WebGL. The first expanded run exposed an asynchronous
+  media-query test race; the harness now waits for the real motion control to
+  acknowledge the preference before checking frozen shader time.
+- `npm run test:feature -- views`: **9 smoke checks pass**, no browser errors.
+  Actual selector, descent and return work at fast quality, **1200x760** CSS /
+  **600x380** buffer, SwiftShader.
+- Normal-quality water: the initial focused run passed **10 checks**, no
+  browser errors, in **46.6 s** at **1200x800** on SwiftShader. The expanded
+  final run visibly passed through the region/fixed-step checks and exited
+  with code 0; its final summary was lost when the turn was interrupted, so
+  no additional timing or check-total claim is made for that run. Surface
+  water added exactly **3 draw calls** in both normal and fast captures.
+- Visually inspected direct canvas captures in both views at normal quality
+  and the full bench screenshot at fast quality. The first underground capture
+  exposed a bright rectangular bed; its side and bed masks were softened and
+  the result reinspected. Captures are ignored files under `design/shots/`.
+- The Impeccable detector reported advisory existing type-ramp differences and
+  the new rock colour. The new bench background was changed to an existing
+  token; natural-water/rock colours and motion are now documented in DESIGN.
+
+Not run: the complete view, navigation or browser player-journey suites; the
+focused water suite, view smoke and full headless match regression are the
+scope of this verification. Hardware GPU frame-time profiling is still absent:
+three draw calls establishes bounded draw work, not a measured FPS claim.
+The in-app browser could not initialize (sandbox metadata error); verification
+used the repository's existing Playwright harness instead. Other full feature
+suites still need subdivision; the dispatcher exposes them without claiming
+all are sub-second.
+
+20 September stopping instruction: the user requested completion to conserve
+the five-hour usage allowance and explicitly requested **no full tests**.
+No further tests were started after that instruction. No water-test or its
+preview-server Node processes remained at the final process check. Changes
+are uncommitted and unpushed.
+
+The later user request supersedes the water-polish next step: use the
+cross-stand spatial-growth implementation sequence in Current priorities.
+Preserve the completed water changes. The no-full-tests instruction remains
+in force; hardware timing and subdivision of other suites remain separate
+follow-ups.
 
 ### 19 September 2026: the stream, above and below
 
@@ -1212,6 +2084,43 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 20 September 2026: shared spatial coordinates and one real crossing
+
+- Added the simulation's shared spatial coordinates (`MAP-14` stage 1): regional
+  `x`/`y`, absolute `z` with derived depth, half-open stand ownership, stable
+  node/tree/root-tip references, a supercover segment traversal and an invertible
+  render adapter; the seeded tree placement moved out of the surface renderer
+  into simulation-owned data (`src/sim/spatial.ts`, `npm run test:spatial`).
+- Added one queryable regional soil volume (`MAP-14` stage 2): an analytic
+  material field over global coordinates so a stand id cannot change a sample, a
+  sparse map of changed voxels advanced in stable key order, a continuous
+  regional groundwater elevation, a distance-to-course stream query and
+  whole-segment traversal that cannot tunnel past a crossed cell
+  (`src/sim/soil-volume.ts`).
+- Grew one colony across a real stand boundary (`MAP-07` stages 3-4) in the
+  headless `?lab=crossing` fixture: one graph, one node budget and one set of
+  stores on both sides of the seam, portals derived from real parent links,
+  conserved cross-seam transport, a remote bonded partner that pays the same
+  body, and severance that starves the far side without erasing it
+  (`src/sim/crossing.ts`, `npm run test:crossing`).
+- Put every network world lookup behind one interface so the flat transect and
+  the spanning colony run a single economy, and fixed growth bounds that were
+  only one stand wide (`Network.bounds`).
+- Section browsing (`VIEW-06`) and forest reveal (`VIEW-07`) were not started.
+  The ordinary match still steps one local transect per colony and still draws
+  the flat transect; promoting the fixture's coordinator into `RegionalMatch` is
+  the next gate.
+
+### 20 September 2026: serene water and focused testing
+
+- Added slow flow shaders, soft groundwater/channel gradients, rounded brook
+  bends and instanced stones (`MAP-02`, `MAP-04`).
+- Made the live table stop extension while retaining a reachable wet fringe;
+  rising water also invalidates paid targets before they commit (`MAP-04`).
+- Added an opt-in fixture bench and a feature-suite dispatcher with automatic
+  builds for browser checks, plus scoped water regression (`QA-01`).
+- Retained partial status for broader hydrology and hardware performance gaps.
 
 ### 19 September 2026: regional travel and forest batching
 

@@ -918,6 +918,13 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .root-marker.is-site::before { transform: translateY(-50%) rotate(0deg); border-radius: 50%; }
 .root-marker:hover { color: var(--amber); background: var(--sheet); }
 .root-marker:disabled { cursor: default; opacity: 0.75; }
+.test-bench { position: fixed; left: 16px; top: 104px; z-index: 10; max-width: calc(100vw - 32px); padding: 12px; background: var(--sheet, #141110); color: var(--paper); font: 13px 'Courier Prime', monospace; }
+.test-bench summary { cursor: pointer; }
+.test-bench p { margin: 8px 0; font-size: 11px; }
+.test-bench label { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.test-bench button, .test-bench select, .test-bench a { color: inherit; background: var(--sheet-deep); padding: 5px; }
+.test-bench a { display: inline-block; }
+.test-bench :focus-visible { outline: 2px solid var(--paper); outline-offset: 3px; }
 .immersed .stamp, .immersed .field-journal, .immersed .season, .immersed .catalogue, .immersed .packet, .immersed .orders, .immersed .rail, .immersed .camera-hint, .immersed #root-markers { visibility: hidden; }
 #restore-notes { position: absolute; right: 32px; bottom: 24px; font-size: 14px; color: var(--paper); }
 .outcome { background: #141110f5; z-index: 4; }

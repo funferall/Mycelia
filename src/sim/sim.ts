@@ -8,12 +8,16 @@ import {
   type Season,
 } from './content';
 import {
+  bondedJunction,
   createNetwork,
+  drawTreeDemand,
+  holdsAnyBond,
   isPassable,
   orderWaypoint,
   nearestNode,
   makeCord,
   startFruiting,
+  starveBondedTree,
   stepNetwork,
   updateTotals,
   tryBond,
@@ -22,7 +26,7 @@ import {
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
-import { cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
+import { belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
 
 /** What a founding spore brings with it when it starts a colony. */
 export interface FoundingKit {
@@ -225,53 +229,18 @@ export class Simulation {
       const soilCell = this.world.cells[idx(tree.gx, Math.min(GRID.rows - 1, rootRow))];
       const soilWater = soilCell ? soilCell.water : 0;
 
-      // Which of my nodes is bonded to this tree?
-      let bondNode = null;
-      let bonded = false;
-      for (const tip of tree.rootTips) {
-        if (tip.bondedTo === null) continue;
-        bonded = true;
-        const node = this.player.nodes[tip.bondedTo];
-        // A junction that has been severed from the root is not supplying
-        // anything, however much of it is still standing. The tree feels the
-        // cut as an unmet demand and counts down to leaving.
-        if (node && node.alive && node.connected) {
-          bondNode = node;
-          break;
-        }
-      }
+      // Which of my nodes is bonded to this tree? The rules for what the tree
+      // does about it live in `network.ts`, because a colony that crosses a
+      // stand boundary trades with its partners by exactly the same ones.
+      const bondNode = bondedJunction(this.player, tree);
+      const bonded = holdsAnyBond(tree);
 
       if (bondNode) {
-        // The tree draws what it needs out of the junction.
-        const wantWater = spec.waterDemand * dt * (0.5 + tree.maturity * 0.8);
-        const wantNutrient = spec.nutrientDemand * dt * (0.5 + tree.maturity * 0.8);
-        const gotWater = Math.min(bondNode.water, wantWater);
-        const gotNutrient = Math.min(bondNode.nitrogen, wantNutrient);
-        bondNode.water -= gotWater;
-        bondNode.nitrogen -= gotNutrient;
-        tree.waterReceived = gotWater / Math.max(1e-6, wantWater);
-        tree.nutrientReceived = gotNutrient / Math.max(1e-6, wantNutrient);
-
-        const satisfaction = Math.min(tree.waterReceived, tree.nutrientReceived);
-        if (satisfaction > 0.85) {
-          tree.patience = Math.min(spec.patience, tree.patience + dt * 2);
-          tree.health = Math.min(1, tree.health + dt * 0.02 * satisfaction);
-        } else {
-          tree.patience -= dt * (1.6 - satisfaction);
-          tree.health = Math.max(0.05, tree.health - dt * 0.012 * (1 - satisfaction));
-          if (tree.patience <= 0) {
-            this.severBond(tree, 'stopped supplying');
-          }
+        if (drawTreeDemand(tree, bondNode, spec, dt)) {
+          this.severBond(tree, 'stopped supplying');
         }
       } else if (bonded) {
-        // The tree is still bonded to something, but the strand holding the
-        // bond is dead or cut off from the root. It is not being fed, and it
-        // must feel that: an abandoned junction is not a quiet no-op.
-        tree.waterReceived = 0;
-        tree.nutrientReceived = 0;
-        tree.patience -= dt * 1.6;
-        tree.health = Math.max(0.05, tree.health - dt * 0.012);
-        if (tree.patience <= 0) {
+        if (starveBondedTree(tree, dt)) {
           this.severBond(tree, 'lost the strand that fed it');
         }
       } else {
@@ -413,8 +382,11 @@ export class Simulation {
     if (cell.stream) {
       return {
         ok: false,
-        message: 'That is the stream itself. Grow along the bank, or under the bed — the water is for drinking, not crossing.',
+        message: 'That is the stream itself. Grow along its damp bank; hyphae cannot cross open water.',
       };
+    }
+    if (belowWaterTable(this.world, y)) {
+      return { ok: false, message: 'The soil below the water table is saturated. Reach the soft upper fringe for water; hyphae cannot grow deeper.' };
     }
     orderWaypoint(this.player, x, y, this.world);
     return { ok: true, message: `Frontier directed to ${x} · −${y}cm` };

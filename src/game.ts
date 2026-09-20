@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GRID, SPECIES } from './sim/content';
+import { ECON, GRID, SPECIES } from './sim/content';
 import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
@@ -88,6 +88,7 @@ export class Game {
    */
   private readonly surfaces: SurfaceForest[] = [];
   private readonly region: Region;
+  private readonly seedText: string;
   readonly match: RegionalMatch;
   private reportedColonies = 1;
   private readonly acknowledgedOutcomes = new Set<number>();
@@ -121,6 +122,10 @@ export class Game {
   private stewardClock = 0;
 
   private pointerDown = false;
+
+  /** The headless spatial fixture, when `?lab=crossing` asked for it. */
+  private labCrossing: LabCrossingMatch | null = null;
+
   private pointerMoved = 0;
   private lastX = 0;
   private lastY = 0;
@@ -134,6 +139,7 @@ export class Game {
   constructor(canvas: HTMLCanvasElement, ui: SheetUI, seedText: string, quality: QualityPreset) {
     this.canvas = canvas;
     this.ui = ui;
+    this.seedText = seedText;
     this.sim = new Simulation(seedText);
     this.match = new RegionalMatch(seedText, this.sim);
     this.region = this.match.region;
@@ -299,6 +305,74 @@ export class Game {
     this.steward = true;
   }
 
+  /**
+   * Explicit opt-in test fixtures; ordinary matches never call this.
+   *
+   * The crossing fixture is imported on demand so the spatial simulation stays
+   * out of the ordinary bundle until someone asks for the bench.
+   */
+  async prepareLab(scene: string): Promise<void> {
+    this.setSpeed(0);
+    if (scene === 'water' || scene === 'region') {
+      const home = this.match.activeStandId;
+      const targets = scene === 'region' ? this.match.stands :
+        this.match.stands.filter(stand => stand.site.stream && stand.site.id !== home).slice(0, 1);
+      for (const stand of targets) {
+        if (!stand.sim.hasColony) stand.sim.foundColony(ECON.colonyFund);
+      }
+      if (scene === 'water' && targets[0]) this.enterStand(targets[0].site.id);
+      this.refreshStandOptions();
+    }
+    if (scene === 'growth') {
+      this.enableSteward();
+      this.warmUp(30);
+      this.setSpeed(0);
+    }
+    if (scene === 'crossing') {
+      const { CrossingMatch } = await import('./sim/crossing');
+      const crossing = new CrossingMatch({ seedText: this.seedText });
+      crossing.orderAcross();
+      let ticks = 0;
+      while (crossing.portals().length === 0 && ticks < 12 * 30) {
+        crossing.step(1 / 30);
+        ticks++;
+      }
+      for (let i = 0; i < 20; i++) crossing.step(1 / 30);
+      this.labCrossing = crossing;
+    }
+    const view = scene === 'forest' || scene === 'region' || scene === 'crossing' ? 'forest' : 'underground';
+    this.stage.rig.setView(view, true);
+    this.syncViewUI();
+    this.ui.setNote(
+      scene === 'crossing'
+        ? 'Test specimen: the crossing fixture is simulated headless. No section or reveal view is drawn yet.'
+        : 'Test specimen: fixture resources; simulation paused.'
+    );
+  }
+
+  /** The lab advances fixed steps without spending time drawing each step. */
+  advanceLab(seconds: number): void {
+    if (this.labCrossing) {
+      const ticks = Math.max(1, Math.round(seconds * 30));
+      for (let i = 0; i < ticks; i++) this.labCrossing.step(1 / 30);
+      return;
+    }
+    this.warmUp(seconds);
+    this.setSpeed(0);
+  }
+
+  /** The crossing fixture's own record, for the bench panel. */
+  crossingReport(): string[] | null {
+    return this.labCrossing ? this.labCrossing.report() : null;
+  }
+
+  setLabWaterDepth(cm: number): void {
+    if (!Number.isFinite(cm)) return;
+    this.sim.world.waterTableCm = Math.max(10, Math.min(GRID.rows, cm));
+    this.groundwater.update(0);
+    this.soil.refreshColors();
+  }
+
   private stewardTick(): void {
     for (const tree of this.sim.world.trees) {
       if (tree.dead) continue;
@@ -462,7 +536,7 @@ export class Game {
     }
 
     this.soil.update(dt);
-    this.groundwater.update(dt);
+    this.groundwater.update(elapsed, this.ambientMotion);
     this.playerMesh.sync(this.sim.player);
     this.rivalMesh.sync(this.sim.rival);
     const visualSpeed = Math.max(0.15, this.speed);
@@ -477,7 +551,7 @@ export class Game {
     this.forest.update(dt);
     const blend = this.stage.rig.surfaceBlend;
     // The stream lies on the forest floor, so it folds with it during a rise.
-    this.stream.update(blend);
+    this.stream.update(blend, elapsed, this.ambientMotion);
     // The cutaway has completely closed at the surface endpoint. Its 34k soil
     // particles cannot contribute to the forest image and need no draw call.
     this.soil.group.visible = blend < 1;
@@ -1152,4 +1226,18 @@ export class Game {
     const qa = new URLSearchParams(location.search).get('qa') === 'fast' ? '&qa=fast' : '';
     location.search = `?seed=${next}${qa}`;
   }
+}
+
+/**
+ * The crossing bench's fixture, as the game is allowed to see it.
+ *
+ * A structural type keeps the spatial simulation out of the ordinary import
+ * graph: the real class is only fetched when `?lab=crossing` asks for it.
+ */
+interface LabCrossingMatch {
+  step(dt: number): void;
+  portals(): unknown[];
+  orderAcross(): { ok: boolean; message: string };
+  report(): string[];
+  readonly time: number;
 }
