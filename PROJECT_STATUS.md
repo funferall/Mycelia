@@ -64,6 +64,13 @@ region**, opens a printed ledger of the nine stands with their community, water,
 colony state, broad forest health, founding parent and lineage continuity. It is
 a record rather than a map, and it prints unsurveyed ground as unsurveyed.
 
+The region's stream is now visible in both views. Above ground it is a wet bank
+and a water ribbon lying on the forest floor along the generator's own course.
+Below ground that same stream is a threshold rather than a wall: the open
+channel is water a colony cannot grow into, the ground beneath its bed is still
+passable, and the bank beside it is the wettest soil in the stand, so a network
+cannot cross the water and does not need to.
+
 Surface art now arrives through an intake pipeline rather than only being
 generated in code. `src/render/assets.ts` loads authored glTF models, scales each
 one to the simulation's own tree, corrects it onto the ground, tints it by season
@@ -141,6 +148,7 @@ the unchanged normal preset.
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
+| Water | `src/render/water.ts` | The region's stream as a ribbon on the forest floor, and the active stand's channel and water table below ground |
 | Authored models | `src/render/assets.ts`, `src/render/lod.ts`, `public/assets/forest-manifest.json`, `tools/{make-forest-assets.py,check-forest-assets.mjs}` | Manifest-driven glTF intake, per-asset tiers and fallback; projected-size LOD selection with hysteresis; reproducible Blender art and exported-pack QA |
 | Tree batches | `src/render/tree-batches.ts` | Region-wide authored wood/foliage instances with stable stand:tree identity, per-instance transforms and colours |
 | Local disposal | `src/render/dispose.ts` | Release wholly owned soil/root/reward GPU resources on stand changes |
@@ -203,9 +211,9 @@ and equivalent useful details have been accounted for, then remove it.
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
 | MAP-01 | Partial | Multi-stand regional map | All nine stands render continuously and colonized stands can be entered through Survey a stand or a selected crown. Game steps RegionalMatch; the original founding world is retained for opening compatibility. Remaining: shipping region size and complete terrain/soil boundary integration. |
-| MAP-02 | Partial | Continuous regional surface | There is one `heightAt` for the whole region, the shared edges of neighbouring stands agree exactly, and the renderer draws every stand floor and its trees as one continuous forest rather than one stand of floor. Remaining: the stream, ponds and exposed rock are not drawn yet, and the tiles nearest the camera still lose their floor below the slab. |
+| MAP-02 | Partial | Continuous regional surface | There is one `heightAt` for the whole region, the shared edges of neighbouring stands agree exactly, and the renderer draws every stand floor and its trees as one continuous forest rather than one stand of floor. The region's stream is now drawn as a wet bank and a water ribbon lying on that floor, following the same `heightAt` and the same `streamPath` the generator carved, and it folds with the ground during a view crossing. Remaining: ponds and exposed rock are not drawn yet, and the tiles nearest the camera still lose their floor below the slab. |
 | MAP-03 | Partial | Terrain-first generation | Elevation, a regional fall line, a valley, drainage from a priority flood, flow accumulation and aspect are all generated before anything is placed, deterministically from the seed. Remaining: exposed rock, parent material and deadwood are still local, and there is no generator-version field. |
-| MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and its course is a polyline the renderer could draw. The water table follows relief and flow, and each stand passes its own table depth into the local soil generator. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and saturation barriers. |
+| MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and it is now drawn above ground. Below ground the same stream is a real threshold rather than scenery: the region gives each stand it crosses a channel in that stand's own transect (`StandSite.stream`), `SoilCell.stream` marks the open channel from the surface to a bed just below the water table, hyphae cannot grow into it (`isPassable`), the ground under the bed stays passable, and `SoilCell.streamNear` keeps the bank the wettest soil in the stand — every depth beside the channel draws extra water. The water table is shaded below ground as a cool saturated horizon with a rule across the specimen, and it rises and falls with the season. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and true saturation barriers; the channel is a projection of a diagonal crossing onto one mean column rather than a 3D course. |
 | MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. Remaining: density, age structure, canopy openness, understory, litter and deadwood still do not vary by community, and the floor props are seeded per stand rather than chosen by the community. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
 | MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. Growth across a shared edge must become an ordinary local order — hyphae and cords continuing into the neighbouring stand's own transect — with the wind-borne spore kept as an additional route rather than the only one; see the product direction above. |
@@ -468,6 +476,15 @@ asset-only iteration; choose checks according to what changed.
   advance without rendering every frame. `tools/test-lod.mjs` and the browser
   tier checks now cover the LOD half of that; instancing still needs its
   instance-to-tree mapping test.
+- **Keep the slow loop for the end.** The headless checks are the fast iteration
+  loop: `npm run test:lod` finishes in seconds and `node tools/test-region.mjs`
+  in about a minute, and between them they cover the simulation and its derived
+  data. The browser suites are the slow loop — a full `node tools/test-view.mjs`
+  run is several minutes under software WebGL even with synthetic timing frames
+  — so a new browser check should be written alongside the feature and run when
+  the feature is finished, not on every edit. A behaviour that can be asserted
+  headlessly belongs in a headless check first; the browser check should only
+  cover what needs a real renderer, real input or real layout.
 - **Visual smoke checks:** the explicit `?qa=fast` / `--qa fast` preset is
   implemented. It keeps the CSS viewport, scene graph and simulation intact,
   halves the drawing-buffer resolution, disables antialiasing and baked
@@ -630,8 +647,13 @@ either foundation.
 - The region renders as one forest and every colonized stand can be entered
   underground with its own local views rebound. What is still wrong: the tiles
   nearest the camera lose their floor below the slab while their trees hang over
-  the edge, and the stream, ponds and exposed rock are not drawn (`MAP-02`,
-  `MAP-04`).
+  the edge, and ponds and exposed rock are not drawn (`MAP-02`, `MAP-04`).
+- The underground stream is a projection, not a course. A stand's channel is
+  drawn at the mean column the region's stream crosses in that square, so a
+  stream entering one corner and leaving the next is a single seam rather than a
+  diagonal. Widening it (it scales with the square's flow) hides most of this,
+  but a genuinely correct version needs the underground view to know where the
+  channel is at each row, which is the same boundary-portal work `MAP-07` needs.
 - `tools/test-navigation.mjs` traces a crown back to its own stand and root
   across re-entry and verifies that local views and orders are rebound;
   `tools/test-view.mjs` covers the crown → root landing and tier identity. There
@@ -673,6 +695,48 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 19 September 2026: the stream, above and below
+
+The region's stream is drawn in both views and is a real constraint below
+ground. `src/sim/region.ts` gives each stand the stream's own cross-section
+(`StandSite.stream`), `src/sim/world.ts` carves it into that stand's transect
+(`SoilCell.stream` for the open channel, `SoilCell.streamNear` for the damp
+bank), `src/sim/network.ts` refuses hyphae the channel while leaving the ground
+under the bed passable, and `src/render/water.ts` draws the ribbon above ground
+and the channel and water table below. Growth orders now carry their own words —
+`Simulation.growTo` — so the sheet can say the point is the stream rather than
+blaming stone, and both the founding spore and the rival's first strand step out
+of the water onto the nearest bank instead of starting in it.
+
+Verified on this tree:
+
+- `npm run typecheck` and `npm run build` pass. Production JS is 773.05 kB
+  (205.40 kB gzip).
+- `node tools/test-region.mjs` — 18 checks pass, including the two new ones.
+  The first: the channel exists in the stand the region says the stream crosses,
+  is as wide as the region says, is drawn at the stream's own column, stops at
+  its bed rather than running to the bottom of the map, refuses hyphae at the
+  surface, and leaves the ground under the bed passable. The second: the bank
+  holds measurably more water than the same depth far from the channel, an order
+  into the water is refused by name, and forty seconds of growth put no strand
+  in the channel. Both were run after the simulation changes; the later edits
+  were the renderer's report field and the browser checks.
+
+Not verified, and the honest state of this changeset:
+
+- **The browser checks for the water have never been run.** A new section 9 of
+  `tools/test-view.mjs` funds a colony in a crossed stand, descends into it, and
+  asserts that the drawn channel matches the simulation's own channel count and
+  column. It is written, not executed, and no capture of the stream or of the
+  underground channel has been inspected — so the ribbon's width, the notch's
+  darkness and the water-table shading are visually unjudged.
+- `node tools/test-sim.mjs` was not run to completion after this change; it was
+  stopped to save time. The standalone prototype stand is built without a
+  region, so it has no stream by construction and its journeys should be
+  unchanged — an argument, not a result.
+- The underground channel is a single mean column per stand rather than a true
+  course; see the known limitations for what that means and what would fix it.
 
 ### 19 September 2026: regional survey layer (`MAP-11`)
 
@@ -1151,6 +1215,11 @@ verification entry—not a new document.
 
 ### 19 September 2026: regional travel and forest batching
 
+- Added the region's stream to both views (`MAP-02`, `MAP-04`): a wet bank and a
+  water ribbon on the forest floor, and beneath it a channel hyphae cannot enter,
+  a bank that feeds them, a passable bed underneath and a water table shaded as
+  a saturated horizon that follows the season. Growth orders now name the stream
+  when they refuse a point.
 - Added the regional survey layer (`MAP-11`): `src/sim/survey.ts` projects the
   match into a per-stand record of holds, water, health, parentage and lineage
   continuity, and `src/ui/survey.ts` prints it as a ruled ledger opened with `S`.

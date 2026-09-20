@@ -296,7 +296,11 @@ function entryCost(world: World, gx: number, gy: number): { cost: number; stratu
 export function isPassable(world: World, gx: number, gy: number): boolean {
   if (!inBounds(gx, gy)) return false;
   const cell = world.cells[idx(gx, gy)];
-  return Boolean(cell) && cell.stratum !== 'bedrock';
+  // Bedrock and open water both refuse hyphae, but for different reasons: rock
+  // is impassable ground and the stream is not ground at all. The channel is a
+  // threshold rather than a boundary because its bed is passable and its bank
+  // is the wettest soil in the stand.
+  return Boolean(cell) && cell.stratum !== 'bedrock' && !cell.stream;
 }
 
 /**

@@ -15,6 +15,7 @@ import { AssetLibrary } from './render/assets';
 import { ForestView } from './render/forest';
 import { HyphaeMesh, Motes } from './render/hyphae';
 import { SoilMesh } from './render/soil';
+import { GroundwaterView, StreamView } from './render/water';
 import { Stage } from './render/stage';
 import { makeGlowTexture } from './render/textures';
 import type { QualityPreset } from './render/quality';
@@ -77,6 +78,10 @@ export class Game {
   /** The regional survey layer: a printed ledger of the region's stands. */
   private readonly survey = new SurveySheet();
   private living: LivingView;
+  /** The region's stream above ground, one ribbon in the founding frame. */
+  private readonly stream: StreamView;
+  /** The active stand's channel and water table, below ground. */
+  private groundwater: GroundwaterView;
   /**
    * One surface per persistent stand. Colonized stands can be entered, while
    * uncolonized ground remains a survey until a paid spore arrives.
@@ -152,6 +157,8 @@ export class Game {
     this.forest.showRootsOnly();
     this.stage.scene.add(this.forest.group);
     this.buildRegionStand();
+    this.stream = new StreamView(this.region, this.match.activeStandId);
+    this.stage.scene.add(this.stream.group);
     this.treeBatches = new TreeBatches(this.surfaces.reduce((sum, surface) => sum + surface.trees.length, 0));
     this.stage.scene.add(this.treeBatches.group);
     // Art is opportunistic: the stand above is already drawn procedurally, and
@@ -159,6 +166,8 @@ export class Game {
     void this.assets.load().then(() => this.adoptAssets());
     this.living = new LivingView(this.sim);
     this.stage.scene.add(this.living.group);
+    this.groundwater = this.buildGroundwater();
+    this.stage.scene.add(this.groundwater.group);
     this.overlays = new OverlayFade([
       this.playerMesh.group,
       this.rivalMesh.group,
@@ -166,6 +175,7 @@ export class Game {
       this.rivalMotes.points,
       this.forest.group,
       this.living.group,
+      this.groundwater.group,
     ]);
 
     ui.buildRail(this.sim);
@@ -212,6 +222,11 @@ export class Game {
   /** The region's surfaces, in stand order. Used by the browser checks. */
   get regionSurfaces(): SurfaceForest[] {
     return this.surfaces;
+  }
+
+  /** The active stand's channel and water table, rebuilt like the local views. */
+  private buildGroundwater(): GroundwaterView {
+    return new GroundwaterView(this.sim.world, this.match.active.site.stream);
   }
 
   /**
@@ -378,6 +393,8 @@ export class Game {
     assets: { ready: boolean; loaded: number; expected: number; pending: number; failures: number };
     /** The regional survey layer's own state, for the browser checks. */
     survey: { open: boolean; held: number; contiguous: boolean; selected: number | null };
+    /** Water: the drawn stream above ground and the channel below it. */
+    water: { ribbon: number; stands: number[]; channel: number; tableCm: number; width: number; centre: number };
     selectedStandId: number | null;
     selectedTreeId: number | null;
     simSeconds: number;
@@ -410,6 +427,10 @@ export class Game {
         contiguous: survey.contiguous,
         selected: this.selectedStandId,
       },
+      water: {
+        ...this.stream.report(),
+        ...this.groundwater.report(),
+      },
       selectedStandId: this.selectedStandId,
       selectedTreeId: this.selectedStandId === null ? null : this.surfaces[this.selectedStandId]?.selectedId ?? null,
       simSeconds: Math.round(this.sim.time),
@@ -441,6 +462,7 @@ export class Game {
     }
 
     this.soil.update(dt);
+    this.groundwater.update(dt);
     this.playerMesh.sync(this.sim.player);
     this.rivalMesh.sync(this.sim.rival);
     const visualSpeed = Math.max(0.15, this.speed);
@@ -454,6 +476,8 @@ export class Game {
     }
     this.forest.update(dt);
     const blend = this.stage.rig.surfaceBlend;
+    // The stream lies on the forest floor, so it folds with it during a rise.
+    this.stream.update(blend);
     // The cutaway has completely closed at the surface endpoint. Its 34k soil
     // particles cannot contribute to the forest image and need no draw call.
     this.soil.group.visible = blend < 1;
@@ -729,23 +753,27 @@ export class Game {
     // The player is going below; the survey is an above-ground record.
     this.survey.dismiss();
     this.overlays.apply(1);
-    for (const group of [this.soil.group, this.forest.group, this.living.group]) disposeView(group);
+    for (const group of [this.soil.group, this.forest.group, this.living.group, this.groundwater.group]) disposeView(group);
     this.match.selectStand(id);
     this.sim = this.match.sim;
     const dx = (old.sx - next.sx) * TILE_SIZE;
     const dz = (next.sy - old.sy) * TILE_SIZE;
     for (const surface of this.surfaces) surface.group.position.add(new THREE.Vector3(dx, 0, dz));
+    // The stream belongs to the region, not to the stand, so it is shifted with
+    // the landscape rather than rebuilt.
+    this.stream.group.position.add(new THREE.Vector3(dx, 0, dz));
     this.stage.rig.rebaseForest(dx, dz);
     this.soil = new SoilMesh(this.sim.world);
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
     this.living = new LivingView(this.sim);
-    this.stage.scene.add(this.soil.group, this.forest.group, this.living.group);
+    this.groundwater = this.buildGroundwater();
+    this.stage.scene.add(this.soil.group, this.forest.group, this.living.group, this.groundwater.group);
     this.playerMesh.reset();
     this.rivalMesh.reset();
     this.playerMotes.reset();
     this.rivalMotes.reset();
-    this.overlays = new OverlayFade([this.playerMesh.group, this.rivalMesh.group, this.playerMotes.points, this.rivalMotes.points, this.forest.group, this.living.group]);
+    this.overlays = new OverlayFade([this.playerMesh.group, this.rivalMesh.group, this.playerMotes.points, this.rivalMotes.points, this.forest.group, this.living.group, this.groundwater.group]);
     this.overlays.apply(0);
     this.seasonId = '';
     this.journey = null;
@@ -1053,13 +1081,12 @@ export class Game {
     if (!point) return;
     const order = this.ui.order;
     if (order === 'grow') {
-      if (this.sim.orderGrowth(point.gx, point.gy)) {
+      const result = this.sim.growTo(point.gx, point.gy);
+      if (result.ok) {
         this.living.acknowledge(point.gx, point.gy);
         this.sound.chime('grow');
-        this.ui.setNote(
-          `Frontier directed to ${Math.round(point.gx)} · −${Math.max(0, Math.round(point.gy))}cm`
-        );
-      } else this.ui.setNote('Choose open soil inside the specimen. Stone cannot be crossed.');
+      }
+      this.ui.setNote(result.message);
       return;
     }
     if (order === 'bond') {

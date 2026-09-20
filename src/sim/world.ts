@@ -29,6 +29,15 @@ export interface SoilCell {
   hardness: number;
   /** How much hypha is packed into this cell, 0..1. Drives rendering density. */
   occupancy: number;
+  /**
+   * True in the open channel of a stream: from the surface down to the bed this
+   * is water and air rather than soil, and hyphae cannot grow into it. It is a
+   * threshold, not a wall — the network can pass beneath the bed, and the bank
+   * beside it is the wettest ground in the stand.
+   */
+  stream: boolean;
+  /** 0..1 dampness from the stream: 1 in the channel, fading over the bank. */
+  streamNear: number;
 }
 
 export interface RootTip {
@@ -124,6 +133,12 @@ export interface StandConditions {
   /** Depth to the water table in an ordinary season, in centimetres. */
   waterTableCm?: number;
   /**
+   * The region's stream where it crosses this stand, in local grid columns.
+   * Omitted on dry ground, and on the standalone prototype stand, which has
+   * never had a region to put a stream in it.
+   */
+  stream?: { centreGx: number; widthGx: number } | null;
+  /**
    * Species mix as cumulative thresholds: rolls below the first are oak, below
    * the second are birch, the rest hemlock. The default is the mixed stand the
    * prototype has always drawn.
@@ -168,9 +183,13 @@ export function createStandWorld(seed: number, conditions: StandConditions = {})
         water: 0,
         hardness: Math.max(0, Math.min(1, base.hardness * (0.7 + veinNoise * 0.6))),
         occupancy: 0,
+        stream: false,
+        streamNear: 0,
       };
     }
   }
+
+  if (conditions.stream) carveStream(cells, conditions.stream.centreGx, conditions.stream.widthGx, baseCm);
 
   const world: World = {
     seed,
@@ -188,6 +207,42 @@ export function createStandWorld(seed: number, conditions: StandConditions = {})
   seedForest(world, rng, mix);
   updateMoisture(world, 0);
   return world;
+}
+
+/**
+ * Cut a stream into a stand's transect.
+ *
+ * The channel is open ground from the surface down to its bed, which sits a
+ * little below the local water table: a cross-section through a stream shows
+ * air above the water line and water beneath it, so `stream` cells are water or
+ * air rather than soil and the network cannot grow into them. Everything under
+ * the bed is still soil, saturated but passable, which is what makes a stream a
+ * threshold to work around rather than a boundary that closes a stand off.
+ *
+ * The bank either side carries `streamNear`, so the soil beside the channel
+ * holds more water than the same depth further away. That is the whole point of
+ * the feature: hyphae cannot enter the stream, and do not need to, because the
+ * ground next to it is the best water in the stand.
+ */
+function carveStream(cells: SoilCell[], centreGx: number, widthGx: number, waterTableCm: number): void {
+  const half = widthGx / 2;
+  const bedRow = rowAtDepthCm(Math.min(MAX_DEPTH_CM - 4, waterTableCm + 6));
+  for (let gx = 0; gx < GRID.cols; gx++) {
+    const distance = Math.abs(gx + 0.5 - centreGx) - half;
+    const near = distance <= 0 ? 1 : Math.max(0, 1 - distance / 7);
+    for (let gy = 0; gy < GRID.rows; gy++) {
+      const cell = cells[idx(gx, gy)];
+      if (!cell) continue;
+      cell.streamNear = Math.max(cell.streamNear, near);
+      if (distance > 0 || gy > bedRow) continue;
+      cell.stream = true;
+      // Channel material is loose bedload, not compacted ground.
+      cell.hardness = Math.min(cell.hardness, 0.35);
+      cell.nitrogen *= 0.4;
+      cell.nitrogenBase *= 0.4;
+      cell.organic *= 0.4;
+    }
+  }
 }
 
 /**
@@ -266,9 +321,12 @@ export function updateMoisture(world: World, dtSeconds: number): void {
       const base = STRATA[cell.stratum];
       // Surface layers get the rain directly; deep layers only reach the table.
       const surfaceBias = rain * Math.exp(-depthCm / 26) * 0.85;
+      // The stream keeps its own bank wet at every depth: the channel is a
+      // trench cut down to the water, so the ground beside it is fed sideways.
+      const streamDamp = cell.streamNear * 0.35 * base.waterHolding;
       const target = Math.min(
         1,
-        proximity * 1.05 * base.waterHolding + surfaceBias * base.waterHolding
+        proximity * 1.05 * base.waterHolding + surfaceBias * base.waterHolding + streamDamp
       );
       // Move toward the target rather than snapping, so a drought reads as a
       // gradual drying rather than a step change.

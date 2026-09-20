@@ -103,6 +103,12 @@ Click the sheet to apply the selected order. With **Bond** selected, click a
 root tip to form a symbiosis; a bonded tree ships carbon in exchange for water
 and minerals, and severs the bond if it goes unsupplied for too long.
 
+The region's stream crosses the forest as a band of water. Underground it is a
+threshold rather than a wall: hyphae cannot grow into the open channel, the soil
+beneath its bed is still passable, and the bank beside it is the wettest ground
+in the stand, so a network that reaches the stream drinks from it rather than
+crossing it. **Grow** tells you which of the two it met if an order is refused.
+
 Use **Survey a stand** in the forest to select a community. **Explore beneath**
 enters an occupied stand; selecting a crown follows that tree's roots. Fruiting
 can send a paid spore to another stand, which becomes available in the survey.

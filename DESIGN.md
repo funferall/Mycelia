@@ -176,6 +176,16 @@ stone #37332c, bedrock #22201b. Each is multiplied by moisture, organic content
 and depth falloff, and never allowed below 60% of its base value — a true black
 rectangle reads as a hole in the sheet rather than as deep soil.
 
+Water is the one cool, near-glossy material in the sheet, and it is drawn as a
+material rather than as a symbol. Above ground the stream is a darker wet bank
+(#2b2a1f) under a low-roughness ribbon (#2c4148) that catches the raking light
+along the generator's own course. Below ground the same water is a cross-section:
+the open channel reads as water (#2f5560) beneath the water line and as a
+shadowed notch (#12181a) above it, the ground below the table takes a saturated
+cast (#25373d), and the table itself is one low-opacity rule (#3d5a66) across the
+specimen. Water never glows, never uses amber or pallor, and never appears as a
+flat blue fill.
+
 ## Typography
 
 **Display Font:** EB Garamond (with Georgia, serif)

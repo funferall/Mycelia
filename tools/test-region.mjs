@@ -34,10 +34,12 @@ const {
   standAt,
   validateRegion,
 } = await load('region');
-const { ECON, MAX_DEPTH_CM } = await load('content');
+const { ECON, GRID, MAX_DEPTH_CM } = await load('content');
 const { RegionalMatch } = await load('match');
-const { payColonyFund, updateTotals } = await load('network');
+const { payColonyFund, updateTotals, isPassable } = await load('network');
 const { buildSurvey } = await load('survey');
+const { createStandWorld, idx, updateMoisture } = await load('world');
+const { Simulation } = await load('sim');
 
 const results = [];
 const ok = (line) => {
@@ -599,6 +601,62 @@ function dump(region, seed) {
   assert.equal(severed.contiguous, false, 'a region with an isolated colony is not contiguous');
   assert.deepEqual(severed.lineage, [founding, neighbour], 'the recorded route survives the cut');
   ok('an isolated colony is reported as occupied but no longer connected to the founding stand');
+}
+
+// The stream is a threshold, not a boundary: open water in the channel, wet
+// ground on the bank, and soil a network can still pass beneath the bed.
+{
+  const region = createRegion(seeds[0]);
+  const crossed = region.stands.filter((site) => site.stream);
+  assert.ok(crossed.length > 0, 'the region must put a stream through at least one stand');
+  const site = crossed[0];
+  const world = createStandWorld(site.seed, { waterTableCm: site.waterTableCm, stream: site.stream });
+  updateMoisture(world, 0);
+
+  const channel = [];
+  for (let gy = 0; gy < GRID.rows; gy++) {
+    for (let gx = 0; gx < GRID.cols; gx++) if (world.cells[idx(gx, gy)].stream) channel.push({ gx, gy });
+  }
+  assert.ok(channel.length > 0, 'the stand the region says is crossed must contain the channel');
+  const columns = new Set(channel.map((cell) => cell.gx));
+  assert.ok(
+    columns.size >= site.stream.widthGx - 1 && columns.size <= site.stream.widthGx + 1,
+    `the channel is as wide as the region says: ${columns.size} columns against ${site.stream.widthGx}`
+  );
+  assert.ok(
+    channel.some((cell) => Math.abs(cell.gx + 0.5 - site.stream.centreGx) < 1),
+    'the channel is drawn where the stream lies across the stand'
+  );
+  const deepest = Math.max(...channel.map((cell) => cell.gy));
+  assert.ok(deepest < GRID.rows - 1, 'the channel stops at its bed rather than running to the bottom');
+
+  const centre = Math.round(site.stream.centreGx);
+  assert.equal(isPassable(world, centre, 0), false, 'a hypha cannot grow into open water');
+  assert.equal(isPassable(world, centre, GRID.rows - 1), true, 'the ground under the bed is still soil');
+  const bank = Math.min(GRID.cols - 2, centre + Math.ceil(site.stream.widthGx / 2) + 1);
+  assert.equal(isPassable(world, bank, 6), true, 'the bank is growable');
+
+  const near = world.cells[idx(bank, 10)].water;
+  const far = world.cells[idx(Math.min(GRID.cols - 1, bank + 46), 10)].water;
+  assert.ok(near > far + 0.05, `the bank holds more water than the same depth away from it: ${near.toFixed(3)} vs ${far.toFixed(3)}`);
+  ok('a stream cuts a channel, keeps its bank wet, and leaves soil beneath the bed');
+
+  const sim = new Simulation(seeds[0], site);
+  const refusal = sim.growTo(centre, 2);
+  assert.equal(refusal.ok, false, 'the frontier cannot be sent into the water');
+  assert.match(refusal.message, /stream/i, `the refusal names the stream: ${refusal.message}`);
+  assert.equal(sim.growTo(bank, 6).ok, true, 'the bank accepts the same order');
+  assert.ok(
+    sim.player.nodes.every((node) => !world.cells[idx(node.gx, node.gy)]?.stream),
+    'the spore did not take hold in the water'
+  );
+  sim.growTo(centre, 2);
+  for (let i = 0; i < 60 * 40; i++) sim.step(1 / 60);
+  assert.ok(
+    sim.player.nodes.every((node) => !world.cells[idx(node.gx, node.gy)]?.stream),
+    'no strand ever grew into the channel'
+  );
+  ok('the channel refuses hyphae while the same network keeps growing around it');
 }
 
 console.log(`PASS: ${results.length} checks.`);

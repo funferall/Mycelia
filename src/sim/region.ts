@@ -89,6 +89,14 @@ export interface StandSite {
   /** Normalised flow accumulation through the square, 0..1. */
   flow: number;
   community: StandCommunity;
+  /**
+   * The stream's own cross-section through this stand, when the region's
+   * channel runs through the square. The underground view is a vertical slice,
+   * so a channel crossing the square diagonally still has to be drawn where it
+   * lies in the transect: its mean column and the width the flow earns it.
+   * Null on ground the stream never reaches.
+   */
+  stream: { centreGx: number; widthGx: number; flow: number } | null;
   edges: { north: StandEdge; east: StandEdge; south: StandEdge; west: StandEdge };
   /** Orthogonally adjacent stands, in the order north, east, south, west. */
   neighbours: number[];
@@ -396,6 +404,7 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
         relief: high - low,
         disturbance,
       });
+      const stream = streamThroughStand(streamPath, sx, sy, flow);
 
       /**
        * Mean height along one side of the square.
@@ -444,6 +453,7 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
         waterTableCm,
         flow,
         community,
+        stream,
         edges: {
           north: { neighbour: north, ...northEdge },
           east: { neighbour: east, ...eastEdge },
@@ -480,6 +490,44 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
   region.foundingStand = chooseFoundingStand(region);
   region.validation = validateRegion(region);
   return region;
+}
+
+/**
+ * Where the region's stream lies inside one stand's own transect.
+ *
+ * The path points that fall in the square give the channel's mean column and
+ * its spread; a square the stream merely brushes with one bank gets a narrow
+ * seam, and a square the channel runs through gets a wide one. The width also
+ * follows the flow the square carries, so the lower course is wider than the
+ * headwater it started as.
+ */
+function streamThroughStand(
+  path: Array<{ x: number; y: number }>,
+  sx: number,
+  sy: number,
+  flow: number
+): { centreGx: number; widthGx: number; flow: number } | null {
+  let total = 0;
+  let count = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const point of path) {
+    if (point.x < sx * STAND_SIZE || point.x >= (sx + 1) * STAND_SIZE) continue;
+    if (point.y < sy * STAND_SIZE || point.y >= (sy + 1) * STAND_SIZE) continue;
+    const local = point.x - sx * STAND_SIZE;
+    total += local;
+    min = Math.min(min, local);
+    max = Math.max(max, local);
+    count++;
+  }
+  if (count === 0) return null;
+  // Keep the channel's centre away from the stand's own border columns: a
+  // stream that runs exactly along a boundary cannot be drawn as a channel in
+  // either stand's transect, and it would also hide the bank the player needs.
+  const centreGx = Math.max(8, Math.min(STAND_SIZE - 8, total / count));
+  const spread = Math.max(2, max - min);
+  const widthGx = Math.max(3, Math.min(14, Math.round(spread + 2 + flow * 6)));
+  return { centreGx, widthGx, flow };
 }
 
 export function standAt(region: Region, x: number, y: number): StandSite | null {

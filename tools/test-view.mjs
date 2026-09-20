@@ -1118,6 +1118,64 @@ if (!smoke) {
   await contexts.pop().close();
 }
 
+// ---------------------------------------------------------------------------
+// 9. The stream is drawn above ground and is a threshold below it
+// ---------------------------------------------------------------------------
+if (!smoke) {
+  const page = await open('/?seed=raven-wood&view=forest', { width: 1366, height: 768 });
+  const water = await page.evaluate(() => window.mycelia.game.renderReport().water);
+  check(
+    'the forest draws the region\u2019s own stream as a ribbon',
+    water.ribbon > 0 && water.stands.length > 0,
+    `${water.ribbon} ribbon vertices across stands ${water.stands.join(', ')}`
+  );
+  await page.screenshot({ path: 'design/shots/regional-stream.png' });
+
+  // Fund a colony in a stand the stream crosses, then go and look at the water
+  // from underneath: the channel should be there, and so should the table.
+  const fixture = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const home = game.match.activeStandId;
+    const stands = game.renderReport().water.stands;
+    const target = stands.find((id) => id !== home) ?? home;
+    if (!game.match.stands[target].sim.hasColony) {
+      game.match.stands[target].sim.foundColony({ carbon: 46, water: 6, nitrogen: 3 });
+      game.match.stands[target].arrivals.push({ at: game.match.time, from: home, spores: 46 });
+    }
+    game.refreshStandOptions();
+    return { home, target };
+  });
+  await page.selectOption('#forest-stand', String(fixture.target));
+  await settle(page);
+  await page.click('#descend-tree');
+  await settle(page);
+  const below = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const report = game.renderReport().water;
+    const world = game.sim.world;
+    return {
+      ...report,
+      world: world.cells.filter((cell) => cell.stream).length,
+      stream: game.match.active.site.stream,
+      stand: game.match.activeStandId,
+      view: game.viewReport().view,
+    };
+  });
+  note(`underground water: ${JSON.stringify(below)}`);
+  check(
+    'descending into a crossed stand shows the channel and the water table',
+    below.stand === fixture.target && below.view === 'underground' && below.channel > 0 && below.channel === below.world,
+    `${below.channel} channel cells, table at ${below.tableCm}cm, width ${below.width}`
+  );
+  check(
+    'the channel below sticks to the column the region put it in',
+    below.stream !== null && Math.abs(below.centre - below.stream.centreGx) < 1 && below.width >= 3,
+    `centre ${below.centre?.toFixed(1)} against ${below.stream?.centreGx?.toFixed(1)}, ${below.width} columns wide`
+  );
+  await page.screenshot({ path: 'design/shots/regional-stream-underground.png' });
+  await contexts.pop().close();
+}
+
 await browser.close();
 server?.stop();
 

@@ -71,7 +71,10 @@ export class SoilMesh {
       for (let gx = 0; gx < GRID.cols; gx++) {
         const cell = world.cells[idx(gx, gy)];
         const stratum = cell ? cell.stratum : 'bedrock';
-        const w = STRATUM_DENSITY[stratum] * (0.55 + (cell ? cell.hardness : 1) * 0.9);
+        // Open channel carries almost no grit: what is drawn there is water and
+        // shadow, and the notch should read as an absence of soil.
+        const body = cell?.stream ? 0.12 : 1;
+        const w = STRATUM_DENSITY[stratum] * (0.55 + (cell ? cell.hardness : 1) * 0.9) * body;
         weights[gy * GRID.cols + gx] = w;
         totalWeight += w;
       }
@@ -174,6 +177,20 @@ export class SoilMesh {
       const base = STRATUM_COLOR[cell.stratum];
       color.copy(base);
 
+      // The stream is drawn as what it is: air above the water line, water
+      // beneath it. Both are nearly gritless, so the tint carries the shape.
+      if (cell.stream) {
+        const gy = Math.floor(cellIndex / GRID.cols);
+        const submerged = rowDepthCm(gy) >= world.waterTableCm;
+        color.copy(submerged ? _stream : _notch);
+        color.multiplyScalar(submerged ? 0.9 + Math.max(0, 0.3 - cell.water * 0.2) : 0.85);
+        this.baseColor[p * 3] = color.r;
+        this.baseColor[p * 3 + 1] = color.g;
+        this.baseColor[p * 3 + 2] = color.b;
+        this.mesh.setColorAt(p, color);
+        continue;
+      }
+
       // Moisture darkens and slightly cools the material.
       const wet = cell.water;
       color.multiplyScalar(1 - wet * 0.3);
@@ -185,6 +202,11 @@ export class SoilMesh {
 
       // Depth falloff — the transect is near-black at bedrock.
       color.multiplyScalar(0.72 + (this.depthShade[p] as number) * 0.28);
+
+      // Everything below the water table reads as saturated ground: cooler and
+      // a shade darker, so the table itself is legible as a horizon.
+      const gy = Math.floor(cellIndex / GRID.cols);
+      if (rowDepthCm(gy) >= world.waterTableCm) color.lerp(_saturated, 0.38);
 
       // Light spilling from network packed into this cell.
       if (cell.occupancy > 0.01) {
@@ -212,6 +234,11 @@ export class SoilMesh {
 const _cool = new THREE.Color('#2b3340');
 const _warm = new THREE.Color('#5a3d18');
 const _dust = new THREE.Color('#6b6255');
+/** Open water in the channel, and the shadowed notch above its surface. */
+const _stream = new THREE.Color('#2f5560');
+const _notch = new THREE.Color('#12181a');
+/** Ground beneath the water table: wet, cold, and slightly mineral. */
+const _saturated = new THREE.Color('#25373d');
 
 /** Flatten the world's stratum map into the horizon letters the ruler prints. */
 export function horizonBands(world: World): Array<{ id: StratumId; label: string; horizon: string; fromCm: number; toCm: number }> {

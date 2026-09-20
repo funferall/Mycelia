@@ -22,7 +22,7 @@ import {
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
-import { createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
+import { cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
 
 /** What a founding spore brings with it when it starts a colony. */
 export interface FoundingKit {
@@ -89,7 +89,11 @@ export class Simulation {
     this.rng = mulberry32(seed ^ 0x1d872b41);
     this.site = site ?? null;
     this.world = site
-      ? createStandWorld(seed, { waterTableCm: site.waterTableCm, mix: communityThresholds(site.community) })
+      ? createStandWorld(seed, {
+          waterTableCm: site.waterTableCm,
+          mix: communityThresholds(site.community),
+          stream: site.stream,
+        })
       : createWorld(seed);
 
     // The player wakes in the soil beside a tree's root system, close enough
@@ -106,11 +110,12 @@ export class Simulation {
     );
     // The rival saprotroph starts deep in the litter at the far end, where the
     // decomposable matter is richest, and spreads toward the player.
+    const rivalStart = passableNear(this.world, Math.floor(GRID.cols * 0.14), 3);
     this.rival = createNetwork(
       'rival',
       RIVAL_PALETTE.label,
-      Math.floor(GRID.cols * 0.14),
-      3,
+      rivalStart.gx,
+      rivalStart.gy,
       mulberry32(seed ^ 0x55aa77),
       40
     );
@@ -388,13 +393,36 @@ export class Simulation {
   // interface can print a refusal rather than silently doing nothing.
   // -------------------------------------------------------------------------
 
-  /** Direct growth: send the frontier toward a point on the sheet. */
+  /**
+   * Direct growth: send the frontier toward a point on the sheet.
+   *
+   * Returns the refusal's own words, so the sheet can distinguish stone from
+   * the stream rather than printing one apology for both.
+   */
+  growTo(gx: number, gy: number): { ok: boolean; message: string } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
+    if (!Number.isFinite(gx) || !Number.isFinite(gy)) {
+      return { ok: false, message: 'Choose a point on the sheet.' };
+    }
+    const x = Math.round(gx);
+    const y = Math.round(gy);
+    const cell = cellAt(this.world, x, y);
+    if (!cell || cell.stratum === 'bedrock') {
+      return { ok: false, message: 'Choose open soil inside the specimen. Stone cannot be crossed.' };
+    }
+    if (cell.stream) {
+      return {
+        ok: false,
+        message: 'That is the stream itself. Grow along the bank, or under the bed — the water is for drinking, not crossing.',
+      };
+    }
+    orderWaypoint(this.player, x, y, this.world);
+    return { ok: true, message: `Frontier directed to ${x} · −${y}cm` };
+  }
+
+  /** Direct growth as a yes or no, for callers that keep their own words. */
   orderGrowth(gx: number, gy: number): boolean {
-    if (this.outcome !== 'playing') return false;
-    if (!Number.isFinite(gx) || !Number.isFinite(gy)) return false;
-    if (!isPassable(this.world, Math.round(gx), Math.round(gy))) return false;
-    orderWaypoint(this.player, Math.round(gx), Math.round(gy), this.world);
-    return true;
+    return this.growTo(gx, gy).ok;
   }
 
   /** Attempt symbiosis with the nearest available root tip. */
@@ -530,5 +558,23 @@ function startingGround(world: World): { gx: number; gy: number } {
   }
   const gx = Math.max(6, Math.min(GRID.cols - 6, best.gx - 5));
   const gy = Math.max(5, Math.min(GRID.rows - 20, best.gy - 3));
+  return passableNear(world, gx, gy);
+}
+
+/**
+ * The nearest soil to a point that a hypha could actually occupy.
+ *
+ * Used only for the two places a network is placed rather than grown — the
+ * founding spore and the rival's first strand — so that neither can begin life
+ * floating in a stream. A spore lands on the bank instead.
+ */
+function passableNear(world: World, gx: number, gy: number): { gx: number; gy: number } {
+  if (isPassable(world, gx, gy)) return { gx, gy };
+  for (let step = 1; step < GRID.cols; step++) {
+    const left = gx - step;
+    const right = gx + step;
+    if (isPassable(world, left, gy)) return { gx: left, gy };
+    if (isPassable(world, right, gy)) return { gx: right, gy };
+  }
   return { gx, gy };
 }
