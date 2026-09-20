@@ -142,12 +142,16 @@ try {
     const expected = entryCostFor(material);
     assert.equal(inDestination.cost, expected.cost);
     assert.equal(inDestination.stratum.id, expected.stratum.id);
-    // And priced from the parent side, one column back the way it came: the
-    // boundary itself is not a price, a stand is not a surcharge, and the two
-    // stands agree about the physical cell they share.
+    // And the same rule holds on the parent's side of the seam: the boundary is
+    // not a price and a stand is not a surcharge. The fixture's strands drift a
+    // little across their growth plane, so the parent and the child stand in
+    // different physical cells; each is priced by the one rule, at its own cell.
     const parent = match.colony.nodes[portal.parentId];
-    const back = match.world.costFrom(parent, node.gx - parent.gx, node.gy - parent.gy);
-    assert.equal(back.cost, inDestination.cost, 'no seam tax and no stand-local soil');
+    const parentVoxel = match.voxelOf(parent, 0, 0);
+    const parentCost = match.world.costFrom(parent, 0, 0);
+    const parentExpected = entryCostFor(match.soil.readMaterialAt(parentVoxel.x, parentVoxel.y, parentVoxel.z));
+    assert.equal(parentCost.cost, parentExpected.cost, 'the origin side is priced by the same rule');
+    assert.equal(parentCost.stratum.id, parentExpected.stratum.id);
     // The ordinary length-based price is the one charged.
     const pressure = 1 + Math.pow(match.colony.nodes.length / MAX_NODES, 4) * 14;
     const entryTotal = expected.cost * ECON.growthPerCm * ECON.entryCharge * pressure;

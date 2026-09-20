@@ -94,19 +94,44 @@ try {
   const moved = await page.evaluate(() => {
     const game = window.mycelia.game;
     const first = game.sectionReport();
+    const series = [first.strands];
     const next = game.stepSection(1);
     const second = game.sectionReport();
+    series.push(second.strands);
+    const third = game.stepSection(1);
+    series.push(game.sectionReport().strands);
+    // Two steps forward, two steps back: the family is a list, and returning
+    // has to land on the section it started from.
+    game.stepSection(-1);
     const back = game.stepSection(-1);
     const again = game.sectionReport();
     const flipped = game.flipSectionAxis();
     const flip = game.sectionReport();
-    return { first, next, second, back, again, flipped, flip };
+    // Walk out of the colony: the fixture's body has thickness, so an empty
+    // section is a few planes away rather than the one next door.
+    let empty = null;
+    for (let i = 0; i < 10; i++) {
+      const step = game.stepSection(1);
+      const report = game.sectionReport();
+      if (!step.ok) break;
+      if (report.strands === 0) { empty = report; break; }
+    }
+    return { first, next, second, third, series, back, again, flipped, flip, empty };
   });
-  check('next and previous move along the family and come back', moved.next.ok && moved.back.ok && moved.again.id === moved.first.id);
   check(
-    'an adjacent section with no network in it says so instead of inventing strands',
-    moved.second.strands === 0 && /no network in this section/.test(moved.second.label),
-    moved.second.label
+    'next and previous move along the family and come back',
+    moved.next.ok && moved.third.ok && moved.back.ok && moved.again.id === moved.first.id,
+    moved.again.label
+  );
+  check(
+    'stepping one plane shows a different part of the same body',
+    moved.second.strands > 0 && moved.series.some((count) => count !== moved.series[0]),
+    `strands across three planes: ${moved.series.join(', ')}`
+  );
+  check(
+    'a section out in the stand says it holds no network instead of inventing strands',
+    Boolean(moved.empty) && /no network in this section/.test(moved.empty.label),
+    moved.empty ? moved.empty.label : 'no empty section found'
   );
   check('flipping keeps the stand and changes the orientation', moved.flipped.ok && moved.flip.open && moved.flip.label !== moved.second.label, moved.flip.label);
 
@@ -118,6 +143,74 @@ try {
     return { before, result, after };
   });
   check('following a strand moves to the section that holds its far end', followed.result.ok && followed.after.open && followed.after.label !== followed.before.label, followed.after.label);
+
+  // --- the sheet's own section panel --------------------------------------
+  // The bench is a debug overlay that covers the right half of the window; the
+  // player never has it, so it is collapsed before clicking the panel's own
+  // buttons - otherwise this would test the bench, not the panel.
+  await page.evaluate(() => {
+    const bench = document.querySelector('.test-bench');
+    if (bench) bench.open = false;
+  });
+  const panel = await page.evaluate(() => {
+    const element = document.querySelector('#section-browser');
+    return {
+      exists: Boolean(element),
+      display: element ? getComputedStyle(element).display : 'missing',
+      status: document.querySelector('#section-status')?.textContent ?? '',
+      bodyClass: document.body.classList.contains('spatial-colony'),
+    };
+  });
+  check(
+    'the sheet carries its own section panel while a spatial colony exists',
+    panel.exists && panel.bodyClass && panel.display !== 'none' && /Stand \d+/.test(panel.status),
+    panel.status
+  );
+
+  await page.locator('#section-next').click();
+  // A real browser renders a frame between the click and the readout; the view
+  // class on the body is updated there, so the check does the same.
+  await page.evaluate(() => window.mycelia.game.frame(performance.now(), false));
+  const panelNext = await page.evaluate(() => document.querySelector('#section-status')?.textContent ?? '');
+  check('the panel moves one plane at a time', panelNext !== panel.status, panelNext);
+
+  // The click landed on the last plane of the family, so the keyboard is
+  // checked in the direction that has somewhere to go - both ways.
+  await page.keyboard.press('[');
+  const keyBack = await page.evaluate(() => document.querySelector('#section-status')?.textContent ?? '');
+  await page.keyboard.press(']');
+  const keyForward = await page.evaluate(() => document.querySelector('#section-status')?.textContent ?? '');
+  check('the keyboard moves sections both ways', keyBack !== panelNext && keyForward === panelNext, `${keyBack} -> ${keyForward}`);
+
+  await page.locator('#section-return').click();
+  await page.evaluate(() => window.mycelia.game.frame(performance.now(), false));
+  const afterReturn = await page.evaluate(() => {
+    const element = document.querySelector('#section-browser');
+    return {
+      view: window.mycelia.game.stage.rig.view,
+      display: element ? getComputedStyle(element).display : 'missing',
+    };
+  });
+  check(
+    'Return to forest leaves the section and puts the panel away',
+    afterReturn.view === 'forest' && afterReturn.display === 'none',
+    `${afterReturn.view} / ${afterReturn.display}`
+  );
+
+  await page.keyboard.press('[');
+  const keyOpen = await page.evaluate(() => ({
+    view: window.mycelia.game.stage.rig.view,
+    status: document.querySelector('#section-status')?.textContent ?? '',
+  }));
+  check('with no section open, the key opens one', keyOpen.view === 'underground' && /Stand \d+/.test(keyOpen.status), keyOpen.status);
+  await page.keyboard.press('Escape');
+  check(
+    'Escape rises out of the section',
+    await page.evaluate(() => window.mycelia.game.stage.rig.view === 'forest')
+  );
+
+  // Back below ground for the reveal checks.
+  await page.evaluate(() => window.mycelia.game.openFirstSection());
 
   // --- return to the forest ------------------------------------------------
   const returned = await page.evaluate(() => {

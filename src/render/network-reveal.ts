@@ -114,15 +114,18 @@ export function projectEdge(region: Region, edge: RevealEdge, samples = 8): Proj
   const count = Math.max(2, Math.min(64, Math.round(samples)));
   const points: Vec3[] = [];
   const depthsCm: number[] = [];
+  // The strand's own depth, measured at its ends and carried straight along the
+  // segment: the drawn line hugs the terrain, but what the sample *means* is
+  // how far below the surface the strand is, and a strand may cross a lane
+  // where the ground itself steps.
+  const fromDepth = depthBelowGroundCm(region, edge.from);
+  const toDepth = depthBelowGroundCm(region, edge.to);
   for (let i = 0; i < count; i++) {
     const t = i / (count - 1);
     const x = edge.from.x + (edge.to.x - edge.from.x) * t;
     const y = edge.from.y + (edge.to.y - edge.from.y) * t;
-    const realZ = edge.from.z + (edge.to.z - edge.from.z) * t;
     points.push({ x, y, z: region.heightAt(x, y) + REVEAL_LIFT });
-    // The recorded depth is the strand's own, not the drawn offset's: the
-    // projection may float above the ground, the data may not lie about it.
-    depthsCm.push((region.heightAt(x, y) - realZ) * GRID.cmPerRow);
+    depthsCm.push(fromDepth + (toDepth - fromDepth) * t);
   }
   return {
     key: edge.key,
@@ -130,8 +133,8 @@ export function projectEdge(region: Region, edge: RevealEdge, samples = 8): Proj
     child: edge.child,
     points,
     depthsCm,
-    fromDepthCm: depthBelowGroundCm(region, edge.from),
-    toDepthCm: depthBelowGroundCm(region, edge.to),
+    fromDepthCm: fromDepth,
+    toDepthCm: toDepth,
     thickness: edge.thickness,
     reinforced: edge.reinforced,
     connected: edge.connected,

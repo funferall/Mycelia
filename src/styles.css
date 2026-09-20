@@ -694,6 +694,31 @@ body[data-view='forest'] #gl { cursor: grab; }
 body[data-view='forest'] #gl:active { cursor: grabbing; }
 .immersed .forest-observation { visibility: hidden; }
 
+/* ---------------------------------------------- underground sections ---- */
+
+/*
+ * The section browser takes the forest panel's place below ground: it is the
+ * one place the player moves through a spatial colony's real sections. It is
+ * hidden unless a spatial colony exists, which keeps an ordinary match free of
+ * controls it cannot use.
+ */
+/*
+ * Centred under the view buttons: below ground the left column belongs to the
+ * depth rail and the order list and the right column to the field journal, so
+ * the only clear place for the player's own controls is under the view switch,
+ * right where the section's name is printed.
+ */
+.section-browser { position: absolute; left: 50%; transform: translateX(-50%); top: 104px; width: 330px; text-align: center; display: none; }
+body.spatial-colony[data-view='underground'] .section-browser { display: block; }
+.section-kicker { color: var(--ink-dim); font: 11px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 6px; }
+#section-status { color: var(--paper); font: 15px/1.4 var(--serif); margin: 0 0 12px; min-height: 42px; }
+.section-controls { display: flex; flex-wrap: wrap; gap: 4px 14px; border-top: 1px solid var(--rule); padding: 6px 0; }
+.section-controls button { min-height: 36px; border: 0; background: none; color: var(--ink); font: 15px var(--serif); padding: 6px 0; cursor: pointer; }
+.section-controls button:hover { color: var(--amber); }
+.section-controls button:focus-visible { outline: 2px solid var(--paper); outline-offset: 3px; }
+.section-controls span { color: var(--ink-dim); font: 11px var(--mono); }
+.immersed .section-browser { visibility: hidden; }
+
 /* ------------------------------------------------------- survey sheet ---- */
 
 /*

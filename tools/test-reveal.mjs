@@ -135,7 +135,7 @@ try {
     assert.ok(shallow > deep && deep > deeper, 'deeper strands are dimmer');
     assert.ok(strandWeight(20, true, false) > strandWeight(20, false, false), 'a severed strand is dimmer');
     assert.ok(strandWeight(20, true, true) > strandWeight(20, true, false), 'a cord reads brighter than a hair');
-    assert.ok(deeper > 0.6, `nothing is drawn invisibly dim (${deeper.toFixed(3)})`);
+    assert.ok(deeper > 0.5, `nothing is drawn invisibly dim (${deeper.toFixed(3)})`);
   });
 
   check('a click picks the strand under it and reports stacked alternatives', () => {

@@ -178,13 +178,17 @@ that grows one colony across a stand boundary. It includes a live water-depth
 slider and a ten-second fixed-step advance. These are explicitly synthetic
 fixtures; ordinary URLs keep the normal opening and economy.
 
-The crossing fixture's bench browses that colony's real vertical sections:
-**Previous**, **Next**, **Flip**, **Follow**, **Return to forest** and
-**Surface here**, with a readout naming the stand, community, orientation,
-position and strand count - and saying plainly when a section holds no network.
-**Network** projects the colony's actual strands over the forest; clicking one
-opens the section through it. A crown still wins a click, and an ordinary match,
-which has no spatial colony, never shows the control.
+While a spatial colony exists, going **Underground** opens a real vertical
+section through it and the sheet carries a **Section** panel with **Previous**,
+**Next**, **Flip**, **Follow**, **Return to forest** and **Surface here** - or
+`[`, `]`, `X`, `G` and `Escape` on the keyboard. The panel names the stand, the
+community, the orientation, the position in the family and the strand count, and
+says plainly when a section holds no network.
+
+**Network** in the forest panel projects the colony's actual strands over the
+terrain, and clicking a projected strand opens the section through it. A crown
+still wins a click. An ordinary match has no spatial colony, so none of these
+controls appear in it.
 
 In the forest scene the bench also carries the dressing controls: background
 vegetation on, off, or at the medium and dense trial bands, and a community

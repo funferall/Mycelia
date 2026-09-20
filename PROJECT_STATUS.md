@@ -243,7 +243,7 @@ and equivalent useful details have been accounted for, then remove it.
 | VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
 | VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
 | VIEW-05 | Verified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. `npm run test:view` now covers the cases the row was waiting on: a drag pans instead of ordering while a tap on soil orders, a refused order is refused out loud and changes nothing, a cancelled pointer issues nothing and leaves the canvas still able to pan, a click during a crossing issues nothing, one wheel notch does not cross while six do, a key typed into the tree selector does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and Space, and a burst of five view changes lands in the view asked for last with input still live afterwards. |
-| VIEW-06 | Partial | Browse persistent underground sections | Landed on the `?lab=crossing` fixture. `src/render/sections.ts` is a pure `SectionSpec` model: vertical slabs of finite thickness (4 units, stepping 4 so they tile a stand) in canonical region coordinates, with slab clipping that draws a strand passing through with both ends outside it and reports where it enters and leaves, previous/next within a family, a flip to the other family, stable ids, and section labels. `src/render/section-view.ts` draws the clipped strands, their nodes, the continuation marks and the framed window. The fixture bench drives Previous, Next, Flip, Follow, Return to forest and Surface here; the readout names the stand, community, orientation, position in the family and strand count, and says plainly when a section holds no network rather than inventing strands. Browsing is limited to stands the colony has reached plus their neighbours. `ForestReturnContext` is captured on descent in absolute regional coordinates (pose, selection, reveal state) and restored on return, with each section's pose remembered by `standId + sectionId`. Remaining: the compare-two-sections mode, section browsing wired into the ordinary match, and the fact that the fixture's colony is a single sheet - its strands sit on one plane, so a section through them reads as a thin band rather than a volume. |
+| VIEW-06 | Partial | Browse persistent underground sections | Landed on the `?lab=crossing` fixture, and now a control the player uses rather than a bench readout. `src/render/sections.ts` is a pure `SectionSpec` model: vertical slabs of finite thickness (4 units, stepping 4 so they tile a stand) in canonical region coordinates, with slab clipping that draws a strand passing through with both ends outside it and reports where it enters and leaves, previous/next within a family, a flip to the other family, stable ids, and section labels. `src/render/section-view.ts` draws the clipped strands, their nodes, the continuation marks and the framed window. The sheet carries its own **Section** panel below ground - **Previous**, **Next**, **Flip**, **Follow**, **Return to forest**, **Surface here** - with `[`, `]`, `X`, `G` and `Escape` as the keyboard path, and a readout naming the stand, community, orientation, position in the family and strand count, saying plainly when a section holds no network rather than inventing strands. Browsing is limited to stands the colony has reached plus their neighbours, the selection follows the open section so Follow always has a visible strand, and `ForestReturnContext` is captured on descent in absolute regional coordinates (pose, selection, reveal state) and restored on return, with each section's pose remembered by `standId + sectionId`. The fixture's strands now drift a little across their growth plane as they arrive, so the body has thickness: neighbouring sections hold different parts of the colony instead of one plane and a band of empty slabs. Remaining: the compare-two-sections mode, section browsing wired into the ordinary match, and a fixture whose body is thicker than the current ~16 units across the plane. |
 | VIEW-07 | Partial | Forest network reveal | Landed on the `?lab=crossing` fixture. `src/render/network-reveal.ts` projects the colony's real XYZ edges onto the region's own terrain with a fixed rendering offset, keeps each sample's real depth, weights line colour by depth and connectedness, draws a severed remnant as a double line so it reads without relying on hue, and adds a slice marker showing where the last inspected section cuts the ground. One `LineSegments` buffer for the whole region; distance lowers the samples per edge and never the simulation's node list. Picking is a screen-space search over the projection with a stacked-strand report and explicit depth, never a raycast against whichever line mesh is in front. The **Network** control is a real, keyboard-accessible button in the forest panel with pressed state, and it appears only when a spatial colony exists, so an ordinary match has no dead control. Clicking a projected strand opens the exact section through it. Remaining: transparent-ground true-depth mode (the plan's later switch), bounds on display LOD selection beyond the sample count, and the reveal wired to the ordinary match. |
 | VIEW-08 | Planned | Natural forest-floor materials and ground contact | Replace diagonal floor bands and uniform scatter with regional material patches, restrained surface detail, grounded props and canopy/contact shading. Preserve authoritative terrain, stream alignment and cutaway behavior. |
 
@@ -1376,6 +1376,52 @@ either foundation.
 
 ## Verification record
 
+### 20 September 2026: sections as a player control, and a body with thickness
+
+Turned the fixture's section browser into the player's own control and gave the
+fixture's colony a third dimension, so the feature can be judged rather than
+just exercised.
+
+- The sheet carries a **Section** panel below ground, centred under the view
+  buttons (the left column belongs to the depth rail and the order list, the
+  right to the field journal). It names the open section and offers **Previous**,
+  **Next**, **Flip**, **Follow**, **Return to forest** and **Surface here**;
+  `[` and `]` move, `X` flips, `G` follows, `Escape` rises, and `N` toggles the
+  reveal. It appears only while a spatial colony exists, so an ordinary match
+  has none of it, and the camera hint names the keys while below ground.
+- `CrossingMatch` now drifts each arriving strand a little across the growth
+  plane, capped, deterministic from the node's own id, and refused when the
+  drifted ground could not hold a hypha. The fixture's colony therefore spans
+  about 16 units across the plane instead of one sheet: neighbouring sections
+  hold different parts of the body, and the section readout reports 59, 52 and
+  18 strands across three adjacent planes rather than one full plane and two
+  empty ones.
+- Two fixtures of my own tests were corrected rather than the code, and the
+  reason is recorded here: the "no seam tax" check compared the destination cell
+  with the parent's cell, which is now a genuinely different cell; and the
+  reveal's recorded depth now travels with the strand between its ends instead
+  of being re-derived from the ground under each sample, because a strand may
+  cross a lane where the ground itself steps.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` and `npm run build` - pass.
+- `npm run test:sections` - 10 checks pass in 1.01s; `npm run test:reveal` - 6
+  checks pass in 0.90s; `npm run test:crossing` - 11 checks pass in 5.79s;
+  `npm run test:spatial` - 18 checks; `npm run test:dressing` - 8 checks.
+- `npm run test:feature -- sections --browser` - both headless suites plus **27**
+  browser checks pass at `qa=fast` on SwiftShader in 37.3s with no browser or
+  shader-compiler errors. The new ones cover: the sheet's own section panel
+  existing and naming the open section while a spatial colony exists; the panel's
+  **Next** moving one plane; `[` and `]` moving both ways; **Return to forest**
+  leaving the section and putting the panel away; `[` opening a section when
+  none is; `Escape` rising out of one; and, from the thickening, that stepping
+  one plane shows a different part of the same body.
+
+Not verified here: the same suites were not re-run at normal quality, the
+compare-sections mode and the match wiring are still open, and the panel's
+portrait layout has not been inspected at a narrow viewport.
+
 ### 20 September 2026: browsing real sections and the forest reveal
 
 Landed stage 5 and the cheap half of stage 6 of the spatial sequence on the
@@ -2339,6 +2385,20 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 20 September 2026: sections as a control, and a body with thickness
+
+- Moved the section browser out of the test bench and into the sheet: a
+  **Section** panel below ground with Previous, Next, Flip, Follow, Return to
+  forest and Surface here, plus `[`, `]`, `X`, `G`, `Escape` and `N` on the
+  keyboard. It exists only while a spatial colony does, so an ordinary match
+  gains nothing (`VIEW-06`).
+- Made the fixture's colony drift a little across its growth plane as strands
+  arrive, so the body has thickness: neighbouring sections hold different parts
+  of the colony rather than one plane and a row of empty slabs.
+- Kept the open section's selected strand inside that section, so Follow always
+  has something visible to follow, and carry the reveal's recorded depth along
+  the strand instead of re-deriving it from the ground under each sample.
 
 ### 20 September 2026: sections and the forest reveal
 

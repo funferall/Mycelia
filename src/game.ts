@@ -171,6 +171,20 @@ export class Game {
   private readonly sceneOrigin: { x: number; y: number };
   private readonly sceneShift = { x: 0, z: 0 };
 
+  /** The section panel's readout, and its own visibility. */
+  private syncSectionUI(): void {
+    const panel = document.querySelector<HTMLElement>('#section-browser');
+    if (!panel) return;
+    document.body.classList.toggle('spatial-colony', this.spatial !== null);
+    panel.hidden = this.spatial === null;
+    const status = document.querySelector('#section-status');
+    if (status) {
+      status.textContent = this.section
+        ? this.sectionReadout()
+        : 'No section open. Previous and Next open one through the colony.';
+    }
+  }
+
   private pointerMoved = 0;
   private lastX = 0;
   private lastY = 0;
@@ -519,6 +533,7 @@ export class Game {
       this.stage.scene.add(this.sectionView.group);
     }
     this.refreshSpatialViews();
+    this.syncSectionUI();
     // A Network control only exists while there is a network to reveal: an
     // ordinary match has no spatial colony and gets no dead button.
     const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
@@ -632,11 +647,23 @@ export class Game {
     this.sectionView?.setSection(spec);
     this.refreshSectionClip();
     this.snapToSection(spec);
-    if (this.selectedEdgeKey === null) {
-      this.selectedEdgeKey = this.spatial.colonyEdges()[0]?.key ?? null;
-    }
+    this.selectVisibleEdge(spec);
     this.updateSectionStatus();
     return { ok: true, message: this.sectionReadout() };
+  }
+
+  /**
+   * Keep the selected strand one the open section can actually show.
+   *
+   * The selection is what Follow follows and what the readout names, so a
+   * strand that is not in this slab would make both point at nothing visible.
+   */
+  private selectVisibleEdge(spec: SectionSpec): void {
+    if (!this.spatial) return;
+    const edges = this.spatial.colonyEdges();
+    const clip = clipEdges(this.spatial.region, spec, edges as RevealEdge[]);
+    if (this.selectedEdgeKey && clip.visible.some((edge) => edge.key === this.selectedEdgeKey)) return;
+    this.selectedEdgeKey = clip.visible[0]?.key ?? edges[0]?.key ?? null;
   }
 
   /** Where the forest was left, in absolute coordinates plus its selection. */
@@ -741,6 +768,7 @@ export class Game {
     this.sectionView?.setSection(next);
     this.refreshSectionClip();
     this.snapToSection(next);
+    this.selectVisibleEdge(next);
     this.updateSectionStatus();
     return { ok: true, message: this.sectionReadout() };
   }
@@ -756,6 +784,7 @@ export class Game {
     this.sectionView?.setSection(next);
     this.refreshSectionClip();
     this.snapToSection(next);
+    this.selectVisibleEdge(next);
     this.updateSectionStatus();
     return { ok: true, message: this.sectionReadout() };
   }
@@ -811,6 +840,7 @@ export class Game {
     for (const surface of this.surfaces) surface.selectedId = context.treeId;
     this.setReveal(context.reveal);
     this.updateTreeNote();
+    this.syncSectionUI();
     return { ok: true, message: `Back above stand ${(context.standId ?? this.match.activeStandId) + 1}.` };
   }
 
@@ -828,6 +858,7 @@ export class Game {
       );
     }
     this.sectionView?.setSection(null);
+    this.syncSectionUI();
     return { ok: true, message: `Above stand ${standId + 1}. Its section stays remembered.` };
   }
 
@@ -835,6 +866,7 @@ export class Game {
     if (!this.spatial || !this.section) return;
     const status = document.querySelector('#view-status');
     if (status) status.textContent = this.sectionReadout();
+    this.syncSectionUI();
   }
 
   /**
@@ -1413,6 +1445,21 @@ export class Game {
         ? 'Network revealed. Click a projected strand to open the section through it.'
         : 'Network hidden. The forest is unchanged underneath.');
     });
+    // The section browser's own controls. They exist for the player, not only
+    // for the bench: Previous and Next open a section on their first press.
+    const sectionAction = (selector: string, run: () => { ok: boolean; message: string }) => {
+      document.querySelector(selector)?.addEventListener('click', () => {
+        const result = run();
+        this.ui.setNote(result.message);
+        this.syncSectionUI();
+      });
+    };
+    sectionAction('#section-prev', () => (this.section ? this.stepSection(-1) : this.openFirstSection()));
+    sectionAction('#section-next', () => (this.section ? this.stepSection(1) : this.openFirstSection()));
+    sectionAction('#section-flip', () => (this.section ? this.flipSectionAxis() : this.openFirstSection()));
+    sectionAction('#section-follow', () => (this.section ? this.followConnection() : this.openFirstSection()));
+    sectionAction('#section-return', () => this.returnToForest());
+    sectionAction('#section-surface', () => this.surfaceHere());
     this.survey.onChoose((id) => {
       this.selectStand(id);
       this.refreshStandOptions();
@@ -1620,7 +1667,9 @@ export class Game {
     document.querySelector('#view-status')!.textContent = transition ? (rig.view === 'forest' ? 'Rising through the canopy…' : 'Following the roots…') : (rig.view === 'forest' ? 'Above the forest floor' : `Within stand ${this.match.activeStandId + 1} \u00b7 ${COMMUNITY_LABEL[this.match.active.site.community]}`);
     document.querySelector('.camera-hint')!.textContent = rig.view === 'forest'
       ? 'Drag to wander · Shift-drag to orbit · Scroll to descend · V to switch views'
-      : 'Drag to wander · Scroll to look closer · F to reframe · V to rise';
+      : this.spatial
+        ? 'Drag to wander · [ ] to move through sections · X to turn the section · G to follow a strand · Esc to rise'
+        : 'Drag to wander · Scroll to look closer · F to reframe · V to rise';
     for (const button of this.markerButtons.values()) button.hidden = true;
   }
 
@@ -1858,6 +1907,20 @@ export class Game {
       if (event.key.toLowerCase() === 'h') document.querySelector<HTMLButtonElement>('#immersive')!.click();
       if (event.key.toLowerCase() === 's') { event.preventDefault(); this.survey.toggle(); if (this.survey.open) this.refreshSurvey(); }
       if (event.key === 'Escape' && this.survey.open) this.survey.hide();
+      // Sections are the one new keyboard path this fixture adds. The keys are
+      // free everywhere else, and they only do anything while a spatial colony
+      // is attached, so an ordinary match is unaffected.
+      if (this.spatial) {
+        if (event.key === '[') { event.preventDefault(); (this.section ? this.stepSection(-1) : this.openFirstSection()); }
+        if (event.key === ']') { event.preventDefault(); (this.section ? this.stepSection(1) : this.openFirstSection()); }
+        if (event.key.toLowerCase() === 'x') { event.preventDefault(); (this.section ? this.flipSectionAxis() : this.openFirstSection()); }
+        if (event.key.toLowerCase() === 'g') { event.preventDefault(); (this.section ? this.followConnection() : this.openFirstSection()); }
+        if (event.key.toLowerCase() === 'n') { event.preventDefault(); this.toggleReveal(); }
+        if (event.key === 'Escape' && !this.survey.open && this.section) {
+          event.preventDefault();
+          this.returnToForest();
+        }
+      }
       if (event.key === 'Shift') this.shiftDown = true;
       if (event.key === 'f') this.frameSheet();
     });

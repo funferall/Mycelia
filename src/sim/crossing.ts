@@ -84,6 +84,14 @@ export interface CrossingOptions {
   runUpColumns?: number;
   /** Columns to keep growing past the seam before the order is done. */
   reachColumns?: number;
+  /**
+   * How far one arrival may shift a strand across the section plane, and the
+   * spread that shift is allowed to reach. The fixture holds one plane constant
+   * so the first crossing stays small; this is what gives the body a little
+   * thickness in the third axis, so neighbouring sections are not all empty.
+   */
+  laneDrift?: number;
+  laneSpread?: number;
   /** What the funded colony starts with. Deliberately generous. */
   kit?: { carbon: number; water: number; nitrogen: number };
 }
@@ -136,6 +144,8 @@ export interface ColonyEdge {
 }
 
 const DEFAULT_KIT = { carbon: 260, water: 8, nitrogen: 5 };
+const DEFAULT_LANE_DRIFT = 1.2;
+const DEFAULT_LANE_SPREAD = 14;
 
 /**
  * The colony's view of the region: one flat tree table, and soil lookups that
@@ -215,6 +225,9 @@ export class CrossingWorldView implements NetworkWorld {
   /** A strand that has arrived in a new square is filed under that square. */
   commit(node: PositionedNode): void {
     this.match.rebucket(node);
+    // Arriving is also when a strand may step across the plane, giving the
+    // fixture a body with some thickness instead of a single sheet.
+    this.match.driftLane(node as PositionedNode & { id: number });
   }
 }
 
@@ -230,6 +243,9 @@ export class CrossingMatch {
   readonly seam: number;
   readonly runUpColumns: number;
   readonly reachColumns: number;
+  /** Per-arrival drift across the plane, and how far it may wander. */
+  readonly laneDrift: number;
+  readonly laneSpread: number;
   readonly colonyId: ColonyId;
   readonly colony: Network;
   readonly stands: CrossingStand[] = [];
@@ -249,6 +265,8 @@ export class CrossingMatch {
     this.soil = new SoilVolume(this.region, hashString(`${seedText}:soil`));
     this.runUpColumns = options.runUpColumns ?? 8;
     this.reachColumns = options.reachColumns ?? 4;
+    this.laneDrift = options.laneDrift ?? DEFAULT_LANE_DRIFT;
+    this.laneSpread = options.laneSpread ?? DEFAULT_LANE_SPREAD;
 
     const chosen = chooseCrossing(this.region, this.soil, options.originStandId ?? this.region.foundingStand, options.direction);
     this.originStandId = chosen.originStandId;
@@ -327,16 +345,55 @@ export class CrossingMatch {
    * without changing any other coordinate.
    */
   voxelOf(node: PositionedNode, dx: number, dy: number): Vec3 | null {
-    const row = node.gy + dy;
-    if (!Number.isFinite(row) || row < 0 || row >= GRID.rows) return null;
-    const point = this.planePointAt(node.gx + dx + 0.5);
+    return this.voxelAt(node.gx + dx, node.y, node.gy + dy);
+  }
+
+  /** The voxel at one growth-plane cell, at an explicit across-plane position. */
+  voxelAt(gx: number, lane: number, gy: number): Vec3 | null {
+    if (!Number.isFinite(gy) || gy < 0 || gy >= GRID.rows) return null;
+    const point = planePoint({ along: this.plane.along, fixed: lane }, gx + 0.5);
     if (standIdAt(this.region, point.x, point.y) === null) return null;
-    const depth = rowDepthCm(row);
+    const depth = rowDepthCm(gy);
     return vec3(point.x, point.y, elevationAtDepthCm(this.region, point.x, point.y, depth));
   }
 
+  /**
+   * Nudge a strand across the section plane as it arrives.
+   *
+   * The fixture's growth plane is two-dimensional, so without this every
+   * strand sits on one plane and every other section is empty. The drift is
+   * small, deterministic from the node's own id, capped, and refused whenever
+   * the drifted ground could not hold a hypha - so it thickens the body without
+   * walking a strand into stone or the stream.
+   */
+  driftLane(node: PositionedNode & { id: number }): void {
+    if (this.laneDrift <= 0) return;
+    const roll = this.laneHash(node.gx * 31 + node.gy * 7 + node.id * 0.37 + node.id);
+    const step = (roll - 0.5) * 2 * this.laneDrift;
+    const limit = this.laneSpread;
+    const next = Math.max(this.plane.fixed - limit, Math.min(this.plane.fixed + limit, node.y + step));
+    if (Math.abs(next - node.y) < 1e-9) return;
+    const probe = this.voxelAt(node.gx, next, node.gy);
+    if (!probe) return;
+    if (this.soil.blockAt(probe.x, probe.y, probe.z).blocked) return;
+    node.y = next;
+  }
+
+  /** Deterministic 0..1 from a node, so the drift never touches the colony RNG. */
+  private laneHash(id: number): number {
+    let h = (this.region.seed ^ Math.imul(id + 1, 0x9e3779b1)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2545f491) >>> 0;
+    h ^= h >>> 13;
+    h = Math.imul(h ^ (h >>> 7), 0x27d4eb2d) >>> 0;
+    h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+  }
+
   nodePosition(node: PositionedNode): NodePosition {
-    const point = this.planePointAt(node.wx);
+    // The node carries its own across-plane coordinate: the fixture's colony
+    // drifts a little in that axis as it grows, and the drawn position, the
+    // clipped section and the projection all have to see the same lane.
+    const point = planePoint({ along: this.plane.along, fixed: node.y }, node.wx);
     const depth = rowDepthCm(node.wy);
     return {
       x: point.x,
@@ -357,7 +414,7 @@ export class CrossingMatch {
   }
 
   standOf(node: PositionedNode): StandId | null {
-    const point = this.planePointAt(node.gx + 0.5);
+    const point = planePoint({ along: this.plane.along, fixed: node.y }, node.gx + 0.5);
     return standIdAt(this.region, point.x, point.y);
   }
 

@@ -57,6 +57,26 @@
         </div>
         <p id="view-status" role="status">Above the forest floor</p>
       </nav>
+      <!--
+        The section browser: the player's own way through the underground
+        sections of a spatial colony. It appears below ground only, and only
+        while such a colony exists, so an ordinary match never shows it.
+      -->
+      <section class="section-browser" id="section-browser" aria-label="Underground sections">
+        <p class="section-kicker">Section</p>
+        <p id="section-status" role="status">No section open.</p>
+        <div class="section-controls" role="group" aria-label="Move through sections">
+          <button type="button" id="section-prev" aria-keyshortcuts="[">Previous <span aria-hidden="true">[</span></button>
+          <button type="button" id="section-next" aria-keyshortcuts="]">Next <span aria-hidden="true">]</span></button>
+          <button type="button" id="section-flip" aria-keyshortcuts="X">Flip <span aria-hidden="true">X</span></button>
+          <button type="button" id="section-follow" aria-keyshortcuts="G">Follow <span aria-hidden="true">G</span></button>
+        </div>
+        <div class="section-controls" role="group" aria-label="Leave the section">
+          <button type="button" id="section-return" aria-keyshortcuts="Escape">Return to forest</button>
+          <button type="button" id="section-surface">Surface here</button>
+        </div>
+      </section>
+
       <section class="forest-observation" aria-label="Explore the forest">
         <!--
           The reveal is only offered while a spatial colony exists to reveal:
