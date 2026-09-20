@@ -103,8 +103,8 @@ try {
     for (const [x, y] of points) {
       const element = document.elementFromPoint(x, y);
       if (!element) continue;
-      element.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 1 }));
-      element.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true, pointerId: 1 }));
+      element.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
+      element.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
       game.frame(performance.now(), false);
       const report = game.renderReport();
       selected.push(report.selectedTreeId === null ? null : `${report.selectedStandId}:${report.selectedTreeId}`);
@@ -114,8 +114,11 @@ try {
   void canvas;
   const optionKeys = new Set(selection.optionKeys);
   check(
-    'clicking among the scenery only ever selects a listed playable tree',
-    click.every((key) => key === null || optionKeys.has(key)),
+    'clicking among the scenery selects a real, listed playable tree',
+    // Some of the four points are sky or sheet, but a click that lands in the
+    // forest has to resolve to a tree the selector itself offers - and at least
+    // one of them must actually select something, or the check proves nothing.
+    click.every((key) => key === null || optionKeys.has(key)) && click.some((key) => key !== null),
     `selected ${JSON.stringify(click)}`
   );
 

@@ -24,7 +24,9 @@
     "test:region": "node tools/test-region.mjs",
     "test:spatial": "node tools/test-spatial.mjs",
     "test:crossing": "node tools/test-crossing.mjs",
-    "test:dressing": "node tools/test-dressing.mjs"
+    "test:dressing": "node tools/test-dressing.mjs",
+    "test:sections": "node tools/test-sections.mjs",
+    "test:reveal": "node tools/test-reveal.mjs"
   },
   "dependencies": {
     "three": "^0.186.0"

@@ -178,7 +178,9 @@ the unchanged normal preset.
 | Background placement | `src/render/forest-dressing-layout.ts` | Pure, seedable region-wide placement of non-interactive canopy, regeneration and ground cover: ownership by half-open bounds, clusters and gaps, crown-size spacing, community composition and exclusion masks (`ASSET-04`, `MAP-05`) |
 | Background drawing | `src/render/forest-dressing.ts` | Normalised, merged per-asset geometry drawn as `(tier, asset, category)` instance batches, with per-decoration projected-size LOD, shader wind, season tint and no per-frame matrix writes (`ASSET-04`) |
 | Integration | `src/game.ts`, `src/main.ts` | Regional fixed-step loop, stand switching, local view rebinding, input, UI/audio synchronization |
-| Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
+| Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion; explicit pose capture/restore for the forest context and per-section poses |
+| Sections | `src/render/sections.ts`, `src/render/section-view.ts` | Pure `SectionSpec` slabs, clipping with continuation marks, section families and following; the drawn section, its nodes, marks and framed window (`VIEW-06`) |
+| Network reveal | `src/render/network-reveal.ts` | Terrain projection of the colony's real XYZ edges with depth-weighted line weight, a slice marker, and screen-space picking with a stacked-strand report (`VIEW-07`) |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
 | Water | `src/render/water.ts` | The region's stream as a ribbon on the forest floor, and the active stand's channel and water table below ground |
@@ -189,7 +191,7 @@ the unchanged normal preset.
 | Shared stage | `src/render/{stage,quality,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom, opt-in fast QA preset |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-spatial.mjs`, `tools/test-crossing.mjs`, `tools/test-dressing.mjs`, `tools/test-dressing-view.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region, for the shared coordinates and soil volume, for the two-stand crossing and for background placement, a bounded renderer check for the dressing, LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-spatial.mjs`, `tools/test-crossing.mjs`, `tools/test-dressing.mjs`, `tools/test-dressing-view.mjs`, `tools/test-sections.mjs`, `tools/test-reveal.mjs`, `tools/test-sections-view.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region, for the shared coordinates and soil volume, for the two-stand crossing, for background placement and for section clipping and projection, bounded renderer checks for the dressing and for sections and the reveal, LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
 
 The ordinary match's soil is still a two-dimensional transect. Each simulated
 tree has one horizontal `gx` coordinate and stable root IDs.
@@ -241,8 +243,8 @@ and equivalent useful details have been accounted for, then remove it.
 | VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
 | VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
 | VIEW-05 | Verified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. `npm run test:view` now covers the cases the row was waiting on: a drag pans instead of ordering while a tap on soil orders, a refused order is refused out loud and changes nothing, a cancelled pointer issues nothing and leaves the canvas still able to pan, a click during a crossing issues nothing, one wheel notch does not cross while six do, a key typed into the tree selector does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and Space, and a burst of five view changes lands in the view asked for last with input still live afterwards. |
-| VIEW-06 | Planned | Browse persistent underground sections | Select and flip through real spatial sections, retain each section's framing, follow cross-stand strands, and restore the original forest location on ascent. See the spatial-growth implementation sequence below. |
-| VIEW-07 | Planned | Forest network reveal | A Network button shows the same XYZ strands beneath the forest, with a cheap surface projection first and optional transparent-ground inspection. No presentation-only spread or duplicate simulation. |
+| VIEW-06 | Partial | Browse persistent underground sections | Landed on the `?lab=crossing` fixture. `src/render/sections.ts` is a pure `SectionSpec` model: vertical slabs of finite thickness (4 units, stepping 4 so they tile a stand) in canonical region coordinates, with slab clipping that draws a strand passing through with both ends outside it and reports where it enters and leaves, previous/next within a family, a flip to the other family, stable ids, and section labels. `src/render/section-view.ts` draws the clipped strands, their nodes, the continuation marks and the framed window. The fixture bench drives Previous, Next, Flip, Follow, Return to forest and Surface here; the readout names the stand, community, orientation, position in the family and strand count, and says plainly when a section holds no network rather than inventing strands. Browsing is limited to stands the colony has reached plus their neighbours. `ForestReturnContext` is captured on descent in absolute regional coordinates (pose, selection, reveal state) and restored on return, with each section's pose remembered by `standId + sectionId`. Remaining: the compare-two-sections mode, section browsing wired into the ordinary match, and the fact that the fixture's colony is a single sheet - its strands sit on one plane, so a section through them reads as a thin band rather than a volume. |
+| VIEW-07 | Partial | Forest network reveal | Landed on the `?lab=crossing` fixture. `src/render/network-reveal.ts` projects the colony's real XYZ edges onto the region's own terrain with a fixed rendering offset, keeps each sample's real depth, weights line colour by depth and connectedness, draws a severed remnant as a double line so it reads without relying on hue, and adds a slice marker showing where the last inspected section cuts the ground. One `LineSegments` buffer for the whole region; distance lowers the samples per edge and never the simulation's node list. Picking is a screen-space search over the projection with a stacked-strand report and explicit depth, never a raycast against whichever line mesh is in front. The **Network** control is a real, keyboard-accessible button in the forest panel with pressed state, and it appears only when a spatial colony exists, so an ordinary match has no dead control. Clicking a projected strand opens the exact section through it. Remaining: transparent-ground true-depth mode (the plan's later switch), bounds on display LOD selection beyond the sample count, and the reveal wired to the ordinary match. |
 | VIEW-08 | Planned | Natural forest-floor materials and ground contact | Replace diagonal floor bands and uniform scatter with regional material patches, restrained surface detail, grounded props and canopy/contact shading. Preserve authoritative terrain, stream alignment and cutaway behavior. |
 
 ### Authored surface art
@@ -1060,10 +1062,15 @@ stages 3-4 landed as the `?lab=crossing` fixture (`src/sim/crossing.ts`) with
 `tools/test-crossing.mjs`. The completed water work was preserved: the water
 diff is untouched, and the network refactor these stages needed was verified
 against `npm test`, `tools/test-region.mjs` and the focused water browser check
-before this entry was written. Section and reveal UI (`VIEW-06`, `VIEW-07`) has
-deliberately not been started, and the ordinary match is still the flat
-transect: promoting the fixture's coordinator into `RegionalMatch` is the next
-gate, not a claim of this changeset.
+before this entry was written. Stage 5 of the sequence - browsing real sections
+- and stage 6's cheap half - the forest reveal - have since landed on that same
+fixture (`VIEW-06`, `VIEW-07`): sections are clipped, browsable, followable and
+restored, and the reveal projects the real strands, answers a click with the
+section through it, and is a real forest control. What has *not* landed is
+stage 7: the ordinary match is still the flat transect, so promoting the
+fixture's coordinator into `RegionalMatch` remains the next gate, together with
+the compare-sections mode and the transparent-ground switch that stages 5 and 6
+leave open.
 
 ### Next asset machinery approach (ASSET-03, PERF-01, PERF-02)
 
@@ -1298,6 +1305,14 @@ either foundation.
   overview's diagonal ground banding is untouched (`VIEW-08`). The scenery is
   hidden rather than folded as the camera descends, because it has no roots to
   carry below; the terrain is already opaque over it at that point.
+- Sections and the forest reveal are built on the crossing fixture, not on the
+  ordinary match: they read that fixture's colony, and the match's own stand
+  views are hidden while a section is open. The fixture's colony is a single
+  plane, so a section through it is a thin band of strands rather than a volume,
+  and the compare-sections mode and transparent-ground true-depth switch are not
+  built. The reveal's cost at regional scale is unmeasured, and its strand
+  symbols do not yet scale with screen-space strand size beyond the sample count
+  per edge.
 - The match renders nine stands and players can enter colonized underground
   transects. A local view is rebuilt and its owned GPU resources disposed on
   each stand change; this bounds residency but may hitch on entry. There is no
@@ -1359,6 +1374,107 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 20 September 2026: browsing real sections and the forest reveal
+
+Landed stage 5 and the cheap half of stage 6 of the spatial sequence on the
+`?lab=crossing` fixture: `src/render/sections.ts`, `src/render/section-view.ts`,
+`src/render/network-reveal.ts`, the camera's pose capture/restore, the fixture's
+`colonyEdges()`/`reachedStandIds()`/`browsableStandIds()`, the bench controls and
+three suites. The ordinary match is untouched: it has no spatial colony, so it
+gets no Network control and no section mode.
+
+What is implemented:
+
+- **Sections are real slabs.** A `SectionSpec` is a vertical plane of finite
+  thickness (4 units) in canonical region coordinates, stepping 4 units so the
+  sections tile a stand: every strand lies inside exactly one of them. Clipping
+  is a parametric slab clip over the plane's faces, the section's extent and its
+  depth range, so a strand that crosses the slab with both endpoints outside it
+  is drawn, and the points where it enters and leaves are reported as
+  continuation marks. Nothing in the section terminates a strand or invents a
+  junction.
+- **Browsing is a view, not a simulation change.** Previous, Next, Flip, Follow
+  and Return move the camera and the clip; the readout names the stand, the
+  community, the orientation, the position in the family and the strand count,
+  and an empty section says "no network in this section". Browsing is limited to
+  stands the colony has reached plus their orthogonal neighbours.
+- **The return context is absolute.** The forest pose is captured on the first
+  descent as *regional* coordinates plus distance, azimuth, elevation, framing
+  mode, selection, tree and reveal state, and converted back through the current
+  rebase when restored, so a stand change cannot shift a saved pose twice. Each
+  section also keeps its own pose by `standId + sectionId`, so flipping back
+  returns to the same view.
+- **The reveal is a projection and says so.** Real XYZ edges are sampled onto
+  the region's own terrain with a fixed offset; each sample keeps the strand's
+  real depth, which drives line weight, and a severed remnant is additionally
+  drawn as a double line so it reads without depending on hue. A slice marker
+  shows where the last inspected section cuts the ground. Picking is a
+  screen-space search with a stacked-strand report and explicit depth; the
+  Network button is a real forest control with pressed state, and clicking a
+  projected strand opens the exact section through it.
+- **Three unambiguous forest picks.** A crown wins outright, then a projected
+  strand while the reveal is on, then the ground and its nearest tree. This is
+  what lets a strand be clicked at all, since a projection lies on the terrain.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` and `npm run build` - pass. Production JS is 824.04 kB
+  (221.89 kB gzip) plus the 3.10 kB bench and 16.70 kB crossing chunks.
+- `npm run test:sections` - 10 checks pass in 0.80s: two families per stand with
+  unique stable ids and the plan's four-unit slab; previous/next clamping within
+  a family and flipping to the other one; a strand inside the slab keeping its
+  own key, parent and child; a strand crossing the slab with both ends outside
+  drawn with two continuation marks; a strand beside, below or beyond the slab
+  not drawn; an unreached stand's section simply empty; a seam-spanning strand
+  drawn once as one segment naming both stands; a point choosing an existing
+  section rather than a new one; browsing limited to reached stands and their
+  neighbours; and deterministic clipping.
+- `npm run test:reveal` - 6 checks pass in 0.81s: detail falls with distance and
+  never removes a strand; horizontal positions and recorded depths are the
+  simulation's own while the drawn height is the terrain plus the stated offset;
+  a seam crossing stays one continuous line straddling the boundary; depth,
+  connectedness and reinforcement drive weight monotonically; a click picks the
+  nearest strand, reports stacked alternatives and chooses the shallowest of
+  them; and projecting changes no simulation state.
+- `npm run test:feature -- sections --browser` - both headless suites plus 20
+  browser checks pass at `qa=fast` on SwiftShader in 24.9s with no browser or
+  shader-compiler errors. The renderer and input checks cover: a colony spanning
+  two stands; a real, unpressed Network control in the forest panel; descent
+  opening a section with 62 strands and 9 continuation marks and a readout that
+  names stand, community, orientation and position; the section holding a strand
+  the projection also knows; next/previous; an adjacent section reporting no
+  network; flipping; following a strand into the far stand; returning to the
+  forest at the same distance, azimuth and elevation with the same selection;
+  the Network toggle drawing 293 projected strands and changing nothing about
+  the colony; the slice marker naming the last inspected section; clicking a
+  projected strand selecting it at its real 23 cm depth and opening its section
+  with matching horizontal endpoints; a crown click still selecting the tree
+  while the reveal is on; and turning the reveal off leaving the pick targets
+  and tree count exactly as they were.
+- Captures inspected (ignored paths, regenerated by the command above):
+  `design/shots/sections-open-fast.png`, `sections-from-reveal-fast.png` and
+  `reveal-forest-fast.png`. The section frame encloses the strand chain, its
+  nodes and the continuation marks legibly.
+- `npm run test:crossing` - 11 checks pass (the fixture gained its edge and stand
+  accessors); `npm run test:spatial` - 18 checks pass; and
+  `npm run test:feature -- dressing --browser` - both dressing suites still pass
+  after the forest click order changed.
+- `npm run test:feature -- water --browser` - 13 checks pass at `qa=fast` with no
+  browser errors (66.0s, three added draw calls for the surface water), which is
+  the scoped check for the shared fixture bench and the frame loop this
+  changeset touched.
+
+Not verified, and the honest state of this changeset: the fixture's colony grows
+on a single plane, so a section through it reads as a thin band of strands
+rather than a volume - a genuinely volumetric colony is the follow-up; the
+compare-two-sections mode and the transparent-ground true-depth switch are not
+built; the reveal and the section browser are wired to the fixture, not to the
+ordinary match (that is stage 7); no profile was run, so the reveal's cost at
+scale is unmeasured beyond its one draw call per view; and the wider suites
+(`test:view`, `test:journey`, `test:navigation`, `npm test`, `test:region`) were
+not re-run, though nothing in `src/sim/` changed and the crossing suite - which
+drives the same fixture code - passes.
 
 ### 20 September 2026: background forest dressing (`ASSET-04`, `MAP-05`)
 
@@ -2213,6 +2329,31 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 20 September 2026: sections and the forest reveal
+
+- Added `src/render/sections.ts`: pure `SectionSpec` vertical slabs in region
+  coordinates, slab clipping that keeps a strand passing through with both ends
+  outside it and reports its continuation marks, two families per stand, and
+  previous/next/follow/flip navigation (`VIEW-06`).
+- Added `src/render/section-view.ts` and the fixture's section browser: the
+  clipped strands, their nodes, the continuation marks and the framed window,
+  with a readout naming stand, community, orientation, position and strand
+  count, and an honest "no network in this section" for an empty one.
+- Added the forest return context: the pose is captured on descent in absolute
+  regional coordinates with the selection and reveal state, each section keeps
+  its own remembered pose, and returning restores the same forest view.
+- Added `src/render/network-reveal.ts` (`VIEW-07`): the real XYZ edges projected
+  onto the region's terrain with depth-weighted line weight, a double line for a
+  severed remnant, a slice marker for the last inspected section, and
+  screen-space picking that reports stacked strands instead of guessing. The
+  Network control is a real, keyboard-accessible forest button that only exists
+  while a spatial colony does.
+- Made the three forest picks unambiguous - crown, then projected strand, then
+  ground - which is what lets a projection lying on the terrain be clicked at
+  all, and guarded pointer capture so a stale pointer cannot wedge the input.
+- Added `npm run test:sections`, `npm run test:reveal` and
+  `test:feature -- sections` with a bounded browser smoke.
 
 ### 20 September 2026: background forest dressing
 

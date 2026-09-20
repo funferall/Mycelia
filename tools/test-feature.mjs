@@ -10,6 +10,7 @@ const suites = {
   spatial: ['test-spatial.mjs'],
   crossing: ['test-crossing.mjs'],
   dressing: ['test-dressing.mjs', 'test-dressing-view.mjs'],
+  sections: ['test-sections.mjs', 'test-reveal.mjs', 'test-sections-view.mjs'],
   views: [null, 'test-view.mjs'],
   navigation: [null, 'test-navigation.mjs'],
   journey: [null, 'test-journey.mjs'],

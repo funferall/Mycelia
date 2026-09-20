@@ -173,12 +173,18 @@ node tools/shoot.mjs \
 For a direct, paused feature fixture, run `npm run dev` and open
 `http://localhost:5173/?lab=water` (add `&qa=fast` for cheaper rendering).
 The **Test specimen** bench switches between water, forest, a region with all
-stands funded, 30 seconds of steward-assisted growth, and the headless crossing
-fixture that grows one colony across a stand boundary. It includes a live
-water-depth slider and a ten-second fixed-step advance. These are explicitly
-synthetic fixtures; ordinary URLs keep the normal opening and economy. The
-crossing fixture is simulated and reported in the bench only - nothing is drawn
-from it yet.
+stands funded, 30 seconds of steward-assisted growth, and the crossing fixture
+that grows one colony across a stand boundary. It includes a live water-depth
+slider and a ten-second fixed-step advance. These are explicitly synthetic
+fixtures; ordinary URLs keep the normal opening and economy.
+
+The crossing fixture's bench browses that colony's real vertical sections:
+**Previous**, **Next**, **Flip**, **Follow**, **Return to forest** and
+**Surface here**, with a readout naming the stand, community, orientation,
+position and strand count - and saying plainly when a section holds no network.
+**Network** projects the colony's actual strands over the forest; clicking one
+opens the section through it. A crown still wins a click, and an ordinary match,
+which has no spatial colony, never shows the control.
 
 In the forest scene the bench also carries the dressing controls: background
 vegetation on, off, or at the medium and dense trial bands, and a community
@@ -196,6 +202,7 @@ npm run test:feature -- water --browser --normal # full-quality water check
 npm run test:feature -- spatial         # coordinates and the shared soil volume
 npm run test:feature -- crossing        # one colony across one stand edge
 npm run test:feature -- dressing         # background planting; add --browser for the renderer check
+npm run test:feature -- sections         # sections and the reveal; add --browser for the renderer check
 npm run test:feature -- views           # rebuild + fast view smoke
 npm run test:feature -- views --full    # complete view regression
 ```

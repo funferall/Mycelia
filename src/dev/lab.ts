@@ -10,7 +10,22 @@ export async function mountLab(game: Game, scene: string): Promise<void> {
   bench.open = true;
   bench.innerHTML = `<summary>Test specimen</summary>
     <p>Fixture resources · paused at entry</p>
-    <p data-crossing hidden><output data-crossing-report></output></p>
+    <div data-crossing hidden>
+      <output data-crossing-report></output>
+      <div class="test-bench-row">
+        <button type="button" data-section-prev aria-label="Previous section">Previous</button>
+        <button type="button" data-section-next aria-label="Next section">Next</button>
+        <button type="button" data-section-flip aria-label="Flip section axis">Flip</button>
+        <button type="button" data-section-follow aria-label="Follow connection">Follow</button>
+      </div>
+      <div class="test-bench-row">
+        <button type="button" data-section-return aria-label="Return to forest">Return to forest</button>
+        <button type="button" data-surface-here aria-label="Surface here">Surface here</button>
+        <button type="button" data-reveal-toggle aria-pressed="false" aria-label="Reveal the network">Network</button>
+      </div>
+      <output data-section-report></output>
+      <output data-reveal-report></output>
+    </div>
     <div data-forest hidden>
       <label>Community <select aria-label="Test community"></select></label>
       <label>Dressing <select aria-label="Test dressing">
@@ -43,6 +58,9 @@ export async function mountLab(game: Game, scene: string): Promise<void> {
   const waterLabel = bench.querySelector<HTMLElement>('[data-water]')!;
   const crossingBox = bench.querySelector<HTMLElement>('[data-crossing]')!;
   const crossingOut = bench.querySelector<HTMLElement>('[data-crossing-report]')!;
+  const sectionOut = bench.querySelector<HTMLElement>('[data-section-report]')!;
+  const revealOut = bench.querySelector<HTMLElement>('[data-reveal-report]')!;
+  const revealButton = bench.querySelector<HTMLButtonElement>('[data-reveal-toggle]')!;
   const forestBox = bench.querySelector<HTMLElement>('[data-forest]')!;
   const communitySelect = bench.querySelector<HTMLSelectElement>('[aria-label="Test community"]')!;
   const dressingSelect = bench.querySelector<HTMLSelectElement>('[aria-label="Test dressing"]')!;
@@ -54,7 +72,38 @@ export async function mountLab(game: Game, scene: string): Promise<void> {
   crossingBox.hidden = selected !== 'crossing';
   forestBox.hidden = !isForest;
   if (selected === 'crossing') {
-    note.textContent = 'Headless fixture: one colony crossing one shared edge. Nothing is drawn from it yet.';
+    note.textContent = 'Crossing fixture: one colony across one shared edge. Browse its real sections, and reveal it over the forest.';
+    const act = (selector: string, run: () => unknown) => {
+      bench.querySelector<HTMLButtonElement>(selector)!.addEventListener('click', () => {
+        const result = run() as { ok?: boolean; message?: string } | undefined;
+        if (result && typeof result.message === 'string') note.textContent = result.message;
+        sync();
+      });
+    };
+    // Descending opens the first section; the rest move within what is open.
+    act('[data-section-prev]', () => {
+      if (!game.sectionReport().open) return game.openFirstSection();
+      return game.stepSection(-1);
+    });
+    act('[data-section-next]', () => {
+      if (!game.sectionReport().open) return game.openFirstSection();
+      return game.stepSection(1);
+    });
+    act('[data-section-flip]', () => {
+      if (!game.sectionReport().open) return game.openFirstSection();
+      return game.flipSectionAxis();
+    });
+    act('[data-section-follow]', () => {
+      if (!game.sectionReport().open) return game.openFirstSection();
+      return game.followConnection();
+    });
+    act('[data-section-return]', () => game.returnToForest());
+    act('[data-surface-here]', () => game.surfaceHere());
+    revealButton.addEventListener('click', () => {
+      const on = game.toggleReveal();
+      revealButton.setAttribute('aria-pressed', String(on));
+      sync();
+    });
   }
   if (isForest) {
     note.textContent = 'Forest fixture: background vegetation is presentation only. Playable trees stay selectable.';
@@ -87,6 +136,20 @@ export async function mountLab(game: Game, scene: string): Promise<void> {
     const crossing = game.crossingReport();
     if (crossing) {
       crossingOut.textContent = crossing.join(' | ');
+      const section = game.sectionReport();
+      sectionOut.textContent = section.open
+        ? `Section: ${section.label} | strands ${section.strands} | marks ${section.marks}`
+        : 'Section: none open. Previous, Next or Follow opens one.';
+      const reveal = game.revealReport();
+      const pick = reveal.pick
+        ? ` | picked ${reveal.pick.key} at ${reveal.pick.depthCm.toFixed(1)}cm` +
+          (reveal.pick.alternatives > 0 ? ` (+${reveal.pick.alternatives} stacked)` : '')
+        : '';
+      revealOut.textContent =
+        `Reveal: ${reveal.enabled ? 'on' : 'off'} | ${reveal.strands} strands | ${reveal.draws} draws` +
+        (reveal.slice ? ` | slice ${reveal.slice}` : '') +
+        pick;
+      revealButton.setAttribute('aria-pressed', String(reveal.enabled));
       return;
     }
     if (isForest) {

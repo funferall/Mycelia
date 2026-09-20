@@ -10,6 +10,19 @@ import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import { ForestDressing } from './render/forest-dressing';
 import { playableTrunkPositions, type DressingBand } from './render/forest-dressing-layout';
+import { NetworkReveal, REVEAL_PICK_RADIUS, type RevealEdge } from './render/network-reveal';
+import { SectionView } from './render/section-view';
+import {
+  browsableSections,
+  clipEdges,
+  flipSection,
+  sectionAnchor,
+  sectionForPoint,
+  sectionLabel,
+  sectionOrder,
+  stepSection,
+  type SectionSpec,
+} from './render/sections';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
@@ -19,6 +32,7 @@ import { HyphaeMesh, Motes } from './render/hyphae';
 import { SoilMesh } from './render/soil';
 import { GroundwaterView, StreamView } from './render/water';
 import { Stage } from './render/stage';
+import type { CameraPose } from './render/camera';
 import { makeGlowTexture } from './render/textures';
 import type { QualityPreset } from './render/quality';
 import { deriveJourney, type Journey, type RootTarget } from './ui/journey';
@@ -133,6 +147,30 @@ export class Game {
   private dressingBand: DressingBand = 'medium';
   private dressingDirty = false;
 
+  /**
+   * The spatial fixture, when `?lab=crossing` attached one.
+   *
+   * Held as a structural contract so the crossing simulation stays out of the
+   * ordinary bundle: the sections and the reveal only need to read its graph.
+   */
+  private spatial: SpatialFixture | null = null;
+  private reveal: NetworkReveal | null = null;
+  private sectionView: SectionView | null = null;
+  private revealEnabled = false;
+  private selectedEdgeKey: string | null = null;
+  private lastStrandPick: RevealPickInfo | null = null;
+  /** Whether the match's own underground views are hidden for a section. */
+  private sectionHidLocalViews = false;
+  /** The section being inspected, and the stand it belongs to. */
+  private section: { spec: SectionSpec; sections: SectionSpec[] } | null = null;
+  /** Where the player stood in the forest when they first went below. */
+  private forestContext: ForestContext | null = null;
+  /** Remembered poses per section, so flipping back returns to the same view. */
+  private readonly sectionPoses = new Map<string, CameraPose>();
+  /** Region coordinates of the render frame's own corner, and its shifts. */
+  private readonly sceneOrigin: { x: number; y: number };
+  private readonly sceneShift = { x: 0, z: 0 };
+
   private pointerMoved = 0;
   private lastX = 0;
   private lastY = 0;
@@ -150,6 +188,8 @@ export class Game {
     this.sim = new Simulation(seedText);
     this.match = new RegionalMatch(seedText, this.sim);
     this.region = this.match.region;
+    const home = this.region.stands[this.region.foundingStand];
+    this.sceneOrigin = { x: (home?.sx ?? 0) * TILE_SIZE, y: (home?.sy ?? 0) * TILE_SIZE };
 
     this.stage = new Stage(canvas, quality);
     const glow = makeGlowTexture(64);
@@ -390,8 +430,11 @@ export class Game {
         crossing.step(1 / 30);
         ticks++;
       }
-      for (let i = 0; i < 20; i++) crossing.step(1 / 30);
+      // Grow it on for a while: a colony that has only just touched the far
+      // stand has almost nothing to browse, and sections want a body.
+      for (let i = 0; i < 45 * 30; i++) crossing.step(1 / 30);
       this.labCrossing = crossing;
+      this.attachSpatialFixture(crossing);
     }
     const view = scene === 'forest' || scene === 'region' || scene === 'crossing' ? 'forest' : 'underground';
     this.stage.rig.setView(view, true);
@@ -408,6 +451,7 @@ export class Game {
     if (this.labCrossing) {
       const ticks = Math.max(1, Math.round(seconds * 30));
       for (let i = 0; i < ticks; i++) this.labCrossing.step(1 / 30);
+      this.refreshSpatialViews();
       return;
     }
     this.warmUp(seconds);
@@ -424,6 +468,522 @@ export class Game {
     this.sim.world.waterTableCm = Math.max(10, Math.min(GRID.rows, cm));
     this.groundwater.update(0);
     this.soil.refreshColors();
+  }
+
+  // -------------------------------------------------------------------------
+  // The spatial fixture: sections and the forest reveal (VIEW-06, VIEW-07)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Region coordinates to the frame the stands are laid out in.
+   *
+   * Deliberately without the accumulated rebase shift: the reveal and the
+   * section are grouped and moved exactly like the surfaces are, so the shift
+   * lives in one place, the group's own position.
+   */
+  private regionToScene(x: number, y: number): { x: number; z: number } {
+    return { x: x - this.sceneOrigin.x - TILE_SIZE / 2, z: -(y - this.sceneOrigin.y) };
+  }
+
+  private regionToScenePoint(point: { x: number; y: number; z: number }): THREE.Vector3 {
+    const scene = this.regionToScene(point.x, point.y);
+    return new THREE.Vector3(scene.x, GRID.rows / 2 + point.z, scene.z);
+  }
+
+  /** A live camera target back to absolute regional coordinates. */
+  private sceneToRegion(sceneX: number, sceneZ: number): { x: number; y: number } {
+    return {
+      x: sceneX + this.sceneOrigin.x + TILE_SIZE / 2 - this.sceneShift.x,
+      y: this.sceneOrigin.y - sceneZ + this.sceneShift.z,
+    };
+  }
+
+  /**
+   * Attach a spatial fixture's colony to the forest view.
+   *
+   * Called by the crossing bench once the fixture exists. Everything the reveal
+   * and the sections draw is read from this colony's own graph; the ordinary
+   * match is untouched, and the fixture itself stays out of the ordinary bundle.
+   */
+  attachSpatialFixture(fixture: SpatialFixture): void {
+    this.spatial = fixture;
+    if (!this.reveal) {
+      this.reveal = new NetworkReveal(this.region);
+      this.stage.scene.add(this.reveal.group);
+    }
+    if (!this.sectionView) {
+      this.sectionView = new SectionView(
+        (point) => this.regionToScenePoint(point),
+        (x, y) => this.region.heightAt(x, y)
+      );
+      this.stage.scene.add(this.sectionView.group);
+    }
+    this.refreshSpatialViews();
+    // A Network control only exists while there is a network to reveal: an
+    // ordinary match has no spatial colony and gets no dead button.
+    const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
+    if (button) {
+      button.hidden = false;
+      button.setAttribute('aria-pressed', String(this.revealEnabled));
+    }
+  }
+
+  /** Re-read the colony: new growth, a cut strand, a stand just reached. */
+  refreshSpatialViews(): void {
+    if (!this.spatial || !this.reveal) return;
+    const camera = this.stage.rig.camera;
+    camera.updateMatrixWorld();
+    const distance = camera.position.distanceTo(this.stage.rig.target);
+    this.reveal.setEdges(this.spatial.colonyEdges() as RevealEdge[], distance);
+    this.refreshSectionClip();
+  }
+
+  private refreshSectionClip(): void {
+    if (!this.spatial || !this.sectionView || !this.section) return;
+    const clip = clipEdges(this.spatial.region, this.section.spec, this.spatial.colonyEdges() as RevealEdge[]);
+    this.sectionView.setSection(this.section.spec);
+    this.sectionView.sync(clip);
+    this.reveal?.setSlice(this.section.spec);
+  }
+
+  /** The Network toggle: a projection of the real strands, off by default. */
+  setReveal(enabled: boolean): void {
+    this.revealEnabled = enabled && this.spatial !== null;
+    this.reveal?.setVisible(this.revealEnabled);
+    const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
+    if (button) button.setAttribute('aria-pressed', String(this.revealEnabled));
+  }
+
+  toggleReveal(): boolean {
+    this.setReveal(!this.revealEnabled);
+    return this.revealEnabled;
+  }
+
+  get revealOn(): boolean {
+    return this.revealEnabled;
+  }
+
+  /** The fixture's opening move: descend into the first section available. */
+  openFirstSection(): { ok: boolean; message: string } {
+    if (!this.spatial) return { ok: false, message: 'No spatial colony in this fixture.' };
+    const stand = this.spatial.reachedStandIds()[0] ?? this.spatial.originStandId;
+    return this.openSection(stand);
+  }
+
+  /** The opening section for a stand: through a strand there, else its middle. */
+  private openingSection(standId: number, sections: readonly SectionSpec[]): SectionSpec | null {
+    if (!this.spatial) return null;
+    const forStand = sections.filter((spec) => spec.standId === standId);
+    if (forStand.length === 0) return null;
+    const edges = this.spatial.colonyEdges();
+    const inStand = edges.filter((edge) => edge.standId === standId || edge.parentStandId === standId);
+    if (inStand.length > 0) {
+      // The plane the colony's own strands sit in, so the opening section is
+      // not an empty one when there is something to show.
+      const counts = new Map<string, number>();
+      for (const edge of inStand) {
+        const spec = sectionForPoint(this.spatial.region, forStand, edge.to);
+        if (spec) counts.set(spec.id, (counts.get(spec.id) ?? 0) + 1);
+      }
+      let best: SectionSpec | null = null;
+      let bestCount = 0;
+      for (const spec of forStand) {
+        const count = counts.get(spec.id) ?? 0;
+        if (count > bestCount) {
+          bestCount = count;
+          best = spec;
+        }
+      }
+      if (best) return best;
+    }
+    return forStand[Math.floor(forStand.length / 2)] ?? null;
+  }
+
+  /**
+   * Open a section: the one asked for, else the one through the last strand
+   * picked, else an opening plane in that stand.
+   */
+  openSection(standId?: number, sectionId?: string): { ok: boolean; message: string } {
+    if (!this.spatial) return { ok: false, message: 'No spatial colony in this fixture.' };
+    const browsable = this.spatial.browsableStandIds();
+    const targetStand = standId ?? this.spatial.reachedStandIds()[0] ?? this.spatial.originStandId;
+    if (!browsable.includes(targetStand)) {
+      return { ok: false, message: `Stand ${targetStand + 1} has not been reached or sensed.` };
+    }
+    const sections = browsableSections(this.spatial.region, browsable);
+    const forStand = sections.filter((spec) => spec.standId === targetStand);
+    if (forStand.length === 0) return { ok: false, message: 'That stand has no sections.' };
+    let spec: SectionSpec | null = sectionId
+      ? forStand.find((candidate) => candidate.id === sectionId) ?? null
+      : null;
+    if (!spec && this.lastStrandPick) {
+      const edge = this.spatial.colonyEdges().find((candidate) => candidate.key === this.lastStrandPick?.key);
+      if (edge) spec = sectionForPoint(this.spatial.region, forStand, edge.to);
+    }
+    if (!spec) spec = this.openingSection(targetStand, sections);
+    if (!spec) return { ok: false, message: 'No section there.' };
+
+    // Remember where the player stood below before moving, so flipping back
+    // returns to the same view of the same section.
+    if (this.section) this.sectionPoses.set(this.section.spec.id, this.stage.rig.capturePose());
+    // Descending is a real descent: keep the forest picture for the way back.
+    if (this.stage.rig.view === 'forest') this.captureForestContext();
+    this.section = { spec, sections };
+    this.sectionView?.setSection(spec);
+    this.refreshSectionClip();
+    this.snapToSection(spec);
+    if (this.selectedEdgeKey === null) {
+      this.selectedEdgeKey = this.spatial.colonyEdges()[0]?.key ?? null;
+    }
+    this.updateSectionStatus();
+    return { ok: true, message: this.sectionReadout() };
+  }
+
+  /** Where the forest was left, in absolute coordinates plus its selection. */
+  private captureForestContext(): void {
+    const pose = this.stage.rig.capturePose();
+    const region = this.sceneToRegion(pose.sceneX, pose.sceneZ);
+    this.forestContext = {
+      regionX: region.x,
+      regionY: region.y,
+      targetY: pose.sceneY,
+      distance: pose.distance,
+      azimuth: pose.azimuth,
+      elevation: pose.elevation,
+      autoFraming: pose.autoFraming,
+      standId: this.selectedStandId,
+      treeId: this.selectedStandId === null ? null : this.surfaces[this.selectedStandId]?.selectedId ?? null,
+      reveal: this.revealEnabled,
+    };
+  }
+
+  /** Put the section's camera on its plane, square on to it. */
+  private snapToSection(spec: SectionSpec): void {
+    const stored = this.sectionPoses.get(spec.id);
+    if (stored) {
+      this.stage.rig.restoreSectionPose(stored);
+      return;
+    }
+    if (!this.spatial) return;
+    const anchor = sectionAnchor(this.spatial.region, spec);
+    // Frame what this section actually holds. A stand is 136 units wide and the
+    // colony may occupy a third of that; fitting the stand would leave the
+    // network a speck, so the clipped strands decide the framing and the stand
+    // is only the fallback for an empty section.
+    const clip = clipEdges(this.spatial.region, spec, this.spatial.colonyEdges() as RevealEdge[]);
+    const alongOf = (point: { x: number; y: number; z: number }): number =>
+      spec.plane.along === 'x' ? point.x : point.y;
+    let alongMin = spec.alongFrom;
+    let alongMax = spec.alongTo;
+    let depth = spec.depthToCm / GRID.cmPerRow;
+    let depthFromCm = spec.depthFromCm;
+    let depthToCm = spec.depthToCm;
+    let middle = anchor;
+    if (clip.visible.length > 0) {
+      const alongs = clip.visible.flatMap((edge) => [alongOf(edge.from), alongOf(edge.to)]);
+      const depths = clip.visible.flatMap((edge) => [edge.depthFromCm, edge.depthToCm]);
+      // A minimum window keeps a thin band of strands from filling the screen
+      // edge to edge with a single line.
+      const alongSpan = Math.max(48, Math.max(...alongs) - Math.min(...alongs) + 16);
+      const depthSpan = Math.max(26, Math.max(...depths) - Math.min(...depths) + 12);
+      const alongMid0 = (Math.max(...alongs) + Math.min(...alongs)) / 2;
+      alongMin = alongMid0 - alongSpan / 2;
+      alongMax = alongMid0 + alongSpan / 2;
+      const depthMid = (Math.max(...depths) + Math.min(...depths)) / 2;
+      depthFromCm = Math.max(spec.depthFromCm, depthMid - depthSpan / 2);
+      depthToCm = Math.min(spec.depthToCm, depthMid + depthSpan / 2);
+      depth = (depthToCm - depthFromCm) / GRID.cmPerRow;
+      const midDepth = (Math.max(...depths) + Math.min(...depths)) / 2;
+      const point = spec.plane.along === 'x'
+        ? { x: alongMid0, y: spec.plane.fixed }
+        : { x: spec.plane.fixed, y: alongMid0 };
+      middle = {
+        x: point.x,
+        y: point.y,
+        z: this.region.heightAt(point.x, point.y) - midDepth / GRID.cmPerRow,
+      };
+    }
+    this.sectionView?.setWindow({ alongFrom: alongMin, alongTo: alongMax, depthFromCm, depthToCm });
+    const target = this.regionToScenePoint(middle);
+    const extent = Math.max(6, alongMax - alongMin);
+    const halfTan = Math.tan((this.stage.rig.camera.fov * Math.PI) / 180 / 2);
+    const aspect = Math.max(0.5, this.stage.rig.camera.aspect);
+    const distance = THREE.MathUtils.clamp(
+      Math.max(extent / (2 * halfTan * aspect), depth / (2 * halfTan)) * 1.35,
+      // Close enough to read a thin band of strands, far enough out that the
+      // camera never ends up inside the strands it is looking at.
+      90,
+      420
+    );
+    this.stage.rig.restoreSectionPose({
+      sceneX: target.x,
+      sceneY: target.y,
+      sceneZ: target.z,
+      distance,
+      // Square on to the plane: an east-west section is looked at from the
+      // north, a north-south one from the west.
+      azimuth: spec.plane.along === 'x' ? Math.PI : -Math.PI / 2,
+      elevation: 0.12,
+      autoFraming: false,
+    });
+  }
+
+  /** Previous / next section, within the family the player is looking at. */
+  stepSection(delta: number): { ok: boolean; message: string } {
+    if (!this.spatial || !this.section) return { ok: false, message: 'No section is open.' };
+    const next = stepSection(this.section.sections, this.section.spec, delta);
+    if (next.id === this.section.spec.id) {
+      return { ok: false, message: delta > 0 ? 'This is the last section.' : 'This is the first section.' };
+    }
+    this.sectionPoses.set(this.section.spec.id, this.stage.rig.capturePose());
+    this.section = { spec: next, sections: this.section.sections };
+    this.sectionPoses.delete(next.id);
+    this.sectionView?.setSection(next);
+    this.refreshSectionClip();
+    this.snapToSection(next);
+    this.updateSectionStatus();
+    return { ok: true, message: this.sectionReadout() };
+  }
+
+  /** Flip to the other family, keeping the same place in the stand. */
+  flipSectionAxis(): { ok: boolean; message: string } {
+    if (!this.spatial || !this.section) return { ok: false, message: 'No section is open.' };
+    const next = flipSection(this.spatial.region, this.section.sections, this.section.spec);
+    if (next.id === this.section.spec.id) return { ok: false, message: 'No section to flip to.' };
+    this.sectionPoses.set(this.section.spec.id, this.stage.rig.capturePose());
+    this.section = { spec: next, sections: this.section.sections };
+    this.sectionPoses.delete(next.id);
+    this.sectionView?.setSection(next);
+    this.refreshSectionClip();
+    this.snapToSection(next);
+    this.updateSectionStatus();
+    return { ok: true, message: this.sectionReadout() };
+  }
+
+  /**
+   * Follow the selected strand into the section that holds its far end.
+   *
+   * Works in either direction: a strand that crosses the seam can be followed
+   * from the parent's stand into the child's, or back again.
+   */
+  followConnection(): { ok: boolean; message: string } {
+    if (!this.spatial || !this.section) return { ok: false, message: 'No section is open.' };
+    const edges = this.spatial.colonyEdges();
+    const edge = edges.find((candidate) => candidate.key === this.selectedEdgeKey) ?? edges[0];
+    if (!edge) return { ok: false, message: 'The colony has no strands yet.' };
+    const fromStand = this.section.spec.standId;
+    const targetStand = edge.standId === fromStand ? edge.parentStandId : edge.standId;
+    this.selectedEdgeKey = edge.key;
+    const spec = this.sectionHolding(edge as RevealEdge, targetStand);
+    const result = this.openSection(targetStand, spec?.id);
+    if (!result.ok) return result;
+    return { ok: true, message: `Following the strand into stand ${targetStand + 1}. ${this.sectionReadout()}` };
+  }
+
+  /** The section of a stand that holds one end of a strand. */
+  private sectionHolding(edge: RevealEdge, standId: number): SectionSpec | null {
+    if (!this.spatial || !this.section) return null;
+    const point = edge.standId === standId ? edge.to : edge.from;
+    const forStand = this.section.sections.filter((spec) => spec.standId === standId);
+    return sectionForPoint(this.spatial.region, forStand, point);
+  }
+
+  /** Back to the forest, exactly where and on what the player left it. */
+  returnToForest(): { ok: boolean; message: string } {
+    if (!this.forestContext) {
+      this.sectionView?.setSection(null);
+      return { ok: false, message: 'Nothing to return to.' };
+    }
+    if (this.section) this.sectionPoses.set(this.section.spec.id, this.stage.rig.capturePose());
+    const context = this.forestContext;
+    const scene = this.regionToScene(context.regionX, context.regionY);
+    this.stage.rig.restoreForestPose({
+      sceneX: scene.x + this.sceneShift.x,
+      sceneY: context.targetY,
+      sceneZ: scene.z + this.sceneShift.z,
+      distance: context.distance,
+      azimuth: context.azimuth,
+      elevation: context.elevation,
+      autoFraming: context.autoFraming,
+    });
+    // Selection and reveal state come back with the picture.
+    this.selectedStandId = context.standId;
+    for (const surface of this.surfaces) surface.selectedId = context.treeId;
+    this.setReveal(context.reveal);
+    this.updateTreeNote();
+    return { ok: true, message: `Back above stand ${(context.standId ?? this.match.activeStandId) + 1}.` };
+  }
+
+  /** Emerge over the stand being browsed, keeping its section remembered. */
+  surfaceHere(): { ok: boolean; message: string } {
+    if (!this.spatial || !this.section) return { ok: false, message: 'No section is open.' };
+    const standId = this.section.spec.standId;
+    const surface = this.surfaces[standId];
+    if (surface) {
+      this.selectedStandId = standId;
+      this.stage.rig.snapForest(
+        surface.group.position.x,
+        surface.group.position.z - TILE_SIZE / 2,
+        Math.max(160, this.stage.rig.goalDistance)
+      );
+    }
+    this.sectionView?.setSection(null);
+    return { ok: true, message: `Above stand ${standId + 1}. Its section stays remembered.` };
+  }
+
+  private updateSectionStatus(): void {
+    if (!this.spatial || !this.section) return;
+    const status = document.querySelector('#view-status');
+    if (status) status.textContent = this.sectionReadout();
+  }
+
+  /**
+   * What a section replaces: the match's own underground views, the region's
+   * surfaces and its water. They belong to the stand above, not to the plane
+   * being inspected, so they leave while a section is open.
+   */
+  private sectionHiddenGroups(): THREE.Object3D[] {
+    return [
+      this.forest.group,
+      this.living.group,
+      this.groundwater.group,
+      this.playerMesh.group,
+      this.rivalMesh.group,
+      this.playerMotes.points,
+      this.rivalMotes.points,
+      this.stream.group,
+      this.soil.group,
+      ...this.surfaces.filter(Boolean).map((surface) => surface.group),
+    ];
+  }
+
+  /** One line naming the section and what is in it. */
+  sectionReadout(): string {
+    if (!this.spatial || !this.section) return 'No section';
+    const label = sectionLabel(this.spatial.region, this.section.spec, COMMUNITY_LABEL);
+    const order = sectionOrder(this.section.sections, this.section.spec);
+    const clip = clipEdges(this.spatial.region, this.section.spec, this.spatial.colonyEdges() as RevealEdge[]);
+    const empty = clip.visible.length === 0 ? ' \u00b7 no network in this section' : '';
+    return `${label} \u00b7 ${order.index + 1} of ${order.count} \u00b7 ${clip.visible.length} strands${empty}`;
+  }
+
+  /** What the reveal is drawing, and what a click last landed on. */
+  revealReport(): {
+    enabled: boolean;
+    strands: number;
+    draws: number;
+    slice: string | null;
+    pick: RevealPickInfo | null;
+  } {
+    const report = this.reveal?.report() ?? { strands: 0, draws: 0, slice: null };
+    return {
+      enabled: this.revealEnabled,
+      strands: report.strands,
+      draws: report.draws,
+      slice: report.slice,
+      pick: this.lastStrandPick,
+    };
+  }
+
+  sectionReport(): {
+    open: boolean;
+    id: string | null;
+    strands: number;
+    marks: number;
+    label: string;
+    edge: string | null;
+  } {
+    const report = this.sectionView?.report() ?? { section: null, strands: 0, marks: 0, visible: false };
+    return {
+      open: this.section !== null,
+      id: report.section,
+      strands: report.strands,
+      marks: report.marks,
+      label: this.sectionReadout(),
+      edge: this.selectedEdgeKey,
+    };
+  }
+
+  /**
+   * One strand's coordinates in both views, for the checks that prove the
+   * projection and the section are the same edge.
+   */
+  strandCheck(key: string): {
+    projected: [{ x: number; y: number; z: number }, { x: number; y: number; z: number }] | null;
+    section: { from: { x: number; y: number; z: number }; to: { x: number; y: number; z: number } } | null;
+    depthCm: number | null;
+    standId: number | null;
+    parentStandId: number | null;
+  } {
+    const empty = { projected: null, section: null, depthCm: null, standId: null, parentStandId: null };
+    if (!this.spatial) return empty;
+    const edge = this.spatial.colonyEdges().find((candidate) => candidate.key === key);
+    if (!edge) return empty;
+    const strand = this.reveal?.strandFor(key) ?? null;
+    const clip = this.section
+      ? clipEdges(this.spatial.region, this.section.spec, [edge as RevealEdge]).visible[0] ?? null
+      : null;
+    return {
+      projected: strand
+        ? [
+            strand.points[0] as { x: number; y: number; z: number },
+            strand.points[strand.points.length - 1] as { x: number; y: number; z: number },
+          ]
+        : null,
+      section: clip ? { from: clip.from, to: clip.to } : null,
+      depthCm: strand ? strand.depthsCm[Math.floor(strand.depthsCm.length / 2)] ?? null : null,
+      standId: edge.standId,
+      parentStandId: edge.parentStandId,
+    };
+  }
+
+  /**
+   * A click in the forest among the projected strands.
+   *
+   * Picking is a screen-space search over the projection, never a raycast
+   * against whichever line mesh happens to be in front, and a stack of strands
+   * under one click is reported rather than guessed at.
+   */
+  private pickStrandAt(clientX: number, clientY: number): boolean {
+    if (!this.reveal || !this.revealEnabled || !this.spatial) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = {
+      x: ((clientX - rect.left) / rect.width) * 2 - 1,
+      y: 1 - ((clientY - rect.top) / rect.height) * 2,
+    };
+    const camera = this.stage.rig.camera;
+    camera.updateMatrixWorld();
+    const project = (point: { x: number; y: number; z: number }) => {
+      const scene = this.regionToScenePoint(point);
+      // The reveal is grouped and rebased like the stands, so its own group
+      // position is the shift the projection is actually drawn at.
+      scene.x += this.reveal?.group.position.x ?? 0;
+      scene.z += this.reveal?.group.position.z ?? 0;
+      const projected = scene.clone().project(camera);
+      if (projected.z > 1) return null;
+      return { x: projected.x, y: projected.y };
+    };
+    const pick = this.reveal.pick(project, ndc, REVEAL_PICK_RADIUS);
+    if (!pick) {
+      this.lastStrandPick = null;
+      return false;
+    }
+    this.lastStrandPick = {
+      key: pick.key,
+      child: pick.child,
+      parent: pick.parent,
+      depthCm: pick.depthCm,
+      alternatives: pick.alternatives,
+      connected: pick.connected,
+    };
+    this.selectedEdgeKey = pick.key;
+    // Clicking a projected strand opens the exact section through it.
+    const edge = this.spatial.colonyEdges().find((candidate) => candidate.key === pick.key);
+    if (edge) {
+      const spec = this.sectionHolding(edge as RevealEdge, edge.standId);
+      this.openSection(edge.standId, spec?.id);
+    }
+    return true;
   }
 
   /**
@@ -697,6 +1257,14 @@ export class Game {
       reduced: !this.ambientMotion,
     });
     this.dressing.refine(this.stage.rig.camera, dt);
+    // The reveal and the section follow the same fold and clock, and are drawn
+    // in the region's own coordinates so a rebase moves them with the ground.
+    if (this.spatial) {
+      const camera = this.stage.rig.camera;
+      camera.updateMatrixWorld();
+      this.reveal?.update(camera.position.distanceTo(this.stage.rig.target), blend, !this.ambientMotion);
+      this.sectionView?.update(blend, !this.ambientMotion, elapsed);
+    }
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
@@ -738,6 +1306,18 @@ export class Game {
     // Last word on the overlays: the views above write their own opacities, so
     // the fade is applied after them and nothing is left half lit.
     this.overlays.apply(overlay);
+    // And the last word on what a section replaces. The match's own stand views
+    // and the region's surfaces belong to the ground above, not to the plane
+    // being inspected, so they leave while a section is open. This runs after
+    // every view's own update, which is the only way it sticks.
+    const sectionMode = this.section !== null && this.stage.rig.view === 'underground';
+    if (sectionMode) {
+      for (const group of this.sectionHiddenGroups()) group.visible = false;
+      this.sectionHidLocalViews = true;
+    } else if (this.sectionHidLocalViews) {
+      this.sectionHidLocalViews = false;
+      for (const group of this.sectionHiddenGroups()) group.visible = true;
+    }
     if (draw) this.stage.render(dt);
     this.markerClock += dt;
     if (this.markerClock > 0.1) {
@@ -829,6 +1409,12 @@ export class Game {
       if (this.survey.open) this.refreshSurvey();
     });
     document.querySelector('#survey-close')!.addEventListener('click', () => this.survey.hide());
+    document.querySelector('#forest-reveal')?.addEventListener('click', () => {
+      const on = this.toggleReveal();
+      this.ui.setNote(on
+        ? 'Network revealed. Click a projected strand to open the section through it.'
+        : 'Network hidden. The forest is unchanged underneath.');
+    });
     this.survey.onChoose((id) => {
       this.selectStand(id);
       this.refreshStandOptions();
@@ -879,6 +1465,21 @@ export class Game {
   }
 
   private descend(): void {
+    // With a spatial colony attached, descending is a descent into its real
+    // sections rather than into the match's own stand transect: the general
+    // action reopens the last section, and any other section can be chosen by
+    // name or by clicking a projected strand.
+    if (this.spatial) {
+      const reopen = this.section
+        ? this.openSection(this.section.spec.standId, this.section.spec.id)
+        : this.openSection();
+      if (reopen.ok) {
+        this.syncViewUI();
+        return;
+      }
+      this.ui.setNote(reopen.message);
+      return;
+    }
     if (this.selectedStandId !== null && this.selectedStandId !== this.enterableStand) {
       if (!this.match.stands[this.selectedStandId]?.sim.hasColony) {
         this.setView('forest');
@@ -964,6 +1565,12 @@ export class Game {
     // The scenery belongs to the region too: shifting beats rebuilding, and the
     // decorations keep their identities across a stand change.
     this.dressing.group.position.add(new THREE.Vector3(dx, 0, dz));
+    // The reveal and the section follow the same landscape: they are drawn in
+    // region coordinates, so one shift keeps them where the ground is.
+    this.sceneShift.x += dx;
+    this.sceneShift.z += dz;
+    this.reveal?.group.position.add(new THREE.Vector3(dx, 0, dz));
+    this.sectionView?.group.position.add(new THREE.Vector3(dx, 0, dz));
     this.stage.rig.rebaseForest(dx, dz);
     this.soil = new SoilMesh(this.sim.world);
     this.forest = new ForestView(this.sim.world);
@@ -1169,7 +1776,14 @@ export class Game {
       this.lastX = event.clientX;
       this.lastY = event.clientY;
       this.shiftDown = event.shiftKey;
-      canvas.setPointerCapture(event.pointerId);
+      // A capture that cannot be taken is not a reason to lose the press: the
+      // drag ends at pointerup either way, and a synthetic or stale pointer id
+      // would otherwise throw out of the handler and leave the press stuck.
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        /* capture unavailable for this pointer */
+      }
     });
 
     canvas.addEventListener('pointermove', (event) => {
@@ -1201,7 +1815,17 @@ export class Game {
       }
       // A drag is a camera move; a tap is an order.
       if (this.pointerMoved < 6 && !this.stage.rig.transitioning) {
-        if (this.stage.rig.view === 'forest') this.pickTree(event.clientX, event.clientY);
+        if (this.stage.rig.view === 'forest') {
+          // Three unambiguous modes, in order: a crown the player can see wins
+          // outright; then, while the reveal is on, a projected strand; then
+          // the ground, where the nearest tree is selected as before. A strand
+          // lies on the terrain, so without this order the floor would always
+          // win and the reveal could never be clicked.
+          if (!this.pickCrown(event.clientX, event.clientY) &&
+              !(this.revealEnabled && this.pickStrandAt(event.clientX, event.clientY))) {
+            this.pickGround(event.clientX, event.clientY);
+          }
+        }
         else this.applyOrderAt(event.clientX, event.clientY);
       }
     };
@@ -1326,15 +1950,32 @@ export class Game {
     return this.stage.rig.view === 'underground';
   }
 
-  private pickTree(clientX: number, clientY: number): void {
+  private aimAt(clientX: number, clientY: number): void {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.set((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2);
     this.raycaster.setFromCamera(this.pointer, this.stage.rig.camera);
+  }
+
+  /** A click on a visible crown selects that tree and nothing else. */
+  private pickCrown(clientX: number, clientY: number): boolean {
+    this.aimAt(clientX, clientY);
+    const crownProxies = this.surfaces
+      .flatMap((surface) => surface.pickTargets)
+      .filter((mesh) => mesh.userData.treeId !== undefined);
+    const hit = this.raycaster.intersectObjects(crownProxies, false)[0];
+    if (!hit) return false;
+    this.selectTree(hit.object.userData.standId as number, hit.object.userData.treeId as number);
+    return true;
+  }
+
+  /** A click on the ground falls back to the nearest tree of that stand. */
+  private pickGround(clientX: number, clientY: number): boolean {
+    this.aimAt(clientX, clientY);
     const intersections = this.raycaster.intersectObjects(this.surfaces.flatMap((surface) => surface.pickTargets), false);
     const treeHit = intersections.find(hit => hit.object.userData.treeId !== undefined);
     if (treeHit) {
       this.selectTree(treeHit.object.userData.standId as number, treeHit.object.userData.treeId as number);
-      return;
+      return true;
     }
     else if (intersections[0]) {
       const point = intersections[0].point;
@@ -1342,8 +1983,12 @@ export class Game {
       const standId = intersections[0].object.userData.standId as number | undefined;
       const surface = standId === undefined ? this.surface : this.surfaces[standId];
       const tree = surface?.nearestTree(point.x - surface.group.position.x, point.z - surface.group.position.z);
-      if (tree && surface) this.selectTree(surface.standId, tree.id);
+      if (tree && surface) {
+        this.selectTree(surface.standId, tree.id);
+        return true;
+      }
     }
+    return false;
   }
 
   private restart(): void {
@@ -1368,4 +2013,61 @@ interface LabCrossingMatch {
   orderAcross(): { ok: boolean; message: string };
   report(): string[];
   readonly time: number;
+}
+
+/**
+ * The crossing fixture's own contract, as the forest views are allowed to see
+ * it.
+ *
+ * The class itself is imported on demand by the bench, so the spatial
+ * simulation stays out of the ordinary bundle; the reveal and the sections only
+ * ever need to read its graph.
+ */
+interface SpatialFixture {
+  readonly region: Region;
+  readonly originStandId: number;
+  readonly time: number;
+  colonyEdges(): Array<{
+    key: string;
+    parent: number;
+    child: number;
+    from: { x: number; y: number; z: number };
+    to: { x: number; y: number; z: number };
+    thickness: number;
+    reinforced: boolean;
+    connected: boolean;
+    standId: number;
+    parentStandId: number;
+  }>;
+  reachedStandIds(): number[];
+  browsableStandIds(): number[];
+  standFrame(standId: number): { originX: number; originY: number; size: number } | null;
+  orderAcross(): { ok: boolean; message: string };
+  step(dt: number): void;
+  report(): string[];
+  hash(): string;
+}
+
+/** Where the player left the forest, in absolute regional coordinates. */
+interface ForestContext {
+  regionX: number;
+  regionY: number;
+  targetY: number;
+  distance: number;
+  azimuth: number;
+  elevation: number;
+  autoFraming: boolean;
+  standId: number | null;
+  treeId: number | null;
+  reveal: boolean;
+}
+
+/** What a click on a projected strand selected. */
+interface RevealPickInfo {
+  key: string;
+  child: number;
+  parent: number;
+  depthCm: number;
+  alternatives: number;
+  connected: boolean;
 }

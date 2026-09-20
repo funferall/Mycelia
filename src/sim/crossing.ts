@@ -58,6 +58,7 @@ import {
 import {
   elevationAtDepthCm,
   hashParts,
+  neighbourStand,
   planePoint,
   rootTipSectionPosition,
   standFrameOf,
@@ -114,6 +115,24 @@ export interface ColonyView {
   readonly id: ColonyId;
   readonly net: Network;
   readonly view: CrossingWorldView;
+}
+
+/**
+ * One strand of the colony, as the region sees it: a parent and a child node
+ * with real XYZ endpoints. Sections and the forest reveal both read the body
+ * through this, so a drawn strand and a simulated strand cannot disagree.
+ */
+export interface ColonyEdge {
+  readonly key: string;
+  readonly parent: number;
+  readonly child: number;
+  readonly from: Vec3;
+  readonly to: Vec3;
+  readonly thickness: number;
+  readonly reinforced: boolean;
+  readonly connected: boolean;
+  readonly standId: StandId;
+  readonly parentStandId: StandId;
 }
 
 const DEFAULT_KIT = { carbon: 260, water: 8, nitrogen: 5 };
@@ -363,6 +382,63 @@ export class CrossingMatch {
 
   nodesInStand(standId: StandId): HyphaNode[] {
     return this.colony.nodes.filter((node) => node.alive && node.standId === standId);
+  }
+
+  /**
+   * Every strand of the colony, in stable node order, with the real XYZ
+   * endpoints a section or a surface projection has to agree with.
+   */
+  colonyEdges(): ColonyEdge[] {
+    const edges: ColonyEdge[] = [];
+    for (const node of this.colony.nodes) {
+      if (node.parent < 0) continue;
+      const parent = this.colony.nodes[node.parent];
+      if (!parent) continue;
+      edges.push({
+        key: `${this.colonyId}:${parent.id}-${node.id}`,
+        parent: parent.id,
+        child: node.id,
+        from: this.nodePosition(parent),
+        to: this.nodePosition(node),
+        thickness: node.thickness,
+        reinforced: node.reinforced,
+        // A strand is "connected" only if both ends are: a cut parent leaves a
+        // remnant standing, and the reveal has to be able to say so.
+        connected: node.alive && parent.alive && node.connected && parent.connected,
+        standId: node.standId < 0 ? this.originStandId : node.standId,
+        parentStandId: parent.standId < 0 ? this.originStandId : parent.standId,
+      });
+    }
+    return edges;
+  }
+
+  /** Stands the colony currently stands in. */
+  reachedStandIds(): StandId[] {
+    const ids = new Set<StandId>();
+    for (const node of this.colony.nodes) {
+      if (!node.alive) continue;
+      if (node.standId >= 0) ids.add(node.standId);
+    }
+    ids.add(this.originStandId);
+    return [...ids].sort((a, b) => a - b);
+  }
+
+  /**
+   * Stands a player may browse: the ones the colony has reached, plus their
+   * orthogonal neighbours. Undiscovered regional soil is not opened up by
+   * walking into a section.
+   */
+  browsableStandIds(): StandId[] {
+    const ids = new Set<StandId>(this.reachedStandIds());
+    for (const standId of [...ids]) {
+      const frame = standFrameOf(this.region, standId);
+      if (!frame) continue;
+      for (const side of ['north', 'east', 'south', 'west'] as const) {
+        const neighbour = neighbourStand(this.region, frame, side);
+        if (neighbour !== null) ids.add(neighbour);
+      }
+    }
+    return [...ids].sort((a, b) => a - b);
   }
 
   /** Graph edges that genuinely cross a seam, derived from parent links. */

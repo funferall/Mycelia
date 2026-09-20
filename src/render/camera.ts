@@ -38,6 +38,24 @@ export interface CameraBounds {
   maxAzimuth: number;
 }
 
+/**
+ * A camera pose, in the frame the rig is currently working in.
+ *
+ * The caller stores these in *absolute regional* terms (see `Game`), so a stand
+ * change that rebases the landscape cannot shift a saved pose twice: the rig
+ * only ever sees render-space numbers for the frame in play right now.
+ */
+export interface CameraPose {
+  readonly sceneX: number;
+  readonly sceneY: number;
+  readonly sceneZ: number;
+  readonly distance: number;
+  readonly azimuth: number;
+  readonly elevation: number;
+  /** True when the pose was still the viewport's own default framing. */
+  readonly autoFraming: boolean;
+}
+
 export class CameraRig {
   view: WorldView = 'underground';
   surfaceBlend = 0;
@@ -330,6 +348,55 @@ export class CameraRig {
     this.autoByView.forest = false;
     this.goal.target.set(x, 69, z);
     this.goal.distance = distance;
+    this.snap();
+  }
+
+  /** The pose the camera holds right now, ready to be stored. */
+  capturePose(): CameraPose {
+    // Mid-crossing the live pose is an interpolation, so the pose that means
+    // "this view" is the goal the crossing is heading for.
+    const source = this.crossing ? this.goal : this;
+    return {
+      sceneX: source.target.x,
+      sceneY: source.target.y,
+      sceneZ: source.target.z,
+      distance: source.distance,
+      azimuth: source.azimuth,
+      elevation: source.elevation,
+      autoFraming: this.autoByView[this.view],
+    };
+  }
+
+  /**
+   * Put the forest back on a stored pose.
+   *
+   * A pose that was still auto-framed is *re-derived* from the current viewport
+   * instead of restored numerically, which is what keeps a window that changed
+   * shape from returning to a framing that no longer fits it.
+   */
+  restoreForestPose(pose: CameraPose): void {
+    this.setView('forest', true);
+    this.autoByView.forest = pose.autoFraming;
+    if (pose.autoFraming) {
+      this.applyFraming();
+      this.snap();
+      return;
+    }
+    this.goal.target.set(pose.sceneX, pose.sceneY, pose.sceneZ);
+    this.goal.distance = pose.distance;
+    this.goal.azimuth = pose.azimuth;
+    this.goal.elevation = pose.elevation;
+    this.snap();
+  }
+
+  /** Snap the underground camera onto a stored section pose. */
+  restoreSectionPose(pose: CameraPose): void {
+    this.setView('underground', true);
+    this.autoByView.underground = false;
+    this.goal.target.set(pose.sceneX, pose.sceneY, pose.sceneZ);
+    this.goal.distance = pose.distance;
+    this.goal.azimuth = pose.azimuth;
+    this.goal.elevation = pose.elevation;
     this.snap();
   }
 
