@@ -356,9 +356,11 @@ within that environment without replacing it.
   living/dead variants, preserve the living model's scale rather than scaling
   the dead tree's remaining branches up to the former leafy height.
 
-The manifest is art metadata, not an automatic runtime registry. LOD selection,
-dead-variant switching, anchor consumption, foliage instancing and authored wind
-clips require loader/render support; see `PROJECT_STATUS.md` for their status.
+The manifest is art metadata, not a scene graph: the loader reads it for an
+asset's tiers and the renderer selects a tier from a tree's projected size on
+screen. Dead-variant switching, anchor consumption, foliage instancing and
+authored wind clips still require runtime support; see `PROJECT_STATUS.md` for
+their status.
 
 ### What the game adds to a model
 

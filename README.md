@@ -129,12 +129,14 @@ npm run test:assets
 This writes the assets and manifest to `public/assets/`, plus tree, LOD and prop
 preview sheets to ignored `design/shots/`. `--output <directory>` builds an
 isolated copy. The six existing game paths use the new art; additional props,
-dead variants and lower LODs await runtime integration. The asset contract is
-in `DESIGN.md` and remaining integration work is in `PROJECT_STATUS.md`.
+dead variants and crown anchors await runtime integration. Each tree selects its
+LOD tier from its own projected size on screen. The asset contract is in
+`DESIGN.md` and remaining integration work is in `PROJECT_STATUS.md`.
 
 ```bash
 npm test            # headless simulation regression
 node tools/test-region.mjs  # the regional world: terrain, water, spores
+npm run test:lod    # projected-size LOD selection: bands, hysteresis
 npm run test:view   # browser checks for the forest <-> underground crossing
 npm run test:journey # plays a whole match through the printed controls
 node tools/shoot.mjs \

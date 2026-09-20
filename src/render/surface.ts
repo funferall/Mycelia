@@ -5,6 +5,7 @@ import type { Tree, World } from '../sim/world';
 import { mulberry32 } from '../sim/rng';
 import { makeGlowTexture } from './textures';
 import { type AssetId, type AssetInstance, type AssetLibrary } from './assets';
+import { LOD_TIERS, projectedHeightFraction, selectLodTier } from './lod';
 import type { QualityPreset } from './quality';
 
 const FLOOR = GRID.rows / 2;
@@ -23,6 +24,17 @@ function disposeBody(root: THREE.Object3D): void {
     const mesh = child as THREE.Mesh;
     if (mesh.isMesh) mesh.geometry?.dispose();
   });
+}
+
+/**
+ * Release a placed model's own materials.
+ *
+ * Materials are cloned per instance, so they belong to the instance; geometry
+ * is shared with every other copy of that tier and must not be disposed here.
+ */
+function releaseInstance(instance: AssetInstance): void {
+  for (const tint of instance.foliage) tint.material.dispose();
+  for (const tint of instance.wood) tint.material.dispose();
 }
 
 /**
@@ -62,6 +74,11 @@ interface StandingTree {
   material: THREE.MeshStandardMaterial;
   /** An authored model, once one is loaded for this species. */
   model: AssetInstance | null;
+  /** The asset the model comes from, once one has been asked for. */
+  assetId: AssetId | null;
+  /** The tier this tree wears, and the projected size that chose it. */
+  lod: number;
+  projected: number;
   leafCount: number;
   home: THREE.Vector3;
   initialMaturity: number;
@@ -78,6 +95,9 @@ export class SurfaceForest {
   private readonly rain: THREE.LineSegments;
   private readonly rainPositions = new Float32Array(360 * 6);
   private readonly dummy = new THREE.Object3D();
+  /** Scratch vectors for the per-tree level-of-detail pass. */
+  private readonly lodPoint = new THREE.Vector3();
+  private readonly lodCamera = new THREE.Vector3();
   private readonly floorMaterial: THREE.MeshStandardMaterial;
   private readonly selection: THREE.Mesh;
   /** Baked tree shadows, kept in one group so the QA preset can omit them. */
@@ -227,7 +247,19 @@ export class SurfaceForest {
     group.add(pick);
     this.pickTargets.push(pick);
     this.group.add(group);
-    const entry: StandingTree = { tree, group, leaves, material, model: null, leafCount: leaves.count, home, initialMaturity: tree.maturity };
+    const entry: StandingTree = {
+      tree,
+      group,
+      leaves,
+      material,
+      model: null,
+      assetId: null,
+      lod: 0,
+      projected: 0,
+      leafCount: leaves.count,
+      home,
+      initialMaturity: tree.maturity,
+    };
     this.trees.push(entry);
     // If art is already loaded, the stand opens with it rather than swapping a
     // frame later in front of the player.
@@ -257,20 +289,38 @@ export class SurfaceForest {
    * Scale comes from the simulation's own tree height, which is what keeps art
    * and simulation the same picture across both views.
    */
-  private dress(entry: StandingTree): void {
-    if (!this.assets || entry.model) return;
+  private dress(entry: StandingTree, tier = entry.lod): void {
+    if (!this.assets) return;
     const id = TREE_ASSET[entry.tree.species];
-    const model = id
-      ? this.assets.instance(id, entry.tree.height * (0.7 + entry.tree.maturity * 0.5))
-      : null;
+    if (!id) return;
+    entry.assetId = id;
+    // Resolve before cloning: a request that would fall back to the tier
+    // already on screen must not build and throw away a copy of it.
+    const available = this.assets.resolveTier(id, tier);
+    if (available === null) return;
+    if (entry.model && entry.model.tier === available) return;
+    const model = this.assets.instance(id, entry.tree.height * (0.7 + entry.tree.maturity * 0.5), available);
     if (!model) return;
-    const body = entry.group.children.find((child) => child.userData.proceduralBody);
-    if (body) {
-      entry.group.remove(body);
-      disposeBody(body);
+    // A tier swap changes geometry only: the placed copy keeps the exact
+    // ground contact, scale and rotation it already had, so refining a tree
+    // never moves it or pops its roots out of the soil.
+    const previous = entry.model;
+    if (previous) {
+      model.object.position.copy(previous.object.position);
+      model.object.quaternion.copy(previous.object.quaternion);
+      model.object.scale.copy(previous.object.scale);
+      entry.group.remove(previous.object);
+      releaseInstance(previous);
+    } else {
+      const body = entry.group.children.find((child) => child.userData.proceduralBody);
+      if (body) {
+        entry.group.remove(body);
+        disposeBody(body);
+      }
     }
     entry.group.add(model.object);
     entry.model = model;
+    entry.lod = model.tier;
   }
 
   /**
@@ -281,11 +331,83 @@ export class SurfaceForest {
    */
   adoptAssets(): void {
     if (!this.assets) return;
-    for (const entry of this.trees) this.dress(entry);
+    for (const entry of this.trees) this.dress(entry, entry.lod);
     if (!this.propsPlaced) {
       this.propsPlaced = true;
       this.addProps();
     }
+  }
+
+  /**
+   * Give every tree the tier its own size on screen deserves.
+   *
+   * Projected height is a fraction of the viewport rather than a pixel count,
+   * so the fast QA preset's half-resolution buffer does not change which meshes
+   * load. The hysteresis itself lives in `selectLodTier`, where it is testable
+   * without a renderer.
+   */
+  updateLod(camera: THREE.PerspectiveCamera): void {
+    if (!this.assets) return;
+    camera.updateMatrixWorld();
+    camera.getWorldPosition(this.lodCamera);
+    for (const entry of this.trees) {
+      const id = entry.assetId ?? TREE_ASSET[entry.tree.species];
+      if (!id) continue;
+      entry.assetId = id;
+      const height = entry.tree.height * (0.7 + entry.tree.maturity * 0.5);
+      entry.group.updateWorldMatrix(true, false);
+      entry.group.getWorldPosition(this.lodPoint);
+      const distance = Math.hypot(
+        this.lodPoint.x - this.lodCamera.x,
+        this.lodPoint.y + height / 2 - this.lodCamera.y,
+        this.lodPoint.z - this.lodCamera.z
+      );
+      const projected = projectedHeightFraction(height, distance, camera.fov);
+      entry.projected = projected;
+      const tier = selectLodTier(projected, entry.lod);
+      if (entry.model && entry.model.tier === tier) continue;
+      this.dress(entry, tier);
+      // If the tier is not in the library yet, ask for it and keep drawing the
+      // nearest one that is until it lands.
+      if (!entry.model || entry.model.tier !== tier) this.assets.request(id, tier);
+    }
+  }
+
+  /** How many trees currently wear each tier, finest first. */
+  lodTiers(): number[] {
+    const counts = new Array<number>(LOD_TIERS).fill(0);
+    for (const entry of this.trees) {
+      if (!entry.model) continue;
+      counts[entry.model.tier] = (counts[entry.model.tier] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * Where one tree's authored model sits, for the browser checks that prove a
+   * tier swap changes geometry and nothing else. Returns null while the tree is
+   * still wearing the procedural body.
+   */
+  modelRecord(treeId: number): {
+    tier: number;
+    assetId: AssetId;
+    position: number[];
+    quaternion: number[];
+    scale: number[];
+    world: number[];
+  } | null {
+    const entry = this.trees.find((candidate) => candidate.tree.id === treeId);
+    if (!entry?.model) return null;
+    entry.model.object.updateWorldMatrix(true, false);
+    entry.model.object.getWorldPosition(this.lodPoint);
+    return {
+      tier: entry.model.tier,
+      assetId: entry.model.id,
+      position: entry.model.object.position.toArray(),
+      quaternion: entry.model.object.quaternion.toArray(),
+      scale: entry.model.object.scale.toArray(),
+      world: this.lodPoint.toArray(),
+    };
   }
 
   /** Apply the rendering preset's presentation-only switches. */

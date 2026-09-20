@@ -365,15 +365,35 @@ export class Game {
     bloom: boolean;
     stands: number;
     trees: number;
+    /** Authored tiers in use across the region, finest first. */
+    lodTiers: number[];
+    /** Trees wearing an authored model, and the tier files that have loaded. */
+    lodDressed: number;
+    assets: { ready: boolean; loaded: number; expected: number; pending: number; failures: number };
     selectedStandId: number | null;
     selectedTreeId: number | null;
     simSeconds: number;
   } {
     const surfaces = this.surfaces.filter((surface): surface is SurfaceForest => Boolean(surface));
+    const lodTiers = [0, 0, 0];
+    for (const surface of surfaces) {
+      surface.lodTiers().forEach((count, tier) => {
+        lodTiers[tier] = (lodTiers[tier] ?? 0) + count;
+      });
+    }
     return {
       ...this.stage.qualityReport(),
       stands: surfaces.length,
       trees: surfaces.reduce((total, surface) => total + surface.trees.length, 0),
+      lodTiers,
+      lodDressed: lodTiers.reduce((total, count) => total + count, 0),
+      assets: {
+        ready: this.assets.ready,
+        loaded: this.assets.size,
+        expected: this.assets.expected,
+        pending: this.assets.loading,
+        failures: this.assets.failures.length,
+      },
       selectedStandId: this.selectedStandId,
       selectedTreeId: this.surfaces[this.region.foundingStand]?.selectedId ?? null,
       simSeconds: Math.round(this.sim.time),
@@ -427,6 +447,9 @@ export class Game {
     for (const surface of this.surfaces) {
       if (!surface) continue;
       surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
+      // Which authored tier each tree wears follows its size on screen, so the
+      // region can draw nine stands without every one of them paying LOD0.
+      surface.updateLod(this.stage.rig.camera);
     }
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;

@@ -977,6 +977,144 @@ function movement(series) {
   await contexts.pop().close();
 }
 
+// ---------------------------------------------------------------------------
+// 8. Every tree picks the authored tier its own size on screen deserves
+// ---------------------------------------------------------------------------
+if (!smoke) {
+  const page = await open('/?seed=raven-wood&view=forest', { width: 1366, height: 768 });
+  const twoFrames = () =>
+    page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    );
+
+  // The check is about which mesh a tree wears, not about how fast the network
+  // is, so wait until every tier the manifest declares has actually loaded.
+  await page
+    .waitForFunction(
+      () => {
+        const assets = window.mycelia?.game?.renderReport?.()?.assets;
+        return Boolean(assets) && assets.ready && assets.pending === 0 && assets.loaded === assets.expected;
+      },
+      null,
+      { timeout: 180000, polling: 250 }
+    )
+    .catch(() => {});
+  const loaded = (await readRenderReport(page))?.assets;
+  check(
+    'every tier of the authored pack declared in the manifest has loaded',
+    loaded && loaded.ready && loaded.pending === 0 && loaded.loaded === loaded.expected && loaded.failures === 0,
+    JSON.stringify(loaded ?? null)
+  );
+
+  /**
+   * Every tree's tier and placement, keyed by stand and simulation tree ID.
+   * These keys are the mapping a later instancing pass has to preserve.
+   */
+  const snapshot = () =>
+    page.evaluate(() => {
+      const game = window.mycelia.game;
+      const surfaces = game.regionSurfaces.filter(Boolean);
+      const records = {};
+      let trees = 0;
+      for (const surface of surfaces) {
+        for (const entry of surface.trees) {
+          trees++;
+          const record = surface.modelRecord(entry.tree.id);
+          if (record) records[`${surface.standId}:${entry.tree.id}`] = record;
+        }
+      }
+      return { report: game.renderReport(), records, trees, stands: surfaces.length };
+    });
+
+  const overview = await snapshot();
+  const tiers = overview.report.lodTiers;
+  note(`overview tiers ${tiers.join('/')} across ${overview.trees} trees in ${overview.stands} stands`);
+  check(
+    'every tree wears an authored tier at the region overview',
+    overview.report.lodDressed === overview.trees && overview.trees > 0,
+    `${overview.report.lodDressed} of ${overview.trees} dressed`
+  );
+  check(
+    'the region overview pays for no LOD0 tree anywhere',
+    tiers[0] === 0,
+    `tiers ${tiers.join('/')}`
+  );
+  check(
+    'the far stands of the overview wear the coarsest tier',
+    tiers[2] > 0,
+    `tiers ${tiers.join('/')}`
+  );
+
+  // Focus one crown through the selector's own control, which is the path a
+  // player takes: the rig stands off at about 150 units, where a tree is LOD1.
+  const selected = await page.evaluate(() => {
+    const select = document.querySelector('#forest-tree');
+    const option = [...select.options].find((entry) => entry.value !== '');
+    select.value = option.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    const [standId, treeId] = option.value.split(':').map(Number);
+    return { standId, treeId };
+  });
+  await settle(page);
+  await twoFrames();
+  const focused = await snapshot();
+  const refined = focused.report.lodTiers;
+  note(`focused tiers ${refined.join('/')} (tree ${selected.standId}:${selected.treeId})`);
+  check(
+    'focusing a crown refines its own stand without losing a tree',
+    refined[0] + refined[1] > tiers[0] + tiers[1] && focused.report.lodDressed === overview.report.lodDressed,
+    `${tiers[0] + tiers[1]} to ${refined[0] + refined[1]} fine trees, ${focused.report.lodDressed} dressed`
+  );
+
+  // The forest's own closest framing is about 105 units. Asking the rig for it
+  // directly keeps the check about level of detail rather than about the wheel
+  // threshold that would carry the camera underground.
+  await page.evaluate(() => window.mycelia.game.stage.rig.zoomBy(0.7));
+  await settle(page);
+  await twoFrames();
+  const close = await snapshot();
+  const near = close.report.lodTiers;
+  note(`close tiers ${near.join('/')}`);
+  check(
+    'a close camera earns the finest tier for the nearest trees',
+    near[0] > 0,
+    `tiers ${near.join('/')}`
+  );
+  check(
+    'a tier change never changes which tree is which',
+    Object.keys(close.records).length === Object.keys(overview.records).length &&
+      Object.keys(overview.records).every((key) => close.records[key]?.assetId === overview.records[key].assetId),
+    `${Object.keys(close.records).length} of ${Object.keys(overview.records).length} keys intact`
+  );
+
+  const changed = Object.keys(overview.records).filter(
+    (key) => close.records[key] && close.records[key].tier !== overview.records[key].tier
+  );
+  const placementHolds = (before, after) =>
+    before.tier !== after.tier &&
+    before.assetId === after.assetId &&
+    before.position.every((value, index) => Math.abs(value - after.position[index]) < 1e-9) &&
+    before.quaternion.every((value, index) => Math.abs(value - after.quaternion[index]) < 1e-9) &&
+    before.scale.every((value, index) => Math.abs(value - after.scale[index]) < 1e-9) &&
+    before.world.every((value, index) => Math.abs(value - after.world[index]) < 1e-3);
+  const preserved = changed.filter((key) => placementHolds(overview.records[key], close.records[key]));
+  note(`${changed.length} trees changed tier; ${preserved.length} kept their exact placement`);
+  check(
+    'a tier swap changes geometry only, never ground contact or scale',
+    changed.length > 0 && preserved.length === changed.length,
+    `${preserved.length} of ${changed.length} placements preserved`
+  );
+  check(
+    'the selected crown keeps its identity through the refinements',
+    close.report.selectedTreeId === selected.treeId &&
+      close.records[`${selected.standId}:${selected.treeId}`]?.tier <=
+        focused.records[`${selected.standId}:${selected.treeId}`]?.tier,
+    `selected ${close.report.selectedTreeId} at tier ${close.records[`${selected.standId}:${selected.treeId}`]?.tier}`
+  );
+
+  await contexts.pop().close();
+}
+
 await browser.close();
 server?.stop();
 
