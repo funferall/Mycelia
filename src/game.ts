@@ -508,7 +508,7 @@ export class Game {
   attachSpatialFixture(fixture: SpatialFixture): void {
     this.spatial = fixture;
     if (!this.reveal) {
-      this.reveal = new NetworkReveal(this.region);
+      this.reveal = new NetworkReveal(this.region, (point) => this.regionToScenePoint(point));
       this.stage.scene.add(this.reveal.group);
     }
     if (!this.sectionView) {
@@ -953,13 +953,11 @@ export class Game {
     };
     const camera = this.stage.rig.camera;
     camera.updateMatrixWorld();
-    const project = (point: { x: number; y: number; z: number }) => {
-      const scene = this.regionToScenePoint(point);
-      // The reveal is grouped and rebased like the stands, so its own group
-      // position is the shift the projection is actually drawn at.
-      scene.x += this.reveal?.group.position.x ?? 0;
-      scene.z += this.reveal?.group.position.z ?? 0;
-      const projected = scene.clone().project(camera);
+    // The reveal converts its own region-space samples to scene space, so this
+    // projector takes scene points: converting twice would put every strand
+    // somewhere it is not drawn.
+    const project = (scenePoint: { x: number; y: number; z: number }) => {
+      const projected = new THREE.Vector3(scenePoint.x, scenePoint.y, scenePoint.z).project(camera);
       if (projected.z > 1) return null;
       return { x: projected.x, y: projected.y };
     };

@@ -24,8 +24,14 @@ import type { Region } from '../sim/region';
 import type { StandId, Vec3 } from '../sim/spatial';
 import { sectionAnchor, type SectionSpec } from './sections';
 
-/** How far above the terrain the projection floats, in region units. */
-export const REVEAL_LIFT = 0.4;
+/**
+ * How far above the terrain the projection floats, in region units.
+ *
+ * Enough to clear the ground, the litter and the canopy's own contact shadows
+ * at the region overview: a strand a fraction of a unit above the floor is
+ * swallowed by the floor's own depth at that distance.
+ */
+export const REVEAL_LIFT = 1.6;
 /** Screen-space radius of a click, as a fraction of the viewport height. */
 export const REVEAL_PICK_RADIUS = 0.018;
 /** Two candidates closer than this in screen space count as stacked. */
@@ -211,16 +217,27 @@ interface RevealBatch {
 export class NetworkReveal {
   readonly group = new THREE.Group();
   private readonly region: Region;
+  /**
+   * Region coordinates to the frame the reveal is drawn in.
+   *
+   * The projection's own data stays in region coordinates - that is what
+   * picking, the readout and the section agreement are all measured in - and
+   * the conversion happens once, here, when the buffers are written.
+   */
+  private readonly toScene: (point: Vec3) => THREE.Vector3;
   private strands: ProjectedStrand[] = [];
   private strandsBatch: RevealBatch | null = null;
   private sliceBatch: RevealBatch | null = null;
+  /** Strand endpoints as dots: at the region overview a line is one pixel. */
+  private nodesBatch: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
   private shown = false;
   private dirty = true;
   private samples = 8;
   private sliceSpec: SectionSpec | null = null;
 
-  constructor(region: Region) {
+  constructor(region: Region, toScene: (point: Vec3) => THREE.Vector3) {
     this.region = region;
+    this.toScene = toScene;
     this.group.visible = false;
     this.group.renderOrder = 4;
   }
@@ -261,12 +278,14 @@ export class NetworkReveal {
     if (this.dirty || !this.strandsBatch) this.buildStrands();
     const visible = this.shown && blend > 0.55;
     if (this.strandsBatch) this.strandsBatch.mesh.visible = visible;
+    if (this.nodesBatch) this.nodesBatch.visible = visible;
     if (this.sliceBatch) this.sliceBatch.mesh.visible = visible && !reduced;
   }
 
   report(): { visible: boolean; strands: number; samples: number; draws: number; slice: string | null } {
     let draws = 0;
     if (this.strandsBatch?.mesh.visible) draws++;
+    if (this.nodesBatch?.visible) draws++;
     if (this.sliceBatch?.mesh.visible) draws++;
     return {
       visible: this.shown,
@@ -279,12 +298,15 @@ export class NetworkReveal {
 
   /** What a click selects, or null when the click is not on a strand. */
   pick(
-    project: (point: Vec3) => NdcPoint | null,
+    project: (scenePoint: Vec3) => NdcPoint | null,
     target: NdcPoint,
     radius = REVEAL_PICK_RADIUS
   ): RevealPick | null {
     if (!this.shown) return null;
-    return pickStrand(this.strands, project, target, radius);
+    // The caller projects scene-space points, so the conversion happens here,
+    // once, for every sample - the same conversion the buffers were written
+    // with, which is what keeps the drawn strand and the picked strand aligned.
+    return pickStrand(this.strands, (point) => project(this.toScene(point)), target, radius);
   }
 
   strandFor(key: string): ProjectedStrand | null {
@@ -297,6 +319,12 @@ export class NetworkReveal {
       this.group.remove(batch.mesh);
       batch.mesh.geometry.dispose();
       batch.mesh.material.dispose();
+    }
+    if (this.nodesBatch) {
+      this.group.remove(this.nodesBatch);
+      this.nodesBatch.geometry.dispose();
+      this.nodesBatch.material.dispose();
+      this.nodesBatch = null;
     }
     this.strandsBatch = null;
     this.sliceBatch = null;
@@ -316,8 +344,8 @@ export class NetworkReveal {
         for (let i = 1; i < strand.points.length; i++) {
           const a = strand.points[i - 1] as Vec3;
           const b = strand.points[i] as Vec3;
-          pushPoint(positions, colours, a, offset, strand, i - 1);
-          pushPoint(positions, colours, b, offset, strand, i);
+          pushPoint(positions, colours, this.toScene(a), offset, strand, i - 1);
+          pushPoint(positions, colours, this.toScene(b), offset, strand, i);
         }
       }
     }
@@ -326,6 +354,40 @@ export class NetworkReveal {
       new Float32Array(positions),
       new Float32Array(colours)
     );
+    // And the nodes themselves, as dots: the reveal has to read at the region
+    // overview, where a one-unit strand is a single pixel of line.
+    const nodePositions: number[] = [];
+    const nodeColours: number[] = [];
+    for (const strand of this.strands) {
+      const weight = strandWeight(strand.fromDepthCm, strand.connected, strand.reinforced);
+      for (const point of [strand.points[0], strand.points[strand.points.length - 1]]) {
+        if (!point) continue;
+        const scene = this.toScene(point);
+        nodePositions.push(scene.x, scene.y + 0.2, scene.z);
+        nodeColours.push(1 * weight, 0.62 * weight, 0.28 * weight);
+      }
+    }
+    if (this.nodesBatch) {
+      this.group.remove(this.nodesBatch);
+      this.nodesBatch.geometry.dispose();
+      this.nodesBatch.material.dispose();
+    }
+    const nodeGeometry = new THREE.BufferGeometry();
+    nodeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nodePositions), 3));
+    nodeGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(nodeColours), 3));
+    nodeGeometry.computeBoundingSphere();
+    const nodeMaterial = new THREE.PointsMaterial({
+      vertexColors: true,
+      size: 5,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+    });
+    const nodes = new THREE.Points(nodeGeometry, nodeMaterial);
+    nodes.frustumCulled = false;
+    this.group.add(nodes);
+    this.nodesBatch = nodes;
   }
 
   /**
@@ -353,15 +415,17 @@ export class NetworkReveal {
       return { x: pointX, y: pointY, z: this.region.heightAt(pointX, pointY) + REVEAL_LIFT * 1.6 };
     };
     for (let along = spec.alongFrom; along < spec.alongTo; along += step) {
-      const a = at(along);
-      const b = at(Math.min(spec.alongTo, along + step));
+      const a = this.toScene(at(along));
+      const b = this.toScene(at(Math.min(spec.alongTo, along + step)));
       positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
       for (let i = 0; i < 2; i++) colours.push(1, 0.86, 0.62);
     }
     const anchor = sectionAnchor(this.region, spec);
     const top = { x: anchor.x, y: anchor.y, z: this.region.heightAt(anchor.x, anchor.y) + REVEAL_LIFT * 1.6 };
     const bottom = { x: anchor.x, y: anchor.y, z: anchor.z };
-    positions.push(top.x, top.y, top.z, bottom.x, bottom.y, bottom.z);
+    const topScene = this.toScene(top);
+    const bottomScene = this.toScene(bottom);
+    positions.push(topScene.x, topScene.y, topScene.z, bottomScene.x, bottomScene.y, bottomScene.z);
     colours.push(1, 0.72, 0.36, 0.85, 0.5, 0.2);
     this.sliceBatch = this.replaceBatch(this.sliceBatch, new Float32Array(positions), new Float32Array(colours));
   }
@@ -414,8 +478,10 @@ function resample(strand: ProjectedStrand, samples: number): Vec3[] {
  * and a severed or hair-fine strand is dimmer again.
  */
 export function strandWeight(depthCm: number, connected: boolean, reinforced: boolean): number {
-  const depthWeight = 1 - Math.min(0.55, Math.max(0, depthCm) / 140);
-  return (connected ? 1 : 0.55) * depthWeight * (reinforced ? 1 : 0.82);
+  // Deliberately shallow falloff: a strand 40 cm down is still the same body,
+  // and the reveal has to stay readable over a lit forest floor.
+  const depthWeight = 1 - Math.min(0.35, Math.max(0, depthCm) / 220);
+  return (connected ? 1 : 0.6) * depthWeight * (reinforced ? 1 : 0.85);
 }
 
 /**

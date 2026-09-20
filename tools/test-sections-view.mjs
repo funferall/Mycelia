@@ -159,35 +159,45 @@ try {
 
   const clicked = await page.evaluate(() => {
     const game = window.mycelia.game;
-    const key = game.sectionReport().edge ?? game.revealReport().pick?.key ?? null;
-    if (!key) return { ok: false, reason: 'no strand to aim at' };
-    const strand = game.reveal.strandFor(key);
-    if (!strand) return { ok: false, reason: 'the strand is not in the projection' };
     const camera = game.stage.rig.camera;
     camera.updateMatrixWorld();
-    const middle = strand.points[Math.floor(strand.points.length / 2)];
-    const scene = game.regionToScenePoint(middle);
-    scene.x += game.reveal.group.position.x;
-    scene.z += game.reveal.group.position.z;
-    const ndc = scene.clone().project(camera);
-    if (ndc.z > 1) return { ok: false, reason: 'behind the camera' };
     const rect = document.querySelector('#gl').getBoundingClientRect();
-    const clientX = rect.left + ((ndc.x + 1) / 2) * rect.width;
-    const clientY = rect.top + ((1 - ndc.y) / 2) * rect.height;
-    const element = document.elementFromPoint(clientX, clientY);
-    if (!element) return { ok: false, reason: 'nothing at that point' };
-    element.dispatchEvent(new PointerEvent('pointerdown', { clientX, clientY, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
-    element.dispatchEvent(new PointerEvent('pointerup', { clientX, clientY, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
+    // Aim at a strand the click can actually own. A crown in the way is not a
+    // bug - a visible tree wins the click by design - so the check looks for a
+    // strand whose midpoint is not under one.
+    let aimed = null;
+    for (let index = 0; index < 60 && !aimed; index++) {
+      const key = game.reveal.strandFor
+        ? (game.reveal.strandFor(`player@raven-wood:${index}-${index + 1}`) ?? null)
+        : null;
+      if (!key) continue;
+      const middle = key.points[Math.floor(key.points.length / 2)];
+      const scene = game.regionToScenePoint(middle);
+      scene.x += game.reveal.group.position.x;
+      scene.z += game.reveal.group.position.z;
+      const ndc = scene.clone().project(camera);
+      if (ndc.z > 1) continue;
+      const clientX = rect.left + ((ndc.x + 1) / 2) * rect.width;
+      const clientY = rect.top + ((1 - ndc.y) / 2) * rect.height;
+      const element = document.elementFromPoint(clientX, clientY);
+      if (!element || element.tagName !== 'CANVAS') continue;
+      if (game.pickCrown(clientX, clientY)) continue;
+      aimed = { key, clientX, clientY, element };
+      break;
+    }
+    if (!aimed) return { ok: false, reason: 'no strand was free of a crown' };
+    aimed.element.dispatchEvent(new PointerEvent('pointerdown', { clientX: aimed.clientX, clientY: aimed.clientY, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
+    aimed.element.dispatchEvent(new PointerEvent('pointerup', { clientX: aimed.clientX, clientY: aimed.clientY, bubbles: true, pointerId: 1, isPrimary: true, button: 0 }));
     game.frame(performance.now(), false);
     const picked = game.revealReport().pick;
     return {
       ok: true,
-      key,
+      key: aimed.key.key,
       pick: picked,
       section: game.sectionReport(),
       // Whatever the click actually resolved to: the section it opened must be
       // the one through the picked strand's own far end.
-      strandCheck: game.strandCheck(picked?.key ?? key),
+      strandCheck: game.strandCheck(picked?.key ?? aimed.key.key),
     };
   });
   check(

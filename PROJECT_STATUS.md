@@ -1311,8 +1311,9 @@ either foundation.
   plane, so a section through it is a thin band of strands rather than a volume,
   and the compare-sections mode and transparent-ground true-depth switch are not
   built. The reveal's cost at regional scale is unmeasured, and its strand
-  symbols do not yet scale with screen-space strand size beyond the sample count
-  per edge.
+  symbols are a thin, dim line at the region overview: node dots and a shallow
+  depth falloff make it visible, but line weight and marker size still need
+  tuning, and the samples per edge are the only screen-space LOD it has.
 - The match renders nine stands and players can enter colonized underground
   transects. A local view is rebuilt and its owned GPU resources disposed on
   each stand change; this bounds residency but may hitch on entry. There is no
@@ -1464,6 +1465,15 @@ Current checks executed on this implementation:
   browser errors (66.0s, three added draw calls for the surface water), which is
   the scoped check for the shared fixture bench and the frame loop this
   changeset touched.
+- Two defects were found by the renderer check and fixed rather than papered
+  over: the projection wrote **region** coordinates straight into the vertex
+  buffer, so the drawn strands sat outside the region's own frame while every
+  functional check still passed; and the pick path then converted region to
+  scene twice, once inside the reveal and once in its caller. The reveal now
+  converts once, when the buffers are written, and its `pick()` takes a
+  scene-space projector, so the drawn strand and the picked strand cannot drift
+  apart. The capture is what caught the first; the click is what caught the
+  second.
 
 Not verified, and the honest state of this changeset: the fixture's colony grows
 on a single plane, so a section through it reads as a thin band of strands
