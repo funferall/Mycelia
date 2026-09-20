@@ -20,6 +20,8 @@ import { makeGlowTexture } from './render/textures';
 import type { QualityPreset } from './render/quality';
 import { deriveJourney, type Journey, type RootTarget } from './ui/journey';
 import { SheetUI, type OrderId } from './ui/sheet';
+import { SurveySheet } from './ui/survey';
+import { buildSurvey } from './sim/survey';
 
 const FIXED_STEP = 1 / 60;
 
@@ -72,6 +74,8 @@ export class Game {
   private readonly rivalMotes: Motes;
   private forest: ForestView;
   private readonly ui: SheetUI;
+  /** The regional survey layer: a printed ledger of the region's stands. */
+  private readonly survey = new SurveySheet();
   private living: LivingView;
   /**
    * One surface per persistent stand. Colonized stands can be entered, while
@@ -372,6 +376,8 @@ export class Game {
     /** Trees wearing an authored model, and the tier files that have loaded. */
     lodDressed: number;
     assets: { ready: boolean; loaded: number; expected: number; pending: number; failures: number };
+    /** The regional survey layer's own state, for the browser checks. */
+    survey: { open: boolean; held: number; contiguous: boolean; selected: number | null };
     selectedStandId: number | null;
     selectedTreeId: number | null;
     simSeconds: number;
@@ -384,6 +390,7 @@ export class Game {
         lodTiers[tier] = (lodTiers[tier] ?? 0) + count;
       });
     }
+    const survey = buildSurvey(this.match);
     return {
       ...this.stage.qualityReport(),
       stands: surfaces.length,
@@ -396,6 +403,12 @@ export class Game {
         expected: this.assets.expected,
         pending: this.assets.loading,
         failures: this.assets.failures.length,
+      },
+      survey: {
+        open: this.survey.open,
+        held: survey.held,
+        contiguous: survey.contiguous,
+        selected: this.selectedStandId,
       },
       selectedStandId: this.selectedStandId,
       selectedTreeId: this.selectedStandId === null ? null : this.surfaces[this.selectedStandId]?.selectedId ?? null,
@@ -485,6 +498,8 @@ export class Game {
       this.journey = deriveJourney(this.sim);
     }
     this.ui.update(this.sim, dt, this.journey);
+    // An outcome takes the sheet; the survey is a page of it, not a rival.
+    if (this.sim.outcome !== 'playing') this.survey.dismiss();
     if (!this.acknowledgedOutcomes.has(this.match.activeStandId)) {
       this.ui.showOutcome(this.sim, () => this.restart(), this.match.colonizedStands > 1 ? () => {
         this.acknowledgedOutcomes.add(this.match.activeStandId);
@@ -505,7 +520,15 @@ export class Game {
     if (this.markerClock > 0.1) {
       this.markerClock = 0;
       this.updateMarkers(this.journey);
+      // The survey is a record of the whole region, so it is refreshed on the
+      // same slow beat and only while its sheet is actually open.
+      if (this.survey.open) this.refreshSurvey();
     }
+  }
+
+  /** Redraw the regional survey from the match's own projection. */
+  private refreshSurvey(): void {
+    this.survey.render(buildSurvey(this.match), this.selectedStandId ?? this.match.activeStandId);
   }
 
   private awaken(): void {
@@ -578,6 +601,15 @@ export class Game {
     document.querySelector('#view-forest')!.addEventListener('click', () => this.setView('forest'));
     document.querySelector('#view-underground')!.addEventListener('click', () => this.descend());
     document.querySelector('#descend-tree')!.addEventListener('click', () => this.descend());
+    document.querySelector('#survey-open')!.addEventListener('click', () => {
+      this.survey.toggle();
+      if (this.survey.open) this.refreshSurvey();
+    });
+    document.querySelector('#survey-close')!.addEventListener('click', () => this.survey.hide());
+    this.survey.onChoose((id) => {
+      this.selectStand(id);
+      this.refreshStandOptions();
+    });
     document.querySelector('#forest-stand')!.addEventListener('change', event => {
       this.selectStand(Number((event.target as HTMLSelectElement).value));
     });
@@ -694,6 +726,8 @@ export class Game {
     const old = this.region.stands[this.match.activeStandId];
     const next = this.region.stands[id];
     if (!next || !this.match.stands[id].sim.hasColony || id === old.id) return;
+    // The player is going below; the survey is an above-ground record.
+    this.survey.dismiss();
     this.overlays.apply(1);
     for (const group of [this.soil.group, this.forest.group, this.living.group]) disposeView(group);
     this.match.selectStand(id);
@@ -970,6 +1004,8 @@ export class Game {
       }
       if (event.key.toLowerCase() === 'r' && this.awakened) document.querySelector<HTMLButtonElement>('#rest')!.click();
       if (event.key.toLowerCase() === 'h') document.querySelector<HTMLButtonElement>('#immersive')!.click();
+      if (event.key.toLowerCase() === 's') { event.preventDefault(); this.survey.toggle(); if (this.survey.open) this.refreshSurvey(); }
+      if (event.key === 'Escape' && this.survey.open) this.survey.hide();
       if (event.key === 'Shift') this.shiftDown = true;
       if (event.key === 'f') this.frameSheet();
     });

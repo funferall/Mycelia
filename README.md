@@ -96,6 +96,7 @@ written down under "Authored 3D assets" in `DESIGN.md`.
 | Space | Pause or resume |
 | `R` | Rest or resume growth after awakening |
 | `H` | Hide or restore field notes |
+| `S` | Open or close the regional survey |
 | `1`–`4` | Grow / Bond / Cord / Fruit |
 
 Click the sheet to apply the selected order. With **Bond** selected, click a
@@ -109,6 +110,13 @@ All colonized stands keep running while you explore, and orders and resource
 figures belong to the stand currently underground. After a local outcome,
 **Explore daughter stands** continues the regional lineage when another colony
 exists. A regional victory condition is still being designed.
+
+**Survey the region** (or `S`) opens a printed ledger of all nine stands: what
+each one holds, its water, its broad forest health once a colony has held it, and
+how the lineage connects back to the founding stand. A stand that has never been
+held is printed as not yet surveyed beneath, because nobody has been down there
+to record it. Choosing a line selects that stand, the same as the selector
+above.
 
 ## Demo and QA parameters
 

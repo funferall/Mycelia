@@ -19,7 +19,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-region-'));
-const modules = ['content', 'rng', 'region', 'world', 'network', 'sim', 'match'];
+const modules = ['content', 'rng', 'region', 'world', 'network', 'sim', 'match', 'survey'];
 for (const name of modules) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
@@ -37,6 +37,7 @@ const {
 const { ECON, MAX_DEPTH_CM } = await load('content');
 const { RegionalMatch } = await load('match');
 const { payColonyFund, updateTotals } = await load('network');
+const { buildSurvey } = await load('survey');
 
 const results = [];
 const ok = (line) => {
@@ -536,6 +537,68 @@ function dump(region, seed) {
   assert.equal(payColonyFund(net, ECON.colonyFund), false);
   assert.equal(JSON.stringify(net.nodes), state, 'an incomplete kit charges nothing');
   ok('colony funding debits real carbon, water and mineral stores atomically');
+}
+
+// The survey layer is a read-only projection: it must agree with the match it
+// describes, hide what nobody has been down to record, and keep the difference
+// between an occupied stand and a connected one.
+{
+  const m = new RegionalMatch(seeds[0]);
+  const founding = m.region.foundingStand;
+  const home = m.stands[founding];
+  // Give the founding colony a body worth surveying.
+  home.sim.player.nodes[home.sim.player.rootId].carbon = 90;
+  home.sim.player.nodes[home.sim.player.rootId].water = 12;
+  home.sim.player.nodes[home.sim.player.rootId].nitrogen = 8;
+  updateTotals(home.sim.player);
+
+  const alone = buildSurvey(m);
+  assert.equal(alone.total, 9, 'every stand is in the survey');
+  assert.equal(alone.held, 1, 'only the founding stand is held at the opening');
+  assert.equal(alone.surveyed, 1, 'only the founding stand has been surveyed beneath');
+  assert.deepEqual(alone.lineage, [founding], 'the lineage is just the founding stand');
+  assert.equal(alone.contiguous, true, 'a single colony is trivially contiguous');
+  const empty = alone.stands.find((stand) => stand.id !== founding);
+  assert.equal(empty.occupied, false);
+  assert.equal(empty.surveyed, false, 'uncolonized ground has not been surveyed beneath');
+  assert.equal(empty.health, null, 'no underground health is reported for ground nobody has held');
+  assert.equal(empty.healthBand, null);
+  assert.ok(['saturated', 'shallow', 'deep'].includes(empty.water), 'surface water is still recorded');
+  const foundingSurvey = alone.stands[founding];
+  assert.equal(foundingSurvey.connected, true);
+  assert.equal(foundingSurvey.parent, null, 'the founding stand has no parent');
+  assert.ok(foundingSurvey.trees > 0 && foundingSurvey.health !== null);
+  assert.ok(foundingSurvey.health >= 0 && foundingSurvey.health <= 1);
+  assert.equal(foundingSurvey.healthBand, foundingSurvey.health >= 0.75 ? 'sound' : foundingSurvey.health >= 0.5 ? 'strained' : 'declining');
+  ok('the survey reports every stand, and reports no underground record for ground never held');
+
+  // A funded daughter is a child of the stand that paid for it.
+  const neighbour = m.stands[founding].site.neighbours[0];
+  const cost = ECON.colonyFund;
+  payColonyFund(home.sim.player, cost);
+  m.stands[neighbour].sim.foundColony(cost);
+  m.stands[neighbour].arrivals.push({ at: m.time, from: founding, spores: cost.carbon });
+  const region = buildSurvey(m);
+  const daughter = region.stands[neighbour];
+  assert.equal(region.held, 2);
+  assert.equal(region.surveyed, 2, 'a held stand has been surveyed beneath');
+  assert.equal(daughter.parent, founding, 'the daughter records the stand that paid for it');
+  assert.equal(daughter.hop, 1, 'the daughter is one stand from the founding stand');
+  assert.equal(daughter.connected, true);
+  assert.equal(daughter.state, 'germinating', 'a fresh spore has no network yet');
+  assert.equal(region.contiguous, true);
+  assert.deepEqual(region.lineage, [founding, neighbour], 'the lineage runs founding to daughter');
+  ok('a funded daughter appears in the survey with its parent, state and lineage');
+
+  // Cut the founding colony out and the daughter is occupied but no longer part
+  // of a contiguous region.
+  home.sim.outcome = 'extinct';
+  const severed = buildSurvey(m);
+  assert.equal(severed.held, 2, 'the daughter is still occupied');
+  assert.equal(severed.stands[neighbour].connected, false, 'a cut lineage is not connected');
+  assert.equal(severed.contiguous, false, 'a region with an isolated colony is not contiguous');
+  assert.deepEqual(severed.lineage, [founding, neighbour], 'the recorded route survives the cut');
+  ok('an isolated colony is reported as occupied but no longer connected to the founding stand');
 }
 
 console.log(`PASS: ${results.length} checks.`);

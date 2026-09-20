@@ -21,6 +21,9 @@ try {
     const away = g.match.stands.at(-1).site.id === home ? 0 : g.match.stands.at(-1).site.id;
     // Explicit fixture; the navigation never creates or funds a colony.
     g.match.stands[away].sim.foundColony({ carbon: 46, water: 6, nitrogen: 3 });
+    // Record the arrival the way a wind-borne spore would, so the survey can
+    // trace the lineage rather than seeing an orphaned colony.
+    g.match.stands[away].arrivals.push({ at: g.match.time, from: home, spores: 46 });
     g.refreshStandOptions();
     return { home, away, empty: g.match.stands.find(s => !s.sim.hasColony).site.id };
   });
@@ -128,6 +131,60 @@ try {
     const r = window.mycelia.game.renderReport();
     return r.batching.trees === r.lodDressed && r.batching.identities.length === r.lodDressed && r.batching.draws < r.batching.parts;
   }));
+
+  // The regional survey: a printed ledger of the whole region, and a way to
+  // choose a stand without the selector above.
+  await page.click('#survey-open');
+  await page.evaluate(() => { const g = window.mycelia.game; g.frame(g.lastFrame + 250, false); });
+  const ledger = await page.evaluate(({ home, away, empty }) => {
+    const rows = [...document.querySelectorAll('#survey-list .survey-row')];
+    const read = (id) => {
+      const row = rows.find((entry) => entry.dataset.stand === String(id));
+      return row ? {
+        community: row.querySelector('.survey-community').textContent,
+        state: row.querySelector('.survey-state').textContent,
+        fields: row.querySelector('.survey-fields').textContent,
+        pressed: row.getAttribute('aria-pressed'),
+      } : null;
+    };
+    return {
+      open: !document.querySelector('#survey').hidden,
+      pressed: document.querySelector('#survey-open').getAttribute('aria-pressed'),
+      rows: rows.length,
+      summary: document.querySelector('#survey-summary').textContent,
+      home: read(home),
+      away: read(away),
+      empty: read(empty),
+      report: window.mycelia.game.renderReport().survey,
+    };
+  }, fixture);
+  check('the survey opens as a ledger with one line per stand', ledger.open && ledger.rows === 9 && ledger.pressed === 'true', `${ledger.rows} rows`);
+  check(
+    'the survey summarises the holds, the lineage and the continuity',
+    /2 of 9 stands held/.test(ledger.summary) && /lineage \d+ → \d+/.test(ledger.summary) && /every colony connected/.test(ledger.summary),
+    ledger.summary
+  );
+  check('a held stand prints its colony state and its parent stand', ledger.away?.state !== 'uncolonized' && /from stand/.test(ledger.away?.fields ?? ''), JSON.stringify(ledger.away));
+  check('a surveyed stand prints a forest health band and a tree count', /forest (sound|strained|declining)/.test(ledger.home?.fields ?? '') && /of \d+ trees standing/.test(ledger.home?.fields ?? ''), JSON.stringify(ledger.home));
+  check('ground nobody has held is printed as unsurveyed, not guessed at', ledger.empty?.state === 'uncolonized' && /not surveyed beneath/.test(ledger.empty?.fields ?? ''), JSON.stringify(ledger.empty));
+  check('the survey agrees with the match about what is held', ledger.report.held === 2 && ledger.report.contiguous === true, JSON.stringify(ledger.report));
+  await page.screenshot({ path: 'design/shots/regional-survey.png' });
+
+  await page.click(`#survey-list .survey-row[data-stand="${fixture.empty}"]`);
+  await page.evaluate(() => { const g = window.mycelia.game; g.frame(g.lastFrame + 250, false); });
+  const chosen = await page.evaluate(() => ({
+    value: document.querySelector('#forest-stand').value,
+    selected: window.mycelia.game.renderReport().survey.selected,
+    pressed: document.querySelector('#survey-list .survey-row[aria-pressed="true"]')?.dataset.stand ?? null,
+  }));
+  check(
+    'choosing a line selects that stand and marks it in the ledger',
+    chosen.value === String(fixture.empty) && chosen.selected === fixture.empty && chosen.pressed === String(fixture.empty),
+    JSON.stringify(chosen)
+  );
+  await page.keyboard.press('Escape');
+  check('Escape closes the survey', await page.evaluate(() => document.querySelector('#survey').hidden === true));
+
   await page.screenshot({ path: 'design/shots/regional-navigation.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await animate();
@@ -135,6 +192,13 @@ try {
     const r = document.querySelector(id).getBoundingClientRect();
     return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
   })));
+  await page.click('#survey-open');
+  await page.evaluate(() => { const g = window.mycelia.game; g.frame(g.lastFrame + 250, false); });
+  check('the survey page stays on screen at a portrait size', await page.evaluate(() => {
+    const r = document.querySelector('#survey').getBoundingClientRect();
+    return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+  }));
+  await page.screenshot({ path: 'design/shots/regional-survey-portrait.png' });
   await page.screenshot({ path: 'design/shots/regional-navigation-portrait.png' });
   assert.deepEqual(problems, []);
   console.log(`${checks} navigation checks passed; no browser errors.`);

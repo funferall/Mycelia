@@ -59,6 +59,11 @@ colonized stand. Local soil, roots, networks, rewards and UI are rebound on entr
 every colony continues running while another stand is viewed. The established
 founding world is retained; other stands use regional site conditions.
 
+The forest carries a regional survey layer (`MAP-11`): `S`, or **Survey the
+region**, opens a printed ledger of the nine stands with their community, water,
+colony state, broad forest health, founding parent and lineage continuity. It is
+a record rather than a map, and it prints unsurveyed ground as unsurveyed.
+
 Surface art now arrives through an intake pipeline rather than only being
 generated in code. `src/render/assets.ts` loads authored glTF models, scales each
 one to the simulation's own tree, corrects it onto the ground, tints it by season
@@ -84,6 +89,15 @@ the unchanged normal preset.
   forest-stand squares**, not a single isolated stand. Stand boundaries support
   simulation, streaming, ownership, and navigation, but the rendered landscape
   should read as one continuous forest rather than a visible chessboard.
+- Every logical stand square is **one above-ground tile with its own persistent
+  underground transect**, and the mycelium must be able to grow across a shared
+  boundary into the neighbouring tile's soil. Crossing a stand edge with hyphae,
+  cords, water or roots is ordinary growth through a boundary portal, not only a
+  spore that founds a separate colony. The region is one contiguous forest over
+  one contiguous soil: tile boundaries organise simulation, streaming and
+  ownership, and must never fence the network in. `MAP-07`, `MAP-08`, `MAP-11`
+  and the local underground model below are all written to this intent, and no
+  interface may present the stands as isolated boxes.
 - Regional generation must produce coherent terrain and hydrology first, then
   derive soil, forest communities, tree ages, deadwood, and threats from those
   conditions. Streams, ponds, wetlands, springs, slopes, ridges, and clearings
@@ -194,11 +208,11 @@ and equivalent useful details have been accounted for, then remove it.
 | MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and its course is a polyline the renderer could draw. The water table follows relief and flow, and each stand passes its own table depth into the local soil generator. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and saturation barriers. |
 | MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. Remaining: density, age structure, canopy openness, understory, litter and deadwood still do not vary by community, and the floor props are seeded per stand rather than chosen by the community. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
-| MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. |
+| MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. Growth across a shared edge must become an ordinary local order — hyphae and cords continuing into the neighbouring stand's own transect — with the wind-borne spore kept as an additional route rather than the only one; see the product direction above. |
 | MAP-08 | Partial | Regional exploration and information | Stand survey and crown selection lead into a colonized stand's persistent underground context. Orders, catalogue, rail, roots, rewards and networks use that stand; the forest camera is rebased with the landscape so return preserves context. Uncolonized ground explains why descent is unavailable. Remaining: water-feature selection, incomplete surveys and network sensing. |
 | MAP-09 | Partial | Generated-map fairness | Validation refuses a region whose stands cannot be reached from the founding stand, or whose founding stand has no water in reach; the founding stand is chosen for habitable ground near water on the way down. Remaining: no repair pass, no threat-counterplay check, and no check that a loss is recoverable. |
 | MAP-10 | Partial | Regional colonization loop | The browser now runs regional spore release and announces daughter stands. A colony's outcome offers exploration when another colony exists. Fixed founding resources: the parent pays actual connected node stores in carbon, water and nitrogen; the daughter keeps these in its nodes rather than losing summary-only reserves on the next tick. Remaining: drawn spore hops, a regional victory objective and balance of unattended daughter colonies. All stands now share a regional seasonal clock, including dormant ground and completed colonies. |
-| MAP-11 | Planned | Regional atlas interface | Provide a restrained botanical survey layer showing stand identity, explored state, broad health, water, infection, and network continuity. It must use the established field-record language and avoid a generic RTS minimap or tile HUD. |
+| MAP-11 | Partial | Regional atlas interface | `S` or **Survey the region** opens a printed ledger of all nine stands in the sheet's own field-record language. Each line carries the stand, its community, whether a colony holds it, its water-table band and depth, its broad forest health and standing trees once a colony has held the stand, the stand it was founded from, and whether every colony still connects to the founding stand. Unknowns are printed as unknowns: ground never held reads "not surveyed beneath". Lines are buttons that select the stand, so surveying and choosing are one move. It is deliberately a ledger rather than a minimap — no grid, no tiles, no icons, no per-stand markers. Remaining: an infection field (no infection state exists until `ADV-01`/`ADV-02`), water-feature entries, fog of war finer than held-versus-unheld, and network sensing. |
 | MAP-12 | Partial | Simulation streaming and level of detail | Every colonized stand steps at full fidelity every tick, in stand order, and ground with no colony in it is not simulated at all, which is what keeps nine stands affordable. Moving between stands provably changes no number (asserted against an unwatched match). Remaining: coarse cadence for distant colonies, rendering LOD, pooled geometry and bounded particles. |
 | MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
 
@@ -234,6 +248,10 @@ boundary conditions. The current grid can become that local unit.
 
 - Descending on a tree, patch, or water feature opens the corresponding stand's
   persistent underground context; it must not generate a new disposable slice.
+- Growth across a boundary is a normal local order: a network that reaches a
+  shared edge can continue into the neighbouring transect's own soil, carrying
+  cords, water, minerals, roots and later infection with it. Founding a daughter
+  colony from a wind-borne spore is an additional route, not the only one.
 - Neighboring transects expose deterministic edge portals for cords, moisture,
   roots, infection, and resource transport.
 - Terrain elevation determines each stand's soil datum; connected horizons and
@@ -527,7 +545,8 @@ Exit criteria: at least four connected logical stands render as one continuous
 forest, share coherent terrain and water, retain persistent underground state,
 and exchange resources through deterministic boundary connections. The terrain,
 water, persistence and boundary exchange now hold in the simulation; cross-boundary
-resource cords and connected water rendering remain; region navigation now works.
+resource cords and connected water rendering remain; region navigation now works
+and the survey layer (`MAP-11`) prints the region as a ledger.
 
 ### P2 — establish real roots and ecological opposition
 
@@ -654,6 +673,67 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 19 September 2026: regional survey layer (`MAP-11`)
+
+The forest gained its survey. `S`, or **Survey the region**, opens a printed
+ledger of the nine stands in the sheet's own field-record language — a record,
+not a minimap. `src/sim/survey.ts` projects the match into that record with no
+RNG, no mutation and no renderer, so the sheet cannot disagree with the
+simulation; `src/ui/survey.ts` prints it.
+
+- Each line carries the stand and its community, whether a colony holds it, its
+  water-table band and depth, its broad forest health band and standing-tree
+  count once a colony has held it, the stand it was founded from, and whether
+  every colony still connects to the founding stand. Ground never held prints
+  "not surveyed beneath" rather than a guessed health figure.
+- The recorded route and the live connection are separate facts. A colony behind
+  a dead link prints as occupied with "lineage severed", while the lineage still
+  shows the stands that were actually founded: the walk reads arrival records
+  for history and checks every link for aliveness.
+- Choosing a line selects that stand through the same `selectStand` path as the
+  selector control. The page covers the sheet's reading matter while it is open
+  (`body.survey-open`) and leaves the forest controls live, so choosing a stand
+  and exploring beneath it is one move. It closes on `Escape`, the close action
+  or `S` again.
+
+Verification on this tree:
+
+- `npm run typecheck` and `npm run build` pass. Production JS is 768.26 kB
+  (203.82 kB gzip).
+- `node tools/test-region.mjs` — 16 checks pass. The three new ones cover: every
+  stand is reported and unheld ground carries no underground record; a funded
+  daughter appears with its parent, hop, germinating state and lineage; and a
+  colony behind a dead link is occupied, disconnected and non-contiguous while
+  its recorded route survives.
+- `node tools/test-navigation.mjs --qa fast` — 23 checks pass, no browser errors.
+  The seven new ones cover: the ledger opens with one line per stand; the summary
+  states holds, lineage and continuity; a held stand prints its colony state and
+  parent stand; a surveyed stand prints a health band and tree count; unheld
+  ground prints as not surveyed beneath; choosing a line selects that stand and
+  marks it; and `Escape` closes the page. A portrait check keeps the page on
+  screen at 390×844.
+- `node tools/test-view.mjs` at the normal preset — 69 checks pass,
+  `PROBLEMS: none`. The survey wiring disturbed no crossing, framing, input, tier
+  or tier-swap check. That run, and the `test-journey`, `test-region` and
+  `test-batches` runs below, were taken before the last two lines of this
+  changeset: `SurveySheet` no longer moves focus when the page opens or closes,
+  because the auto-focused close action drew a focus box the sheet's language
+  does not use. No check in those suites opens or closes the survey, and
+  `test-navigation` and `typecheck`/`build` were re-run after the change (23
+  checks). The other four suites were not re-run on the final source; nothing
+  they exercise opens or closes this page.
+- `node tools/test-journey.mjs --accelerated` — 13 checks pass at the normal
+  preset; `node tools/test-batches.mjs` — 3 groups pass.
+- Captures inspected: `design/shots/regional-survey.png` and
+  `design/shots/regional-survey-portrait.png` (ignored paths; the numbers above
+  are the durable evidence). The page was re-cut after the first capture, where a
+  radial backing left the ledger fighting the field journal for legibility; it
+  now uses the flat sheet tone the outcome block already uses.
+
+Not verified: infection and water-feature fields (no such simulation state
+exists yet), fog of war finer than held-versus-unheld, network sensing, and the
+page during a live crossing or with more than a handful of occupied stands.
 
 ### 19 September 2026: regional exploration and forest batching
 
@@ -1071,6 +1151,12 @@ verification entry—not a new document.
 
 ### 19 September 2026: regional travel and forest batching
 
+- Added the regional survey layer (`MAP-11`): `src/sim/survey.ts` projects the
+  match into a per-stand record of holds, water, health, parentage and lineage
+  continuity, and `src/ui/survey.ts` prints it as a ruled ledger opened with `S`.
+  Browser checks cover the ledger, its knowledge rules, selection and portrait
+  layout; the product direction now states that every stand tile has its own
+  underground transect and that cords must be able to grow across shared edges.
 - Connected Game to RegionalMatch while retaining the existing founding opening;
   added stand survey, persistent local view rebinding, isolated orders, crown
   return, colonization notices and continuation into daughter stands.

@@ -65,6 +65,22 @@
         <select id="forest-tree"><option value="" disabled selected>Select a tree in the forest</option></select>
         <p id="tree-status" role="status">Choose a crown to follow its roots.</p>
         <button type="button" id="descend-tree" class="journal-action">Explore beneath <span aria-hidden="true">↓</span></button>
+        <button type="button" id="survey-open" class="journal-action" aria-pressed="false">Survey the region <span aria-hidden="true">▤</span></button>
+      </section>
+
+      <!--
+        The regional survey: a printed ledger of the nine stands, opened over
+        the sheet. It is a record, not a map — no grid, no tiles, no icons —
+        and it says plainly where nothing has been recorded yet.
+      -->
+      <section class="survey" id="survey" aria-label="Regional survey" hidden>
+        <div class="survey-head">
+          <p class="survey-kicker">Regional survey</p>
+          <button type="button" id="survey-close" class="survey-close">Close <span aria-hidden="true">×</span></button>
+        </div>
+        <p class="survey-summary" id="survey-summary" role="status"></p>
+        <ol class="survey-list" id="survey-list"></ol>
+        <p class="survey-footnote">A stand is recorded beneath only once a colony has held it; until then this sheet carries what the surface shows.</p>
       </section>
       <div id="root-markers" aria-label="Tree roots"></div>
       <section class="field-journal" aria-label="Field guide">

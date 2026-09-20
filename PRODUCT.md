@@ -159,3 +159,11 @@ while the player is elsewhere. The established founding map remains compatible
 with the original opening; neighboring worlds use regional site conditions.
 A local two-bloom outcome can be followed by exploration of daughter stands;
 the final regional victory condition remains undecided.
+
+The region is intended to be one contiguous forest over one contiguous soil:
+every above-ground stand tile has a persistent underground transect beneath it,
+and the network must be able to grow across a shared stand boundary into the
+neighbouring tile's soil, carrying cords, water, roots and later infection with
+it. A wind-borne spore is an additional way to reach unheld ground, not the only
+route. Stand squares organise simulation and ownership; they are not meant to
+read, in the world or in the interface, as isolated boxes.
