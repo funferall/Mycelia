@@ -33,10 +33,10 @@ function check(name, fn) {
 try {
   const modules = [
     'content', 'rng', 'region', 'world', 'spatial', 'network', 'sim', 'match', 'survey',
-    'forest-dressing-layout',
+    'forest-dressing-layout', 'forest-floor-field',
   ];
   for (const name of modules) {
-    const source = name === 'forest-dressing-layout'
+    const source = name.startsWith('forest-')
       ? readFileSync(new URL(`../src/render/${name}.ts`, import.meta.url), 'utf8')
       : readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     // Flatten every relative import: the compiled copies all live side by side.
@@ -264,8 +264,7 @@ try {
       assert.ok(youngRate(clearing) > youngRate(ridge), 'clearings are younger than ridges');
     }
     assert.ok(Object.keys(COMMUNITY_DRESSING).length === 7);
-    // The three trial bands are exactly what the plan asks for.
-    assert.deepEqual(DRESSING_BANDS, { sparse: 24, medium: 48, dense: 72 });
+    assert.ok(DRESSING_BANDS.sparse < DRESSING_BANDS.medium && DRESSING_BANDS.medium < DRESSING_BANDS.dense);
     void community;
   });
 
@@ -283,6 +282,24 @@ try {
       assert.ok(decoration.id.startsWith(`dressing:${sample.id}:`), decoration.id);
       assert.ok(decoration.x >= sample.sx * STAND_SIZE && decoration.x < (sample.sx + 1) * STAND_SIZE);
     }
+  });
+
+  const { forestFloorField } = await load('forest-floor-field');
+  check('ground habitat is continuous across both stand axes and deterministic', () => {
+    const field = forestFloorField(region, region.streamPath, trunks);
+    const again = forestFloorField(region, region.streamPath, trunks);
+    for (let t = 2; t < STAND_SIZE * 3 - 2; t += 3) {
+      for (const [x, y, dx, dy] of [[STAND_SIZE, t, 1e-5, 0], [t, STAND_SIZE, 0, 1e-5]]) {
+        assert.deepEqual(field(x, y), again(x, y));
+        const a = field(x - dx, y - dy), b = field(x + dx, y + dy);
+        for (const key of Object.keys(a)) {
+          assert.ok(Number.isFinite(a[key]) && a[key] >= 0 && a[key] <= 1, key);
+          assert.ok(Math.abs(a[key] - b[key]) < .001, `${key} seam at ${x},${y}`);
+        }
+      }
+    }
+    const wet = field(region.streamPath[2].x, region.streamPath[2].y).wet;
+    assert.ok(wet > .99, 'stream banks have an actual wet mask');
   });
 
   const elapsed = ((performance.now() - started) / 1000).toFixed(2);

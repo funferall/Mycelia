@@ -28,6 +28,7 @@
  * terrain is opaque over it, and nothing invented is left beneath the specimen.
  */
 import * as THREE from 'three';
+import { foliageColour } from './seasons';
 import { GRID, type SeasonId } from '../sim/content';
 import type { AssetId, AssetLibrary, BatchPart } from './assets';
 import { projectedHeightFraction, selectLodTier } from './lod';
@@ -39,7 +40,7 @@ import {
   type ForestDecoration,
   type PlayableTrunk,
 } from './forest-dressing-layout';
-import { HEMLOCK_LEAF, SEASON_FOLIAGE } from './surface';
+import { SEASON_FOLIAGE } from './surface';
 
 export interface ForestDressingInput {
   readonly region: DressingRegion;
@@ -107,6 +108,8 @@ export class ForestDressing {
   private readonly time = { value: 0 };
   private readonly cameraPoint = new THREE.Vector3();
   private readonly tint = new THREE.Color('#ffffff');
+  private season: SeasonId = 'spring';
+  private progress = 0;
   private readonly geometry = new Map<string, { geometry: THREE.BufferGeometry; triangles: number } | null>();
   private readonly materials = new Map<Category, THREE.MeshStandardMaterial>();
   private readonly meshes: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[] = [];
@@ -132,7 +135,7 @@ export class ForestDressing {
     this.assets = assets;
     this.input = input;
     this.band = input.band ?? 'medium';
-    this.kinds = input.kinds ?? DRESSING_TREE_KINDS;
+    this.kinds = input.kinds ?? ['canopy', 'young', 'fern', 'grass', 'rock', 'deadwood'];
     this.build();
   }
 
@@ -241,6 +244,8 @@ export class ForestDressing {
   /** Follow the surface's own fade, tint and clock. */
   update(dt: number, view: ForestDressingView): void {
     this.time.value += view.reduced ? 0 : dt;
+    this.season = view.season;
+    this.progress = view.progress;
     const colour = seasonColour(view.season, view.progress);
     if (!colour.equals(this.tint)) {
       this.tint.copy(colour);
@@ -332,7 +337,7 @@ export class ForestDressing {
     const batches = new Map<string, Batch>();
     for (const decoration of this.drawn) {
       const asset = decoration.asset as AssetId;
-      const tier = this.tiers.get(decoration.id) ?? START_TIER;
+      const tier = Math.min(this.tiers.get(decoration.id) ?? START_TIER, Math.max(0, this.assets.tiers(asset) - 1));
       // Scenery falls back to a coarser tier, never to a finer one, and asks
       // for the tier it wants when that file has not arrived yet.
       const resolved = this.assets.batchParts(asset, tier, true);
@@ -392,6 +397,13 @@ export class ForestDressing {
         const world = this.worldPosition(decoration);
         position.set(world.x, world.y, world.z);
         quaternion.setFromAxisAngle(UP, decoration.yaw);
+        if (decoration.kind === 'deadwood' || decoration.kind === 'rock' || decoration.kind === 'fern' || decoration.kind === 'grass') {
+          const h = (x: number, y: number) => this.input.region.heightAt(x, y);
+          const x = decoration.x, y = decoration.y;
+          const normal = new THREE.Vector3(h(x - 1, y) - h(x + 1, y), 2, h(x, y + 1) - h(x, y - 1)).normalize();
+          quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(UP, normal));
+          position.y -= decoration.height * .07;
+        }
         scale.set(decoration.height, decoration.height, decoration.height);
         matrix.compose(position, quaternion, scale);
         mesh.setMatrixAt(mesh.count, matrix);
@@ -464,8 +476,7 @@ export class ForestDressing {
 
   /** What one foliage instance wears this season. */
   private foliageColour(asset: AssetId): THREE.Color {
-    const evergreen = asset === 'tree.hemlock' || asset === 'understory.hemlock-sapling';
-    return evergreen ? HEMLOCK_LEAF.clone() : this.tint.clone();
+    return foliageColour(asset, this.season, this.progress);
   }
 
   /**

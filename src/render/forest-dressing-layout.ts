@@ -34,8 +34,8 @@ import { treeLocalOffset } from '../sim/spatial';
 /** Background canopy target per stand, before the community's own lean. */
 export const DRESSING_BANDS = {
   sparse: 24,
-  medium: 48,
-  dense: 72,
+  medium: 80,
+  dense: 112,
 } as const;
 
 export type DressingBand = keyof typeof DRESSING_BANDS;
@@ -350,7 +350,7 @@ export function layoutForestDressing(input: DressingInput): ForestDecoration[] {
       // Background canopy is meant to stand over the understory, not beside it:
       // it is the layer the region's silhouette is made of.
       const canopyHeight =
-        (canopyAsset === 'tree.oak' ? 19 : canopyAsset === 'tree.birch' ? 16 : 17) * stature * 0.95;
+        (canopyAsset === 'tree.oak' ? 19 : canopyAsset === 'tree.birch' ? 16 : 17) * stature * 1.08;
       const saplingAsset: DecorationAsset =
         species < profile.mix[0]
           ? 'understory.oak-sapling'

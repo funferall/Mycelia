@@ -204,6 +204,9 @@ export class Stage {
       if (object instanceof THREE.Mesh) object.material.opacity = object.material.userData.baseOpacity * (1 - blend);
     });
     this.backing.scale.z = 1 + blend * 15.5;
+    // The regional terrain has its own perimeter. The local specimen backing
+    // must not protrude through a low valley or hang beneath the forest edge.
+    this.backing.visible = blend < 0.99;
     // Keep the backing below the terrain, including the lowest part of its relief.
     this.backing.scale.y = 1 - blend * 0.025;
     this.backing.position.z = -2.6 - blend * 35.65;

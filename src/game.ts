@@ -9,7 +9,8 @@ import { RegionalMatch } from './sim/match';
 import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import { ForestDressing } from './render/forest-dressing';
-import { playableTrunkPositions, type DressingBand } from './render/forest-dressing-layout';
+import { forestFloorField } from './render/forest-floor-field';
+import { layoutForestDressing, playableTrunkPositions, type DressingBand } from './render/forest-dressing-layout';
 import { NetworkReveal, REVEAL_PICK_RADIUS, type RevealEdge } from './render/network-reveal';
 import { SectionView } from './render/section-view';
 import {
@@ -280,14 +281,25 @@ export class Game {
   private buildRegionStand(): void {
     const founding = this.region.stands[this.region.foundingStand];
     if (!founding) return;
+    const playable = playableTrunkPositions(this.region.stands, id => this.match.stands[id].sim.world.trees);
+    const scenery = layoutForestDressing({ region: this.region, playable, course: this.region.streamPath, band: this.dressingBand });
+    const floorField = forestFloorField(this.region, this.region.streamPath, [
+      ...playable, ...scenery.filter(item => item.kind === 'canopy' || item.kind === 'young'),
+    ]);
     for (const site of this.region.stands) {
       const world = this.match.stands[site.id].sim.world;
       const surface = new SurfaceForest(world, {
         id: site.id,
         originX: site.sx * TILE_SIZE,
         originY: site.sy * TILE_SIZE,
+        edges: [
+          ...(site.sy === 0 ? ['north' as const] : []),
+          ...(site.sy === this.region.rows - 1 ? ['south' as const] : []),
+          ...(site.sx === 0 ? ['west' as const] : []),
+          ...(site.sx === this.region.cols - 1 ? ['east' as const] : []),
+        ],
         heightAt: (x, y) => this.region.heightAt(x, y),
-      }, this.assets);
+      }, this.assets, floorField);
       surface.setQuality(this.stage.quality);
       surface.group.position.set((site.sx - founding.sx) * TILE_SIZE, 0, -(site.sy - founding.sy) * TILE_SIZE);
       this.surfaces[site.id] = surface;

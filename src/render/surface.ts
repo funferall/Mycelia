@@ -4,6 +4,9 @@ import { GRID, SEASONS, type SeasonId } from '../sim/content';
 import type { Tree, World } from '../sim/world';
 import { mulberry32 } from '../sim/rng';
 import { makeGlowTexture } from './textures';
+import { makeForestFloorMaterial } from './forest-floor';
+import type { ForestFloorField } from './forest-floor-field';
+import { foliageColour } from './seasons';
 import { type AssetId, type AssetInstance, type AssetLibrary } from './assets';
 import { LOD_TIERS, projectedHeightFraction, selectLodTier } from './lod';
 import type { QualityPreset } from './quality';
@@ -14,7 +17,6 @@ export const TILE_SIZE = GRID.cols;
 export const FOREST_DEPTH = TILE_SIZE;
 /** The season's foliage colour, shared with the background dressing. */
 export const SEASON_FOLIAGE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
-const PALETTE = SEASON_FOLIAGE;
 /** Which authored model dresses each species. */
 const TREE_ASSET: Record<string, AssetId> = { oak: 'tree.oak', birch: 'tree.birch', hemlock: 'tree.hemlock' };
 const DEAD_COLOR = new THREE.Color('#6c5840');
@@ -52,6 +54,8 @@ export interface ForestTile {
   id: number;
   originX: number;
   originY: number;
+  /** Only the regional perimeter gets a skirt; shared edges stay open. */
+  edges?: readonly ('north' | 'south' | 'west' | 'east')[];
   heightAt(x: number, y: number): number;
 }
 
@@ -101,7 +105,7 @@ export class SurfaceForest {
   /** Scratch vectors for the per-tree level-of-detail pass. */
   private readonly lodPoint = new THREE.Vector3();
   private readonly lodCamera = new THREE.Vector3();
-  private readonly floorMaterial: THREE.MeshStandardMaterial;
+  private readonly floorSurface = makeForestFloorMaterial();
   private readonly selection: THREE.Mesh;
   /** Baked tree shadows, kept in one group so the QA preset can omit them. */
   private readonly shadows = new THREE.Group();
@@ -110,49 +114,79 @@ export class SurfaceForest {
   private propsPlaced = false;
   selectedId: number | null = null;
 
-  constructor(private readonly world: World, private readonly tile?: ForestTile, private readonly assets?: AssetLibrary) {
+  constructor(private readonly world: World, private readonly tile?: ForestTile, private readonly assets?: AssetLibrary, private readonly floorField?: ForestFloorField) {
     const rng = mulberry32(world.seed ^ 0x6f123);
     const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE, 68, 68);
     floorGeometry.rotateX(-Math.PI / 2);
     floorGeometry.translate(0, FLOOR, -TILE_SIZE / 2);
     const p = floorGeometry.attributes.position;
-    const colors: number[] = [];
+    const habitat: number[] = [];
+    const uv = floorGeometry.attributes.uv;
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), z = p.getZ(i);
+      const rx = (this.tile?.originX ?? 0) + x + TILE_SIZE / 2;
+      const ry = (this.tile?.originY ?? 0) - z;
       p.setY(i, FLOOR + this.groundHeight(x, z));
-      const shade = 0.75 + rng() * 0.25;
-      const c = new THREE.Color().lerpColors(new THREE.Color('#353b21'), new THREE.Color('#646042'), (Math.sin(x * 0.14 + z * 0.17) + 1) / 2).multiplyScalar(shade);
-      colors.push(c.r, c.g, c.b);
+      const sample = floorField?.(rx, ry);
+      habitat.push(sample?.moss ?? .25, sample?.litter ?? .5, sample?.wet ?? 0, sample?.shade ?? 0);
+      uv.setXY(i, rx, ry);
     }
-    floorGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    floorGeometry.setAttribute('habitat', new THREE.Float32BufferAttribute(habitat, 4));
     floorGeometry.computeVertexNormals();
-    this.floorMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide });
-    const floor = new THREE.Mesh(floorGeometry, this.floorMaterial);
+    // Sample normals beyond each tile edge, so adjacent meshes light identically.
+    if (this.tile) {
+      const normal = floorGeometry.attributes.normal;
+      const n = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        const x = uv.getX(i), y = uv.getY(i), h = this.tile.heightAt;
+        n.set(h(x - 1, y) - h(x + 1, y), 2, h(x, y + 1) - h(x, y - 1)).normalize();
+        normal.setXYZ(i, n.x, n.y, n.z);
+      }
+    }
+    const floor = new THREE.Mesh(floorGeometry, this.floorSurface.material);
     floor.userData.ground = true;
     floor.userData.standId = this.tile?.id ?? 0;
     this.pickTargets.push(floor);
     this.ground.add(floor);
+    if (tile?.edges?.length) {
+      const positions: number[] = [];
+      for (const edge of tile.edges) {
+        for (let i = 0; i < 68; i++) {
+          const point = (step: number) => {
+            const t = step * TILE_SIZE / 68;
+            const x = edge === 'west' ? -TILE_SIZE / 2 : edge === 'east' ? TILE_SIZE / 2 : t - TILE_SIZE / 2;
+            const z = edge === 'north' ? 0 : edge === 'south' ? -TILE_SIZE : -t;
+            return [x, FLOOR + this.groundHeight(x, z), z];
+          };
+          const a = point(i), b = point(i + 1);
+          const bottomA = [a[0]!, FLOOR - 24, a[2]!], bottomB = [b[0]!, FLOOR - 24, b[2]!];
+          positions.push(...a, ...bottomA, ...b, ...b, ...bottomA, ...bottomB);
+        }
+      }
+      const skirt = new THREE.BufferGeometry();
+      skirt.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      skirt.computeVertexNormals();
+      this.ground.add(new THREE.Mesh(skirt, new THREE.MeshStandardMaterial({ color: '#30271c', roughness: 1, side: THREE.DoubleSide })));
+    }
     this.ground.add(this.shadows);
     this.group.add(this.ground);
 
-    // Ferns, grass, moss and litter keep the floor legible as a living habitat.
-    const blade = new THREE.BufferGeometry();
-    blade.setAttribute('position', new THREE.Float32BufferAttribute([-0.65, 0, 0, 0.15, 2.4, 0.3, 0.65, 0, 0, 0, 0, -0.65, -0.3, 1.9, 0.1, 0, 0, 0.65], 3));
-    blade.computeVertexNormals();
-    const grass = new THREE.InstancedMesh(blade, new THREE.MeshStandardMaterial({ color: '#667448', side: THREE.DoubleSide, roughness: 1 }), 2200);
-    const litter = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 5, 2), new THREE.MeshStandardMaterial({ color: '#80704c', roughness: 1 }), 1600);
-    for (const mesh of [grass, litter]) {
-      for (let i = 0; i < mesh.count; i++) {
-        const x = (rng() - 0.5) * (GRID.cols - 2), z = -rng() * TILE_SIZE;
-        this.dummy.position.set(x, FLOOR + this.groundHeight(x, z) + 0.1, z);
-        this.dummy.rotation.set(0, rng() * Math.PI * 2, 0);
-        const s = 0.25 + rng() * 0.65;
-        this.dummy.scale.set(s, mesh === litter ? 0.07 : s, mesh === litter ? s * 0.4 : s);
-        this.dummy.updateMatrix();
-        mesh.setMatrixAt(i, this.dummy.matrix);
-      }
-      this.ground.add(mesh);
+    // Small fragments gather in litter pockets; authored ferns/grass are batched regionally.
+    const litter = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 5, 2), new THREE.MeshStandardMaterial({ color: '#80704c', roughness: 1 }), 700);
+    let fragments = 0;
+    for (let i = 0; i < 1400 && fragments < 700; i++) {
+      const x = (rng() - .5) * TILE_SIZE, z = -rng() * TILE_SIZE;
+      const sample = floorField?.((this.tile?.originX ?? 0) + x + TILE_SIZE / 2, (this.tile?.originY ?? 0) - z);
+      if (sample && (sample.wet > .4 || rng() > sample.litter * .7)) continue;
+      this.dummy.position.set(x, FLOOR + this.groundHeight(x, z) + .035, z);
+      this.dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+      const size = .12 + rng() * .32;
+      this.dummy.scale.set(size, .025, size * .5);
+      this.dummy.updateMatrix();
+      litter.setMatrixAt(fragments++, this.dummy.matrix);
     }
+    litter.count = fragments;
+    this.ground.add(litter);
 
     for (const tree of world.trees) this.addTree(tree);
     const ring = new THREE.RingGeometry(2.5, 2.65, 64);
@@ -223,7 +257,7 @@ export class SurfaceForest {
     parts.forEach(part => part.dispose());
     body.add(wood);
 
-    const material = new THREE.MeshStandardMaterial({ color: PALETTE.spring, roughness: 0.85, side: THREE.DoubleSide });
+    const material = new THREE.MeshStandardMaterial({ color: SEASON_FOLIAGE.spring, roughness: 0.85, side: THREE.DoubleSide });
     material.onBeforeCompile = shader => {
       shader.uniforms.windTime = this.time;
       shader.vertexShader = 'uniform float windTime;\n' + shader.vertexShader;
@@ -426,6 +460,7 @@ export class SurfaceForest {
    * absent rather than replaced with a stand-in.
    */
   private addProps(): void {
+    if (this.floorField) return; // Regional dressing owns masked, grounded deadwood.
     const rng = mulberry32(this.world.seed ^ 0x5eed1);
     for (let i = 0; i < 3; i++) {
       const id: AssetId = rng() < 0.6 ? 'prop.stump' : 'prop.log';
@@ -475,12 +510,11 @@ export class SurfaceForest {
     const seasonIndex = SEASONS.findIndex(s => s.id === season);
     const next = SEASONS[(seasonIndex + 1) % SEASONS.length].id;
     const fade = THREE.MathUtils.smoothstep(progress, 0.65, 1);
-    const color = new THREE.Color(PALETTE[season]).lerp(new THREE.Color(PALETTE[next]), fade);
     const densities: Record<SeasonId, number> = { spring: 0.85, summer: 1, autumn: 0.7, winter: 0.04 };
     const density = THREE.MathUtils.lerp(densities[season], densities[next], fade);
     this.ground.scale.z = Math.max(0.006, blend);
     this.ground.visible = blend > 0.01;
-    this.floorMaterial.roughness = season === 'summer' ? 1 : 0.88;
+    this.floorSurface.update(season, progress, this.world.rainfall);
     for (const v of this.trees) {
       const health = v.tree.dead ? 0 : v.tree.health;
       const growth = (0.7 + v.tree.maturity * 0.5) / (0.7 + v.initialMaturity * 0.5);
@@ -493,7 +527,7 @@ export class SurfaceForest {
       if (v.model) {
         // Authored foliage takes the season's colour; bark keeps the artist's
         // and only browns as the tree's health falls.
-        const leaf = v.tree.species === 'hemlock' ? HEMLOCK_LEAF : color;
+        const leaf = foliageColour(v.tree.species, season, progress);
         for (const tint of v.model.foliage) {
           tint.material.color.copy(leaf).lerp(DEAD_COLOR, 1 - health).multiplyScalar(dim);
         }
@@ -501,7 +535,7 @@ export class SurfaceForest {
           tint.material.color.copy(tint.base).lerp(DEAD_COLOR, (1 - health) * 0.7).multiplyScalar(dim);
         }
       } else {
-        v.material.color.copy(v.tree.species === 'hemlock' ? HEMLOCK_LEAF : color).lerp(DEAD_COLOR, 1 - health);
+        v.material.color.copy(foliageColour(v.tree.species, season, progress)).lerp(DEAD_COLOR, 1 - health);
         v.material.color.multiplyScalar(dim);
         v.leaves.count = Math.floor(v.leafCount * (v.tree.species === 'hemlock' ? 0.95 : density) * health);
       }

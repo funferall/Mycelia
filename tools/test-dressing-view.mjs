@@ -64,8 +64,8 @@ try {
   );
   check('background trees start coarse', report.dressing.tier === 2);
   check(
-    'every decoration was placed but only the tree layers are drawn yet',
-    report.dressing.planted <= report.dressing.decorations
+    'all vegetation and ground layers are drawn',
+    report.dressing.planted === report.dressing.decorations
   );
 
   // The scenery must not be part of picking: the pick target list is the same
@@ -196,7 +196,10 @@ try {
     const normal = await context.newPage();
     const normalProblems = collectProblems(normal);
     await normal.goto(`${server.url}/?lab=forest&seed=raven-wood`, { waitUntil: 'domcontentloaded' });
-    await normal.waitForFunction(() => window.mycelia.game?.renderReport().dressing.planted > 0);
+    await normal.waitForFunction(() => {
+      const report = window.mycelia.game?.renderReport();
+      return report?.dressing.planted > 0 && report.dressing.settled;
+    });
     const normalCounts = await normal.evaluate(() => {
       // Same band on both pages: the preset must not change the forest, and
       // neither should the fixture's last state.
