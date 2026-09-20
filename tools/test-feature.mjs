@@ -9,6 +9,7 @@ const suites = {
   assets: ['check-forest-assets.mjs'],
   spatial: ['test-spatial.mjs'],
   crossing: ['test-crossing.mjs'],
+  dressing: ['test-dressing.mjs', 'test-dressing-view.mjs'],
   views: [null, 'test-view.mjs'],
   navigation: [null, 'test-navigation.mjs'],
   journey: [null, 'test-journey.mjs'],

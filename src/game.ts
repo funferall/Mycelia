@@ -8,6 +8,8 @@ import { COMMUNITY_LABEL, type Region } from './sim/region';
 import { RegionalMatch } from './sim/match';
 import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
+import { ForestDressing } from './render/forest-dressing';
+import { playableTrunkPositions, type DressingBand } from './render/forest-dressing-layout';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
@@ -126,6 +128,11 @@ export class Game {
   /** The headless spatial fixture, when `?lab=crossing` asked for it. */
   private labCrossing: LabCrossingMatch | null = null;
 
+  /** Background vegetation. Presentation only: never a tree, never pickable. */
+  private dressing: ForestDressing;
+  private dressingBand: DressingBand = 'medium';
+  private dressingDirty = false;
+
   private pointerMoved = 0;
   private lastX = 0;
   private lastY = 0;
@@ -167,6 +174,15 @@ export class Game {
     this.stage.scene.add(this.stream.group);
     this.treeBatches = new TreeBatches(this.surfaces.reduce((sum, surface) => sum + surface.trees.length, 0));
     this.stage.scene.add(this.treeBatches.group);
+    // Background vegetation: one region-wide layout, drawn per stand so a stand
+    // can be inspected, folded and culled on its own.
+    this.dressing = this.buildDressing();
+    this.stage.scene.add(this.dressing.group);
+    // A tier file that arrives changes which geometry the scenery can wear, so
+    // the next frame rebuilds it rather than waiting for a camera move.
+    this.assets.onLoad = () => {
+      this.dressingDirty = true;
+    };
     // Art is opportunistic: the stand above is already drawn procedurally, and
     // whatever loads is handed over as it arrives.
     void this.assets.load().then(() => this.adoptAssets());
@@ -243,6 +259,10 @@ export class Game {
    */
   private adoptAssets(): void {
     for (const surface of this.surfaces) surface?.adoptAssets();
+    // Scenery is laid out from the same library: a decoration whose art has just
+    // arrived joins its stand's batches, and one whose art is missing is
+    // simply not drawn rather than replaced by a fallback.
+    this.dressing.build(this.dressingBand);
     for (const note of this.assets.failures) console.warn(`mycelia: ${note}`);
   }
 
@@ -303,6 +323,39 @@ export class Game {
    */
   enableSteward(): void {
     this.steward = true;
+  }
+
+  /**
+   * Lay out and build the region's background vegetation.
+   *
+   * The playable population is the simulation's own trees: their regional
+   * positions come from `treeLocalOffset`, so the scenery keeps clear of exactly
+   * the trunks the player can select, and a decoration can never be mistaken
+   * for one of them - it has no simulation identity at all.
+   */
+  private buildDressing(): ForestDressing {
+    const founding = this.region.stands[this.region.foundingStand];
+    const playable = playableTrunkPositions(
+      this.region.stands.map((site) => ({ id: site.id, sx: site.sx, sy: site.sy })),
+      (standId) => this.match.stands[standId].sim.world.trees.map((tree) => ({
+        id: tree.id,
+        gx: tree.gx,
+        seed: tree.seed,
+        height: tree.height,
+      }))
+    );
+    return new ForestDressing(this.assets, {
+      region: this.region,
+      course: this.region.streamPath,
+      playable,
+      // The scenery is placed in the same rebased frame the stands are built
+      // in, and is shifted with them when the player enters another stand.
+      sceneOrigin: {
+        x: (founding?.sx ?? 0) * TILE_SIZE,
+        y: (founding?.sy ?? 0) * TILE_SIZE,
+      },
+      band: this.dressingBand,
+    });
   }
 
   /**
@@ -371,6 +424,62 @@ export class Game {
     this.sim.world.waterTableCm = Math.max(10, Math.min(GRID.rows, cm));
     this.groundwater.update(0);
     this.soil.refreshColors();
+  }
+
+  /**
+   * Forest bench: dress the region, leave it bare, or change its density band.
+   *
+   * Purely presentational. Nothing here touches the simulation, and turning the
+   * scenery off does not change which trees exist, which are selectable or what
+   * the selector lists.
+   */
+  setLabDressing(enabled: boolean): void {
+    this.dressing.setVisible(enabled);
+  }
+
+  setLabDressingBand(band: DressingBand): void {
+    this.dressingBand = band;
+    this.dressing.build(band);
+  }
+
+  /**
+   * Forest bench: isolate one community's stand, or the whole region.
+   *
+   * The fixture exists so a single community can be judged on its own without
+   * hiding the fact that it came out of one region-wide layout.
+   */
+  focusLabCommunity(community: string | null): { ok: boolean; standId: number | null; message: string } {
+    if (community === null || community === '') {
+      this.dressing.setFocus(null);
+      return { ok: true, standId: null, message: 'Whole region' };
+    }
+    const stand = this.region.stands.find((site) => site.community === community);
+    if (!stand) return { ok: false, standId: null, message: `No ${community} stand in this seed` };
+    this.dressing.setFocus(stand.id);
+    const surface = this.surfaces[stand.id];
+    // Frame that stand's own ground, in the region's rebased frame. The fixture
+    // snaps rather than gliding so the same command always gives the same pose.
+    if (surface) {
+      this.selectedStandId = stand.id;
+      for (const other of this.surfaces) other.selectedId = null;
+      this.stage.rig.snapForest(surface.group.position.x, surface.group.position.z - TILE_SIZE / 2, 210);
+    }
+    return {
+      ok: true,
+      standId: stand.id,
+      message: `${COMMUNITY_LABEL[stand.community]} Â· stand ${stand.id + 1}`,
+    };
+  }
+
+  /** Communities this seed actually contains, for the bench's selector. */
+  labCommunities(): Array<{ id: string; label: string; standId: number }> {
+    const seen = new Map<string, number>();
+    for (const site of this.region.stands) if (!seen.has(site.community)) seen.set(site.community, site.id);
+    return [...seen].map(([id, standId]) => ({
+      id,
+      label: COMMUNITY_LABEL[id as keyof typeof COMMUNITY_LABEL],
+      standId,
+    }));
   }
 
   private stewardTick(): void {
@@ -473,6 +582,7 @@ export class Game {
     selectedTreeId: number | null;
     simSeconds: number;
     batching: ReturnType<TreeBatches['report']>;
+      dressing: ReturnType<ForestDressing['report']>;
   } {
     const surfaces = this.surfaces.filter((surface): surface is SurfaceForest => Boolean(surface));
     const lodTiers = [0, 0, 0];
@@ -509,6 +619,7 @@ export class Game {
       selectedTreeId: this.selectedStandId === null ? null : this.surfaces[this.selectedStandId]?.selectedId ?? null,
       simSeconds: Math.round(this.sim.time),
       batching: this.treeBatches.report(),
+      dressing: this.dressing.report(),
     };
   }
 
@@ -572,6 +683,20 @@ export class Game {
       surface.updateLod(this.stage.rig.camera);
     }
     this.treeBatches.sync(this.authoredTrees());
+    // Background vegetation follows the same fold, season and clock as the
+    // trees around it. Its tier is chosen per stand with hysteresis, so it
+    // refines when the camera arrives instead of being rebuilt every frame.
+    if (this.dressingDirty) {
+      this.dressingDirty = false;
+      this.dressing.build(this.dressingBand);
+    }
+    this.dressing.update(dt, {
+      blend,
+      season: this.sim.season.id,
+      progress: this.sim.seasonClock / this.sim.season.seconds,
+      reduced: !this.ambientMotion,
+    });
+    this.dressing.refine(this.stage.rig.camera, dt);
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
@@ -836,6 +961,9 @@ export class Game {
     // The stream belongs to the region, not to the stand, so it is shifted with
     // the landscape rather than rebuilt.
     this.stream.group.position.add(new THREE.Vector3(dx, 0, dz));
+    // The scenery belongs to the region too: shifting beats rebuilding, and the
+    // decorations keep their identities across a stand change.
+    this.dressing.group.position.add(new THREE.Vector3(dx, 0, dz));
     this.stage.rig.rebaseForest(dx, dz);
     this.soil = new SoilMesh(this.sim.world);
     this.forest = new ForestView(this.sim.world);

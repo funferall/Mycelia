@@ -66,6 +66,14 @@ regional XYZ coordinates and one shared soil volume (`MAP-14` stages 1-2), and
 the flat transect; promoting the fixture's coordinator into `RegionalMatch` and
 then adding sections and the forest reveal are the next gates.
 
+The forest itself is being filled in (`ASSET-04`): a pure region-wide layout
+places background canopy, regeneration and ground cover by community, and the
+canopy and regeneration layers are drawn as per-tier instance batches, so the
+region reads as woodland with clearings rather than a sparse set of playable
+trees. The scenery is presentation only - separate keys, no simulation
+identity, no picking - and the understory layers, the ground material and the
+density tuning are the next steps in that lane.
+
 The forest carries a regional survey layer (`MAP-11`): `S`, or **Survey the
 region**, opens a printed ledger of the nine stands with their community, water,
 colony state, broad forest health, founding parent and lineage continuity. It is
@@ -167,6 +175,8 @@ the unchanged normal preset.
 | Shared spatial coordinates | `src/sim/spatial.ts` | Regional `x`/`y`, absolute `z` and derived depth; half-open stand ownership; stable node/tree/root-tip references; supercover segment traversal; the invertible Three.js adapter; simulation-owned tree placement (`MAP-14` stage 1) |
 | Regional soil volume | `src/sim/soil-volume.ts` | One analytic material field over global coordinates plus a sparse map of changed voxels, a continuous regional groundwater elevation and a distance-to-course stream query (`MAP-14` stage 2) |
 | Crossing fixture | `src/sim/crossing.ts` | One colony graph spanning two adjacent stands on a fixed section plane, stepped by the shared economy over the shared soil volume (`MAP-07` stages 3-4) |
+| Background placement | `src/render/forest-dressing-layout.ts` | Pure, seedable region-wide placement of non-interactive canopy, regeneration and ground cover: ownership by half-open bounds, clusters and gaps, crown-size spacing, community composition and exclusion masks (`ASSET-04`, `MAP-05`) |
+| Background drawing | `src/render/forest-dressing.ts` | Normalised, merged per-asset geometry drawn as `(tier, asset, category)` instance batches, with per-decoration projected-size LOD, shader wind, season tint and no per-frame matrix writes (`ASSET-04`) |
 | Integration | `src/game.ts`, `src/main.ts` | Regional fixed-step loop, stand switching, local view rebinding, input, UI/audio synchronization |
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
@@ -179,7 +189,7 @@ the unchanged normal preset.
 | Shared stage | `src/render/{stage,quality,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom, opt-in fast QA preset |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
 | Interface | `index.html`, `src/styles.css`, `src/ui/{sheet,journey}.ts` | Botanical field interface, resources, orders, guidance, view and tree controls |
-| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-spatial.mjs`, `tools/test-crossing.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region, for the shared coordinates and soil volume and for the two-stand crossing, LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
+| Validation | `tools/test-sim.mjs`, `tools/test-region.mjs`, `tools/test-spatial.mjs`, `tools/test-crossing.mjs`, `tools/test-dressing.mjs`, `tools/test-dressing-view.mjs`, `tools/test-lod.mjs`, `tools/test-view.mjs`, `tools/test-journey.mjs`, `tools/shoot.mjs`, `tools/{browser,preview}.mjs` | Headless regressions for one stand, for a region, for the shared coordinates and soil volume, for the two-stand crossing and for background placement, a bounded renderer check for the dressing, LOD bands and hysteresis, browser checks for the connected views, tiers and input, a whole match played through the interface, and screenshot/error capture |
 
 The ordinary match's soil is still a two-dimensional transect. Each simulated
 tree has one horizontal `gx` coordinate and stable root IDs.
@@ -240,9 +250,9 @@ and equivalent useful details have been accounted for, then remove it.
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
 | ASSET-01 | Partial | Authored model intake | The existing registry loads six replacement botanical models; scaling, ground correction, seasonal/health material tint and procedural fallback are unchanged. Tree and sapling GLBs now contain `anchor_crown`; the loader still ignores it. Manifest LOD and regional wood/foliage batching are implemented. Remaining: browser missing-file/late-load checks, anchor consumption and dead-variant switching. Current art verification is recorded under 19 September below; the 18 September browser results describe the previous art. |
-| ASSET-02 | Partial | Botanical asset pack | `tools/make-forest-assets.py` builds 21 original low-poly assets / 39 GLBs: three living species and their dead/hollow variants, three saplings, fern, grass, stump, log, snag, root plate, four reproductive bodies and two rock props. The six original paths replace placeholders immediately; other files are listed in `forest-manifest.json` for integration. Remaining: art-direction acceptance, fruiting-body integration into LivingView/surface outcomes, community-driven prop placement, new understory/rock/spore usage, and runtime dead variants. This is a stylized botanical first pass, not photoreal scanned art. |
-| ASSET-03 | Partial | Asset contract, LOD and validation | Manifest-driven projected-size LOD with 15% hysteresis is retained. Region-wide TreeBatches groups authored parts by asset, tier, geometry and material; instance matrices retain placement, growth and wind, and instance colours retain health and season. Stable stand:tree mappings survive slot/tier changes; crown proxies remain selectable. Focused batch tests cover transforms, colours, buffer growth, tier migration and re-entry. Remaining: authored wind clips, dropped-in-file validation, loader failure/late-load QA, crown anchors, dead variants and distance-transition tuning. |
-| ASSET-04 | Planned | Dense non-interactive forest dressing | Reuse the existing tree/understory/prop pack in deterministic, community-driven batches. Background vegetation has no playable Tree identity, roots, economy or picking proxy. See the fuller-forest plan in Current priorities. |
+| ASSET-02 | Partial | Botanical asset pack | `tools/make-forest-assets.py` builds 21 original low-poly assets / 39 GLBs: three living species and their dead/hollow variants, three saplings, fern, grass, stump, log, snag, root plate, four reproductive bodies and two rock props. The six original paths replace placeholders immediately, and the runtime registry now also exposes the three saplings, fern, grass, boulder and snag so the dressing can ask for them and warm their tiers. `forest-manifest.json` LOD tiers are consumed for every id the registry knows. Remaining: art-direction acceptance, fruiting-body integration into LivingView/surface outcomes, drawing the placed understory and deadwood layers, and runtime dead variants. This is a stylized botanical first pass, not photoreal scanned art. |
+| ASSET-03 | Partial | Asset contract, LOD and validation | Manifest-driven projected-size LOD with 15% hysteresis is retained. Region-wide TreeBatches groups authored parts by asset, tier, geometry and material; instance matrices retain placement, growth and wind, and instance colours retain health and season. Stable stand:tree mappings survive slot/tier changes; crown proxies remain selectable. Focused batch tests cover transforms, colours, buffer growth, tier migration and re-entry. `AssetLibrary.batchParts()` now exposes an asset's shared parts and its authored height and ground offset, so the dressing can normalise and merge them once instead of cloning an object per tree; `nearestLoaded` takes a coarse-first fallback for scenery. Remaining: authored wind clips, dropped-in-file validation, loader failure/late-load QA, crown anchors, dead variants and distance-transition tuning. |
+| ASSET-04 | Partial | Dense non-interactive forest dressing | `src/render/forest-dressing-layout.ts` places the region's background vegetation from one pure, seedable layout over regional coordinates: half-open stand ownership so a tree on a shared edge is emitted once, clusters and gaps from low-frequency density fields, crown-size spacing, community composition for seven communities, and exclusion masks for the open channel, its banks and the playable crowns. `src/render/forest-dressing.ts` draws it as `(tier, asset, category)` instance batches over normalised, merged per-asset geometry, with per-decoration projected-size LOD, a shader wind term, season tint on instance colours, and no per-frame matrix writes. Decorations have their own `dressing:stand:index` keys, no simulation identity, and are absent from every pick target list. The fixture bench isolates one community and switches bands on, off, medium and dense. Remaining: only the canopy and regeneration layers are drawn - ferns, grass, rocks and deadwood are placed but not yet rendered; the uniform grass and litter scatter has not been redistributed onto those masks; the default medium band and the background LOD thresholds are first-pass numbers, not hardware-tuned; and no art-direction acceptance has been done. |
 
 ### Regional map, terrain, forest stands, and water
 
@@ -252,7 +262,7 @@ and equivalent useful details have been accounted for, then remove it.
 | MAP-02 | Partial | Continuous regional surface | Shared terrain and all nine stands render continuously. The drainage ribbon now has rounded bends, soft banks, slow shader currents and instanced brook stones; it folds and rebases with the landscape. Focused water browser checks exercise actual shader output at fast and normal quality. Remaining: ponds, broader exposed rock placement, and near-camera floor/slab defects. |
 | MAP-03 | Partial | Terrain-first generation | Elevation, a regional fall line, a valley, drainage from a priority flood, flow accumulation and aspect are all generated before anything is placed, deterministically from the seed. Remaining: exposed rock, parent material and deadwood are still local, and there is no generator-version field. |
 | MAP-04 | Partial | Hydrology and water features | The region owns the stream course, stand channel and wet banks. Surface water has analytic flow and eddies; underground water and soil share an 8 cm capillary gradient above the live table. Hyphae can touch that upper fringe but cannot extend into saturated ground, including paid targets invalidated by a rising table. Existing submerged strands persist but stop extending; soil under the stream bed only becomes passable as the table recedes. `src/sim/soil-volume.ts` now answers the spatial path with a continuous regional groundwater elevation and a distance-to-course channel query sharing the bed and table elevations, so one segment is refused by the same water from either stand. Focused headless and rendered checks are recorded below. Remaining: ponds, vernal pools, springs, seasonal channels, erosion, oxygen stress on existing strands, and the ordinary transect's own mean-column projection, which is still what the running game draws. |
-| MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. Remaining: density, age structure, canopy openness, understory, litter and deadwood still do not vary by community, and the floor props are seeded per stand rather than chosen by the community. |
+| MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. The background vegetation reads the same seven communities: canopy density, stature, species mix, regeneration, fern, grass, rock and deadwood lean per community, and a stand's own density field makes two stands of one community differ. `tools/test-dressing.mjs` asserts that ravines carry more conifer than ridges, that ridges are rockier than ravines, and that clearings are younger than ridges. Remaining: playable-tree age structure and canopy openness still do not vary by community, the placed understory and deadwood layers are not drawn yet, and the floor props are still seeded per stand. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
 | MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Stages 3-4 now land as the `?lab=crossing` fixture: one colony graph grows across a real shared edge in two adjacent stands on one section plane in about six seconds of ordinary growth, keeping one root, one node budget and one set of stores; parent links span the seam; a seam crossing changes only the strand's stand bucket; the destination stand's own trees are activated by the simulation rather than by being viewed; growth pays the ordinary entry price with no seam tax; the destination voxel is consumed once per arrival; a remote bonded tree in the far stand pays the same connected body; cutting every seam-spanning strand severs and starves the far side without erasing it; a cord pays its charge; a flooded target is refused; all four edge directions cross; and watching a section changes no simulation state. Remaining: the ordinary match is not yet the spatial coordinator (`RegionalMatch` still steps one local `Simulation` per stand), cords do not cross a seam in play, no section browsing (`VIEW-06`) or forest reveal (`VIEW-07`) exists, and infection, warnings and roots crossing a boundary are untouched. Follow the staged spatial-growth specification in Current priorities. |
 | MAP-08 | Partial | Regional exploration and information | Stand survey and crown selection lead into a colonized stand's persistent underground context. Orders, catalogue, rail, roots, rewards and networks use that stand; the forest camera is rebased with the landscape so return preserves context. Uncolonized ground explains why descent is unavailable. Remaining: water-feature selection, incomplete surveys and network sensing. |
@@ -453,7 +463,7 @@ Ecological references supporting this direction:
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
 | PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960×640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles, with authored trees batched into 12 draws over 150 parts. Remaining: hardware-GPU measurements, simulation and network-ceiling budgets, and byte-accurate GPU memory. |
 | PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 783.73 kB (209.03 kB gzip), plus the opt-in 1.14 kB test bench with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle counts alone are not a frame-time budget. |
-| QA-01 | Partial | Feature testing and direct scene fixtures | `test:feature -- --list` routes water, simulation, region, LOD, batches, assets, views, navigation and journey checks; browser routes build current code first and default to fast quality. `?lab=water`, `forest`, `region`, and `growth` opt into synthetic paused fixtures with depth control and fixed-step advance. Water has a sub-second headless suite and focused renderer check. Remaining: other broad suites still need feature-level subdivision; future features must add their own bounded checks. |
+| QA-01 | Partial | Feature testing and direct scene fixtures | `test:feature -- --list` routes water, spatial, crossing, dressing, simulation, region, LOD, batches, assets, views, navigation and journey checks; browser routes build current code first and default to fast quality. `?lab=water`, `forest`, `region`, `growth` and `crossing` opt into synthetic paused fixtures with depth control and fixed-step advance; the forest fixture adds dressing on/off, the three density bands and a community selector. Water, spatial, crossing and dressing each have a headless suite in seconds, and water and dressing have focused renderer checks. Remaining: other broad suites still need feature-level subdivision; future features must add their own bounded checks. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
@@ -710,10 +720,33 @@ No tests are needed for this planning-only update. Mark `ASSET-04`/`VIEW-08`
 Verified only after the associated behavior and images have been checked;
 update `MAP-05`, `ASSET-03` and `PERF-02` only for gaps actually closed.
 
-**DeepSeek starting task:** implement A and the pure placement part of B;
-then render one community fixture with batched existing LOD2 background trees.
-Do not increase `World.trees` or simulate more tree partners. Once that is
-reviewable, expand placement across the region and improve ground materials.
+**DeepSeek starting task: A, the pure placement part of B, and the fixture are
+done.** `src/render/forest-dressing-layout.ts` is the pure region-wide layout
+(deterministic, half-open ownership, clusters and gaps, community composition,
+channel and playable-tree masks), and `src/render/forest-dressing.ts` draws the
+canopy and regeneration layers as `(tier, asset, category)` instance batches of
+normalised LOD2 geometry, with per-decoration projected-size LOD. `World.trees`
+is untouched: scenery has its own keys, no root tips, no bonds, no economy and
+no place in any pick target list, and `tools/test-dressing.mjs` asserts that the
+simulation's checksum is identical with the layout running. The `?lab=forest`
+bench switches dressing on and off, changes band, and isolates one community.
+`tools/test-dressing.mjs` and `tools/test-dressing-view.mjs` are exposed as
+`test:feature -- dressing`.
+
+Next, in this order:
+
+1. Wire the `ForestDressingInput.stands` filter and the band into a
+   normal-quality capture pass and tune the default band and the background LOD
+   bands from those images. The measured first pass is recorded below; the
+   default is `medium` because it is the first band that reads as woodland at
+   the region overview, not because it has been tuned on hardware.
+2. Expose the remaining placed kinds - fern, grass, boulder, log, stump, snag -
+   and redistribute the existing uniform grass/litter scatter onto the same
+   masks instead of adding another indiscriminate layer.
+3. Then replace the striped ground material (`VIEW-08`), including the
+   near-camera ground/backing defect, and re-inspect the forest-to-underground
+   crossing afterwards.
+
 Keep all durable progress and verification in this file.
 
 ### Cross-stand spatial growth and connected views: implementation sequence
@@ -1254,6 +1287,17 @@ either foundation.
   own transect world while the colony's material comes from the shared volume -
   two soil models still coexist, and unifying them is part of promoting the
   fixture into `RegionalMatch`. Nothing is drawn from the fixture yet.
+- The background forest is presentation only, and partial: canopy and
+  regeneration are drawn from the authored pack, while ferns, grass, boulders,
+  logs, stumps and snags are placed by the same layout but not yet rendered.
+  The uniform 2,200 grass and 1,600 litter instances are still the old scatter,
+  so the floor has not yet been redistributed onto the new masks. The default
+  density band (`medium`, 48 canopy trees per stand nominal) and the background
+  LOD thresholds are first-pass numbers measured only on the software backend;
+  they are not an art-direction or frame-time acceptance, and the region
+  overview's diagonal ground banding is untouched (`VIEW-08`). The scenery is
+  hidden rather than folded as the camera descends, because it has no roots to
+  carry below; the terrain is already opaque over it at that point.
 - The match renders nine stands and players can enter colonized underground
   transects. A local view is rebuilt and its owned GPU resources disposed on
   each stand change; this bounds residency but may hitch on entry. There is no
@@ -1315,6 +1359,91 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 20 September 2026: background forest dressing (`ASSET-04`, `MAP-05`)
+
+Landed `src/render/forest-dressing-layout.ts`, `src/render/forest-dressing.ts`,
+`tools/test-dressing.mjs`, `tools/test-dressing-view.mjs`, the `assets.ts`
+registry and `batchParts()` additions, and the `?lab=forest` bench controls.
+`World.trees` and every simulation number are untouched.
+
+What is implemented:
+
+- **Pure placement.** Candidates are generated in region cells and owned by
+  half-open stand bounds, so a tree on a shared edge is emitted once and the
+  same seed always produces the same forest. Two low-frequency fields make
+  clusters and gaps, spacing is a function of the two crown sizes being placed
+  (deliberately below their sum, so neighbourhood crowns close over each other),
+  and every decoration is seated on the region's own `heightAt`.
+- **Community composition.** Seven community profiles lean canopy density,
+  stature, species mix, regeneration, fern, grass, rock and deadwood; a stand's
+  own macro field makes two stands of one community differ. The channel, its
+  banks and a crown-sized clearing around every playable trunk are excluded
+  before a candidate is placed.
+- **One layout, cheap drawing.** `forest-dressing.ts` normalises each model part
+  once (unit height, base at the origin, authored colour in vertex colours),
+  merges an asset's parts into a wood and a foliage geometry, and batches by
+  `(tier, asset, category)` with shared materials. A decoration earns its tier
+  from its own projected size with hysteresis, falling back to a *coarser* file
+  and waiting rather than borrowing a finer one; the tier pass is gated to
+  0.35s or real camera movement, and the batches rebuild when a tier file lands.
+  Wind is a shader term phased by the instance translation, and reduced motion
+  stops the clock.
+- **Not pickable, not simulated.** Decorations carry `dressing:stand:index`
+  keys, are never added to a surface's `pickTargets`, and have no root tips,
+  bonds or stores.
+
+Current checks executed on this implementation:
+
+- `npm run typecheck` and `npm run build` - pass. Production JS is 802.72 kB
+  (215.67 kB gzip) plus the 3.08 kB opt-in bench chunk; the Vite chunk-size
+  warning is unchanged.
+- `npm run test:dressing` - 8 checks pass in 1.09s: identical output for one
+  input and a different region for another seed; the playable list order cannot
+  change it; no input array or stand is written; a match stepped with the layout
+  running between ticks hashes identically to one without it; every decoration
+  is owned by the stand its position falls in and each candidate cell yields at
+  most one canopy; every decoration sits exactly on `heightAt`; no decoration is
+  in the channel or its bank and none crowds a playable trunk; no two
+  decorations are closer than their crowns allow and the densest sampled stand
+  still has openings over 8 units wide; a denser band plants more; ravines carry
+  more conifer and fewer rocks than ridges and clearings are younger; and one
+  community can be isolated with the same ground and the same rules.
+- `npm run test:feature -- dressing --browser` - both suites pass: 8 headless
+  checks and 13 browser checks in 40.0s at `qa=fast` on SwiftShader, no browser
+  or shader-compiler errors. The renderer checks cover: the region opens with
+  dressed scenery across all nine stands; background trees open at LOD2; turning
+  the scenery off removes no pick target and keeps the playable population;
+  clicking four points among the scenery only ever selects a tree the selector
+  itself lists; one community can be isolated and the rest of the region stays
+  planted; and the fast preset plants exactly the same forest as normal.
+- Measured cost at `qa=fast`, SwiftShader, seed `raven-wood`, 1200x800 CSS with a
+  600x400 drawing buffer: at the region overview with the default `medium` band
+  the dressing draws 568 background trees in **12 draw calls** and **143,548
+  triangles** (all LOD2, every declared tier loaded); at the fixture's community
+  pose the `sparse` band draws 287 trees in 12 calls and 72,354 triangles and
+  the `dense` band draws 852 trees in 12 calls and 215,076 triangles. The
+  scenery adds 12 draw calls to the 53-65 the forest already drew at that
+  camera, so cost scales with tiers and assets rather than with tree count.
+- Captures inspected (ignored paths, regenerated by the command above):
+  `design/shots/dressing-region-fast.png` and
+  `design/shots/dressing-community-fast.png`. The overview now reads as
+  continuous woodland with visible clearings instead of scattered trees, and the
+  close-up shows overlapping crowns with hemlocks and saplings mixed in.
+- `npm run test:assets` - pass: 21 assets, 39 GLBs, 1,266.7 KiB, with every
+  registry id present in the manifest.
+- `npm run test:feature -- water --browser` - 13 checks pass at `qa=fast` with no
+  browser errors (68.8s). That is the scoped check for the shared fixture bench,
+  which now carries the forest panel as well as the water one.
+
+Not verified, and the honest state of this changeset: `test:view`,
+`test:journey`, `test-navigation`, `test:sim` and `test:region` were not re-run
+(nothing in `src/sim/` changed, and the renderer checks above cover what moved);
+the understory and deadwood layers are placed but not drawn; the old uniform
+grass and litter scatter is still there; the ground is still the striped
+`VIEW-08` recipe; the density band and background LOD thresholds have not been
+tuned on hardware, and no profile was run; and the scenery's cut-away on
+descent has not been inspected through a full crossing.
 
 ### 20 September 2026: one colony across one stand edge (`MAP-07` stages 3-4)
 
@@ -2084,6 +2213,29 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 20 September 2026: background forest dressing
+
+- Added a pure, seedable region-wide layout for the forest's background
+  vegetation (`ASSET-04`, `MAP-05`): half-open stand ownership, clusters and
+  gaps from a low-frequency density field, crown-size spacing, seven community
+  profiles, and exclusion masks for the stream, its banks and the playable
+  crowns (`src/render/forest-dressing-layout.ts`).
+- Added `src/render/forest-dressing.ts`: normalised per-asset wood and foliage
+  geometry drawn as `(tier, asset, category)` instance batches, per-decoration
+  projected-size LOD with a coarse-first fallback, a shared wind shader,
+  season tint on instance colours, and no per-frame matrix work. The scenery is
+  never a pick target and never a simulation tree.
+- Exposed the delivered saplings, fern, grass, boulder and snag in the asset
+  registry, and added `AssetLibrary.batchParts()` so scenery can share an
+  asset's geometry instead of cloning an object per tree.
+- Extended the `?lab=forest` bench with dressing on/off, the three density
+  bands and a community selector, and added `npm run test:dressing` plus
+  `test:feature -- dressing` with a bounded browser smoke.
+- Recorded the measured cost (568 background trees in 12 draw calls and 143,548
+  triangles at the region overview) and left the density band, the background
+  LOD thresholds, the undrawn understory layers and the striped ground as the
+  next work.
 
 ### 20 September 2026: shared spatial coordinates and one real crossing
 

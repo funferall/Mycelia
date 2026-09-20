@@ -12,11 +12,14 @@ const FLOOR = GRID.rows / 2;
 /** One stand is a square of ground this wide, in world units. */
 export const TILE_SIZE = GRID.cols;
 export const FOREST_DEPTH = TILE_SIZE;
-const PALETTE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
+/** The season's foliage colour, shared with the background dressing. */
+export const SEASON_FOLIAGE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
+const PALETTE = SEASON_FOLIAGE;
 /** Which authored model dresses each species. */
 const TREE_ASSET: Record<string, AssetId> = { oak: 'tree.oak', birch: 'tree.birch', hemlock: 'tree.hemlock' };
 const DEAD_COLOR = new THREE.Color('#6c5840');
-const HEMLOCK_LEAF = new THREE.Color('#496448');
+/** Evergreen foliage keeps its own colour through every season. */
+export const HEMLOCK_LEAF = new THREE.Color('#496448');
 
 /** Release the geometry of a procedural body that an authored model replaced. */
 function disposeBody(root: THREE.Object3D): void {

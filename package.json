@@ -23,7 +23,8 @@
     "test:feature": "node tools/test-feature.mjs",
     "test:region": "node tools/test-region.mjs",
     "test:spatial": "node tools/test-spatial.mjs",
-    "test:crossing": "node tools/test-crossing.mjs"
+    "test:crossing": "node tools/test-crossing.mjs",
+    "test:dressing": "node tools/test-dressing.mjs"
   },
   "dependencies": {
     "three": "^0.186.0"

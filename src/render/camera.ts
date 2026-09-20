@@ -319,6 +319,20 @@ export class CameraRig {
     this.goal.distance = 150;
   }
 
+  /**
+   * Put the forest camera somewhere exactly, without the smoothing.
+   *
+   * The fixture bench needs a pose that is reproducible frame for frame, so a
+   * capture taken twice is the same picture; a player's own zoom is unaffected.
+   */
+  snapForest(x: number, z: number, distance: number): void {
+    this.setView('forest', true);
+    this.autoByView.forest = false;
+    this.goal.target.set(x, 69, z);
+    this.goal.distance = distance;
+    this.snap();
+  }
+
   private snap(): void {
     this.target.copy(this.goal.target);
     this.distance = this.goal.distance;

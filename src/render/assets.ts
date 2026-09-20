@@ -32,8 +32,15 @@ export type AssetId =
   | 'tree.oak'
   | 'tree.birch'
   | 'tree.hemlock'
+  | 'understory.oak-sapling'
+  | 'understory.birch-sapling'
+  | 'understory.hemlock-sapling'
+  | 'understory.fern'
+  | 'understory.grass'
   | 'prop.stump'
   | 'prop.log'
+  | 'prop.snag'
+  | 'prop.boulder'
   | 'fungus.fruitingBody';
 
 export interface AssetSpec {
@@ -54,8 +61,15 @@ export const ASSETS: readonly AssetSpec[] = [
   { id: 'tree.oak', file: 'trees/oak.glb', use: 'oak crown' },
   { id: 'tree.birch', file: 'trees/birch.glb', use: 'birch crown' },
   { id: 'tree.hemlock', file: 'trees/hemlock.glb', use: 'hemlock crown' },
+  { id: 'understory.oak-sapling', file: 'understory/oak-sapling.glb', use: 'young oak in a gap' },
+  { id: 'understory.birch-sapling', file: 'understory/birch-sapling.glb', use: 'young birch in a gap' },
+  { id: 'understory.hemlock-sapling', file: 'understory/hemlock-sapling.glb', use: 'young hemlock in a gap' },
+  { id: 'understory.fern', file: 'understory/fern.glb', use: 'fern in moist shade' },
+  { id: 'understory.grass', file: 'understory/grass.glb', use: 'grass in an opening' },
   { id: 'prop.stump', file: 'props/stump.glb', use: 'cut trunk on the forest floor' },
   { id: 'prop.log', file: 'props/log.glb', use: 'fallen log on the forest floor' },
+  { id: 'prop.snag', file: 'props/snag.glb', use: 'standing dead wood' },
+  { id: 'prop.boulder', file: 'props/boulder.glb', use: 'exposed rock' },
   { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'fruiting body' },
 ];
 
@@ -88,6 +102,33 @@ export interface AssetInstance {
   height: number;
 }
 
+/** One mesh of a model, in the model's own space, for instanced batching. */
+export interface BatchPart {
+  /** Shared with every other copy of this tier: never disposed by a batch. */
+  readonly geometry: THREE.BufferGeometry;
+  /** The model's own material, which a batch clones once. */
+  readonly material: THREE.MeshStandardMaterial;
+  /** The part's transform relative to the model's root. */
+  readonly matrix: THREE.Matrix4;
+  /** Whether the season recolours this part. */
+  readonly foliage: boolean;
+}
+
+/**
+ * A model reduced to what an instanced batch needs.
+ *
+ * The ground-contact correction is returned separately rather than baked in,
+ * because each instance stands at its own height: a caller scales the model by
+ * `height / authoredHeight` and lifts it by `groundOffset * scale` before
+ * applying the part's own matrix.
+ */
+export interface BatchSource {
+  readonly tier: number;
+  readonly authoredHeight: number;
+  readonly groundOffset: number;
+  readonly parts: readonly BatchPart[];
+}
+
 const FOLIAGE = /leaf|leaves|needle|foliage|canopy/i;
 
 /** The registry file under `public/assets/`. */
@@ -105,6 +146,14 @@ function tierKey(id: AssetId, tier: number): string {
  * network for the game to start or for a frame to be drawn.
  */
 export class AssetLibrary {
+  /**
+   * Called whenever a model finishes loading.
+   *
+   * A caller that draws from the shared geometry (the forest dressing) uses
+   * this to rebuild once its art has arrived, instead of guessing when to look.
+   */
+  onLoad: (() => void) | null = null;
+
   private readonly entries = new Map<AssetId, readonly AssetTier[]>();
   private readonly models = new Map<string, THREE.Object3D>();
   private readonly pending = new Map<string, Promise<boolean>>();
@@ -239,6 +288,7 @@ export class AssetLibrary {
       const root = gltf.scene;
       root.updateMatrixWorld(true);
       this.models.set(key, root);
+      this.onLoad?.();
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -308,15 +358,66 @@ export class AssetLibrary {
     return this.nearestLoaded(id, tier)?.tier ?? null;
   }
 
+  /**
+   * The shared geometry and materials of one tier, for a caller that draws many
+   * copies through `InstancedMesh`.
+   *
+   * `instance()` clones an object hierarchy per copy, which is the right price
+   * for seventy-five playable trees and the wrong price for hundreds of pieces
+   * of scenery. This hands back the model's own parts instead, so a batch can
+   * write one matrix per decoration and share every buffer.
+   */
+  batchParts(id: AssetId, tier = 0, preferCoarser = false): BatchSource | null {
+    const found = this.nearestLoaded(id, tier, preferCoarser);
+    if (!found) return null;
+    const source = found.root;
+    source.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(source);
+    const parts: BatchPart[] = [];
+    source.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (Array.isArray(mesh.material)) return;
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      if (!material || !material.isMeshStandardMaterial) return;
+      parts.push({
+        geometry: mesh.geometry,
+        material,
+        matrix: mesh.matrixWorld.clone(),
+        foliage: FOLIAGE.test(material.name),
+      });
+    });
+    if (parts.length === 0) return null;
+    return {
+      tier: found.tier,
+      authoredHeight: Math.max(0.001, bounds.max.y - bounds.min.y),
+      groundOffset: -bounds.min.y,
+      parts,
+    };
+  }
+
   /** The exact tier when loaded, else the closest one that is. */
-  private nearestLoaded(id: AssetId, tier: number): { tier: number; root: THREE.Object3D } | null {
+  private nearestLoaded(
+    id: AssetId,
+    tier: number,
+    preferCoarser = false
+  ): { tier: number; root: THREE.Object3D } | null {
     const count = this.tiers(id);
     if (count === 0) return null;
     const wanted = Math.min(count - 1, Math.max(0, Math.round(tier)));
     for (let step = 0; step < count; step++) {
       // Finer (lower) tiers are tried first on a tie: better art, same cost to
       // the caller, and the tree refines to the requested tier when it lands.
-      for (const candidate of step === 0 ? [wanted] : [wanted - step, wanted + step]) {
+      // A caller drawing scenery asks for the opposite, because for background
+      // vegetation the coarse file is the right fallback rather than the finest.
+      const candidates =
+        step === 0
+          ? [wanted]
+          : preferCoarser
+            ? [wanted + step, wanted - step]
+            : [wanted - step, wanted + step];
+      for (const candidate of candidates) {
+        if (candidate < 0 || candidate >= count) continue;
         const root = this.models.get(tierKey(id, candidate));
         if (root) return { tier: candidate, root };
       }

@@ -179,6 +179,12 @@ water-depth slider and a ten-second fixed-step advance. These are explicitly
 synthetic fixtures; ordinary URLs keep the normal opening and economy. The
 crossing fixture is simulated and reported in the bench only - nothing is drawn
 from it yet.
+
+In the forest scene the bench also carries the dressing controls: background
+vegetation on, off, or at the medium and dense trial bands, and a community
+selector that isolates one stand so its own planting can be inspected. That
+scenery is presentation only - the playable trees, the selector and every order
+behave exactly as they do with it switched off.
 Scene changes reload the seed for repeatable comparisons. Close the disclosure
 when reviewing the artwork, or use **Exit testing** to return to a normal game.
 
@@ -189,6 +195,7 @@ npm run test:feature -- water --browser # rebuild + focused browser check
 npm run test:feature -- water --browser --normal # full-quality water check
 npm run test:feature -- spatial         # coordinates and the shared soil volume
 npm run test:feature -- crossing        # one colony across one stand edge
+npm run test:feature -- dressing         # background planting; add --browser for the renderer check
 npm run test:feature -- views           # rebuild + fast view smoke
 npm run test:feature -- views --full    # complete view regression
 ```
