@@ -31,6 +31,7 @@ const argOf = (name, fallback) => {
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
 const verbose = args.includes('--verbose');
+const accelerated = args.includes('--accelerated');
 let qa;
 try {
   qa = parseQaPreset(args);
@@ -64,6 +65,7 @@ if (!args.includes('--url')) {
 }
 
 const browser = await launchBrowser();
+try {
 const context = await browser.newContext({ viewport: { width: 1200, height: 760 }, deviceScaleFactor: 1 });
 const page = await context.newPage();
 const problems = collectProblems(page);
@@ -91,8 +93,15 @@ const matchState = () =>
     };
   });
 
-const settleView = () =>
-  page.waitForFunction(() => !window.mycelia.game.viewReport().crossing, null, { timeout: 60000, polling: 'raf' });
+const advanceFrames = (frames = 10) => page.evaluate(frames => {
+  const g = window.mycelia.game;
+  g.stop();
+  for (let i = 0; i < frames; i++) g.frame(g.lastFrame + 100, false);
+}, frames);
+const settleView = async () => {
+  if (accelerated) await advanceFrames(30);
+  else await page.waitForFunction(() => !window.mycelia.game.viewReport().crossing, null, { timeout: 60000, polling: 'raf' });
+};
 
 /**
  * Wait for the match to reach a point, or give up with the state in hand.
@@ -116,7 +125,8 @@ async function until(objective, predicate, budgetSeconds = SIM_BUDGET) {
       failures.push(`${objective} never arrived before the wall-clock timeout: ${JSON.stringify(state)}`);
       return false;
     }
-    await page.waitForTimeout(500);
+    if (accelerated) await advanceFrames();
+    else await page.waitForTimeout(500);
   }
 }
 
@@ -141,6 +151,7 @@ const visibleLabels = () =>
 await page.goto(withQaPreset(url + `/?seed=${seed}`, qa), { waitUntil: 'commit', timeout: 120000 });
 await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
 console.log(formatRenderReport(await readRenderReport(page)));
+if (accelerated) { await page.evaluate(() => window.mycelia.game.stop()); console.log('Accelerated UI journey: fixed-step state frames, GPU draws only at checkpoints.'); }
 
 // 1. The opening is the sheet's own button, and it takes you down to the soil.
 await page.click('#begin');
@@ -156,6 +167,7 @@ check(
 
 // The fastest pace the sheet offers, so the match is minutes rather than hours.
 await page.click('.speed-row button[data-speed="4"]');
+if (accelerated) await advanceFrames(1);
 
 // 2. Reach a root through its label, then bond through the label that appears.
 {
@@ -261,3 +273,8 @@ else console.log('PROBLEMS: none');
 
 if (failures.length > 0 || problems.length > 0) process.exit(1);
 console.log(`PASS: ${results.length} checks.`);
+
+} finally {
+  await browser.close();
+  server?.stop();
+}

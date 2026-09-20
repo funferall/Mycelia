@@ -81,6 +81,7 @@ if (!args.includes('--url')) {
 }
 
 const browser = await launchBrowser();
+try {
 const problems = [];
 const contexts = [];
 let announcedQuality = false;
@@ -98,7 +99,7 @@ async function open(path, viewport = { width: 1600, height: 1000 }, options = {}
   // the main thread is busy. This is an action budget, not a relaxation of any
   // check: every click is still a real mouse event on the real control.
   page.setDefaultTimeout(120000);
-  problems.push(...collectProblems(page));
+  collectProblems(page, problems);
   await page.goto(withQaPreset(url + path, qa), { waitUntil: 'commit', timeout: 120000 });
   await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
   if (!announcedQuality) {
@@ -272,7 +273,7 @@ if (smoke) {
 }
 
 /**
- * Drive whole frames — simulation, overlays, renderer — from a synthetic clock,
+ * Drive state frames — simulation, transforms and overlays — from a synthetic clock,
  * so a crossing can be measured at a frame rate the test chooses. The real loop
  * is stopped first and stopped again after a frame, in case a callback was
  * already in flight, so nothing runs beside the driven frames.
@@ -299,7 +300,9 @@ async function drive(page, { entry, step, frames, reversals = [] }) {
           if (i === reversal.at) document.querySelector(reversal.entry).click();
         }
         now += step * 1000;
-        game.frame(now);
+        // Timing/opacity assertions need current render state, not a GPU draw
+        // for each synthetic frame. Real interaction and captures still draw.
+        game.frame(now, false);
         series.push({ frame: i, seconds: i * step, ...game.viewReport() });
       }
       game.start();
@@ -1125,3 +1128,8 @@ else console.log('PROBLEMS: none');
 
 if (failures.length > 0 || problems.length > 0) process.exit(1);
 console.log(`PASS: ${results.length} checks.`);
+
+} finally {
+  await browser.close();
+  server?.stop();
+}

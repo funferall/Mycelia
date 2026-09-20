@@ -347,7 +347,7 @@ within that environment without replacing it.
   and sapling budgets are 2,000 / 900 / 320 **exported triangles** at LOD0 / 1 / 2;
   other props stay below 500. The botanical pack uses faceted wood and folded,
   opaque, double-sided foliage blades. No alpha textures or baked lighting are
-  needed, and foliage can be extracted by material for future instancing.
+  needed; runtime batches wood and foliage by asset, tier, geometry and material.
 - **Separate GLBs for LODs.** `trees/oak.glb` is LOD0, with `oak-lod1.glb` and
   `oak-lod2.glb` beside it; `oak-dead.glb` and its tiers form the dead/hollow
   variant. The same naming applies to birch, hemlock and saplings. A GLB contains
@@ -358,8 +358,10 @@ within that environment without replacing it.
 
 The manifest is art metadata, not a scene graph: the loader reads it for an
 asset's tiers and the renderer selects a tier from a tree's projected size on
-screen. Dead-variant switching, anchor consumption, foliage instancing and
-authored wind clips still require runtime support; see `PROJECT_STATUS.md` for
+screen. Living authored wood and foliage share regional instance batches.
+Stable stand:tree identities survive batch changes; each tree retains its own
+transform, seasonal tint, health and sway. Dead-variant switching, anchor
+consumption and authored wind clips still require runtime support; see `PROJECT_STATUS.md` for
 their status.
 
 ### What the game adds to a model

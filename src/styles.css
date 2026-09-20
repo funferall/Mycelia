@@ -687,6 +687,7 @@ body {
 .forest-observation select { width: 100%; min-height: 40px; border: 0; border-bottom: 1px solid var(--rule-strong); border-radius: 0; padding: 8px 20px 8px 0; background: var(--sheet); color: var(--paper); font: 14px var(--serif); cursor: pointer; }
 .forest-observation select:focus-visible { outline: 2px solid var(--paper); outline-offset: 4px; }
 #tree-status { min-height: 36px; color: var(--ink); font: 13px/1.45 var(--serif); margin: 12px 0; }
+#stand-status { color: var(--ink); font: 13px/1.45 var(--serif); margin: 8px 0 16px; }
 body[data-view='underground'] .forest-observation { display: none; }
 body[data-view='forest'] .rail, body[data-view='forest'] .orders, body[data-view='forest'] #root-markers, .view-transition #root-markers, .view-transition .rail { visibility: hidden; }
 body[data-view='forest'] #gl { cursor: grab; }
@@ -698,7 +699,7 @@ body[data-view='forest'] #gl:active { cursor: grabbing; }
   .forest-observation { left: 18px; right: 18px; bottom: 42px; width: auto; background: var(--sheet); padding: 10px 16px; }
   .forest-observation label { display: none; }
   #tree-status { min-height: 0; margin: 6px 0; font-size: 12px; }
-  body[data-view='forest'] .field-journal { bottom: 218px; }
+  body[data-view='forest'] .field-journal { bottom: 304px; }
   .camera-hint { max-width: calc(100% - 36px); }
 }
 

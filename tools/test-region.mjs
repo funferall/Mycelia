@@ -36,6 +36,7 @@ const {
 } = await load('region');
 const { ECON, MAX_DEPTH_CM } = await load('content');
 const { RegionalMatch } = await load('match');
+const { payColonyFund, updateTotals } = await load('network');
 
 const results = [];
 const ok = (line) => {
@@ -290,7 +291,7 @@ function dump(region, seed) {
   {
     const other = new RegionalMatch(seeds[0]);
     advance(other, 90);
-    const seasons = new Set(other.stands.filter((stand) => stand.sim.hasColony).map((stand) => stand.sim.season.id));
+    const seasons = new Set(other.stands.map((stand) => stand.sim.season.id));
     assert.equal(seasons.size, 1, `colonies disagree about the season: ${[...seasons]}`);
     const times = other.stands.filter((stand) => stand.sim.hasColony).map((stand) => stand.sim.time);
     assert.ok(Math.max(...times) - Math.min(...times) < 1e-6, 'colonies count different time');
@@ -299,7 +300,11 @@ function dump(region, seed) {
   /** Give a colony a bloom's worth of spores and let it release them. */
   const release = (m, standId, into) => {
     const stand = m.stands[standId];
-    stand.sim.player.carbon = into ?? 300;
+    const net = stand.sim.player;
+    net.nodes[net.rootId].carbon = into ?? 300;
+    net.nodes[net.rootId].water = 12;
+    net.nodes[net.rootId].nitrogen = 8;
+    updateTotals(net);
     stand.sim.player.fruited += 1;
     const events = m.colonization.length;
     let before = stand.sim.player.carbon;
@@ -346,13 +351,15 @@ function dump(region, seed) {
       ECON.colonyFund.nitrogen,
       'the daughter must not be handed mineral from nowhere'
     );
-    const held = daughter.player.carbon + daughter.player.nodes.reduce((sum, node) => sum + node.carbon, 0);
+    const held = daughter.player.nodes.reduce((sum, node) => sum + node.carbon, 0);
     assert.equal(
       Number(held.toFixed(6)),
       ECON.colonyFund.carbon,
       'the daughter holds exactly the fund, in its reserves and nowhere else'
     );
     assert.equal(daughter.player.lengthCm, 0, 'a daughter colony begins as a germinating spore, not a network');
+    daughter.step(1 / 60);
+    assert.ok(daughter.player.carbon > ECON.colonyFund.carbon - 2, 'usable daughter resources survive the next totals update');
   }
   ok('a bloom founds exactly one adjacent stand, and the carbon that crosses the border is the carbon that was paid');
 
@@ -383,6 +390,7 @@ function dump(region, seed) {
     })();
     assert.ok(stormAt !== null, 'no storm anywhere in a match');
     m.stands[from].sim.time = stormAt;
+    m.elapsed = stormAt;
     const before = m.colonization.length;
     if (verbose) {
       const wind = m.region.windAt(stormAt);
@@ -466,7 +474,11 @@ function dump(region, seed) {
     const plain = new RegionalMatch(seeds[0]);
     const watched = new RegionalMatch(seeds[0]);
     for (const m of [plain, watched]) {
-      m.stands[m.region.foundingStand].sim.player.carbon = 300;
+      const net = m.stands[m.region.foundingStand].sim.player;
+      net.nodes[net.rootId].carbon = 300;
+      net.nodes[net.rootId].water = 12;
+      net.nodes[net.rootId].nitrogen = 8;
+      updateTotals(net);
       m.stands[m.region.foundingStand].sim.player.fruited += 1;
     }
     for (let i = 0; i < 120 * 60; i++) {
@@ -479,15 +491,22 @@ function dump(region, seed) {
     assert.deepEqual(snapshot(watched), snapshot(plain), 'looking around changed the match');
     assert.equal(watched.fruited, plain.fruited);
     assert.equal(watched.colonizedStands, plain.colonizedStands);
+    assert.ok(Math.abs(plain.time - watched.time) < 1e-9);
+    assert.ok(Math.abs(plain.time - 120) < 1e-6);
+    assert.equal(new Set(watched.stands.map(s => `${s.sim.seasonIndex}:${s.sim.seasonClock}`)).size, 1);
   }
-  ok('two minutes of match are identical whether or not the player moves between stands');
+  ok('two minutes of match and one regional season are identical whether or not the player moves between stands');
 
   // And the whole region is deterministic.
   {
     const a = new RegionalMatch(seeds[1] ?? 'ironwood');
     const b = new RegionalMatch(seeds[1] ?? 'ironwood');
     for (const m of [a, b]) {
-      m.stands[m.region.foundingStand].sim.player.carbon = 300;
+      const net = m.stands[m.region.foundingStand].sim.player;
+      net.nodes[net.rootId].carbon = 300;
+      net.nodes[net.rootId].water = 12;
+      net.nodes[net.rootId].nitrogen = 8;
+      updateTotals(net);
       m.stands[m.region.foundingStand].sim.player.fruited += 1;
     }
     advance(a, 60);
@@ -496,6 +515,27 @@ function dump(region, seed) {
     assert.deepEqual(a.colonization, b.colonization, 'the same spores must land in the same stands');
   }
   ok('the same seed colonizes the same stands with the same spores');
+}
+
+// Resource summaries must never serve as a second bank.
+{
+  const m = new RegionalMatch(seeds[0]);
+  const net = m.sim.player;
+  const root = net.nodes[net.rootId];
+  root.carbon = 120; root.water = 12; root.nitrogen = 8;
+  updateTotals(net);
+  const before = { carbon: net.carbon, water: net.water, nitrogen: net.nitrogen };
+  assert.equal(payColonyFund(net, ECON.colonyFund), true);
+  for (const resource of ['carbon', 'water', 'nitrogen']) {
+    const held = net.nodes.filter(n => n.alive && n.connected).reduce((sum,n) => sum + n[resource],0);
+    assert.ok(Math.abs(held - (before[resource] - ECON.colonyFund[resource])) < 1e-9);
+    assert.ok(Math.abs(net[resource] - held) < 1e-9);
+  }
+  for (const node of net.nodes) node.water = 0;
+  const state = JSON.stringify(net.nodes);
+  assert.equal(payColonyFund(net, ECON.colonyFund), false);
+  assert.equal(JSON.stringify(net.nodes), state, 'an incomplete kit charges nothing');
+  ok('colony funding debits real carbon, water and mineral stores atomically');
 }
 
 console.log(`PASS: ${results.length} checks.`);

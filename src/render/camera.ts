@@ -220,9 +220,16 @@ export class CameraRig {
   }
 
   private clampTarget(): void {
+    if (this.view === 'forest') {
+      const halfWidth = (this.mountFraming?.standWidth ?? 136) / 2 + 52;
+      const halfDepth = (this.mountFraming?.standDepth ?? 76) / 2 + 30;
+      this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, this.forestCentre.x - halfWidth, this.forestCentre.x + halfWidth);
+      this.goal.target.z = THREE.MathUtils.clamp(this.goal.target.z, this.forestCentre.z - halfDepth, this.forestCentre.z + halfDepth);
+      return;
+    }
     this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, -120, 120);
     this.goal.target.y = THREE.MathUtils.clamp(this.goal.target.y, -70, 90);
-    this.goal.target.z = this.view === 'forest' ? THREE.MathUtils.clamp(this.goal.target.z, -85, 5) : 0;
+    this.goal.target.z = 0;
   }
 
   private overviewDistance = 350;
@@ -234,6 +241,23 @@ export class CameraRig {
    * rows nearest the camera fall out of the picture.
    */
   forestCentre: { x: number; z: number } = { x: 0, z: -38 };
+
+  /** Move the regional coordinate origin without moving the forest on screen. */
+  rebaseForest(dx: number, dz: number): void {
+    const shift = new THREE.Vector3(dx, 0, dz);
+    this.forestCentre.x += dx;
+    this.forestCentre.z += dz;
+    this.remembered.get('forest')?.target.add(shift);
+    if (this.view === 'forest') {
+      this.target.add(shift);
+      this.goal.target.add(shift);
+      this.crossingFrom.target.add(shift);
+      this.apply();
+    }
+    // Underground poses belong to the previous stand.
+    this.remembered.delete('underground');
+    this.autoByView.underground = true;
+  }
 
   /** True for as long as the rig is crossing between the two views. */
   get transitioning(): boolean { return this.crossing; }
@@ -289,6 +313,7 @@ export class CameraRig {
   }
 
   focusTree(x: number, z: number): void {
+    this.setView('forest');
     this.autoByView[this.view] = false;
     this.goal.target.set(x, 69, z);
     this.goal.distance = 150;

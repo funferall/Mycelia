@@ -15,6 +15,7 @@ import {
   makeCord,
   startFruiting,
   stepNetwork,
+  updateTotals,
   tryBond,
   type HyphaNode,
   type Network,
@@ -143,16 +144,9 @@ export class Simulation {
       kit.carbon,
       { water: kit.water, nitrogen: kit.nitrogen }
     );
-    // A spore arrives as reserves, not as a body.
-    colony.carbon = kit.carbon;
-    colony.carbonCeiling = kit.carbon;
-    colony.water = kit.water;
-    colony.nitrogen = kit.nitrogen;
-    for (const node of colony.nodes) {
-      node.carbon = 0;
-      node.water = 0;
-      node.nitrogen = 0;
-    }
+    // createNetwork distributes the kit between founder and exploratory tips.
+    // Totals are a readout of those stores, never a second resource pool.
+    updateTotals(colony);
     this.player = colony;
     this.hasColony = true;
     this.log(`A spore takes hold here with ${kit.carbon.toFixed(0)} carbon.`);

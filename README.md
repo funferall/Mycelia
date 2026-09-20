@@ -102,6 +102,14 @@ Click the sheet to apply the selected order. With **Bond** selected, click a
 root tip to form a symbiosis; a bonded tree ships carbon in exchange for water
 and minerals, and severs the bond if it goes unsupplied for too long.
 
+Use **Survey a stand** in the forest to select a community. **Explore beneath**
+enters an occupied stand; selecting a crown follows that tree's roots. Fruiting
+can send a paid spore to another stand, which becomes available in the survey.
+All colonized stands keep running while you explore, and orders and resource
+figures belong to the stand currently underground. After a local outcome,
+**Explore daughter stands** continues the regional lineage when another colony
+exists. A regional victory condition is still being designed.
+
 ## Demo and QA parameters
 
 Append to the URL:
@@ -136,6 +144,9 @@ LOD tier from its own projected size on screen. The asset contract is in
 ```bash
 npm test            # headless simulation regression
 node tools/test-region.mjs  # the regional world: terrain, water, spores
+npm run test:navigation -- --qa fast # regional travel and order isolation
+npm run test:batches # shared tree draws, transforms, colours and IDs
+npm run profile:forest -- --qa fast # bounded software-WebGL measurements
 npm run test:lod    # projected-size LOD selection: bands, hysteresis
 npm run test:view   # browser checks for the forest <-> underground crossing
 npm run test:journey # plays a whole match through the printed controls

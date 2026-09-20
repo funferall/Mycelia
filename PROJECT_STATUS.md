@@ -54,9 +54,10 @@ committed or deployed.
 The regional world model is being built underneath the running game: the region,
 the stand generator's site conditions and the regional match are in the tree,
 and the surface now draws all nine stands as one continuous forest with each
-stand's own trees standing on its own ground. What remains regional is the
-*play*: only the founding stand's ground can be entered, and the underground
-views still hold one stand.
+stand's own trees standing on its own ground. The game now steps RegionalMatch and lets players select and enter any
+colonized stand. Local soil, roots, networks, rewards and UI are rebound on entry;
+every colony continues running while another stand is viewed. The established
+founding world is retained; other stands use regional site conditions.
 
 Surface art now arrives through an intake pipeline rather than only being
 generated in code. `src/render/assets.ts` loads authored glTF models, scales each
@@ -122,11 +123,13 @@ the unchanged normal preset.
 | Simulation | `src/sim/{sim,network,world,content,rng}.ts` | One stand: seeded soil, fixed timestep, resources, network growth, tree trade, seasons, fruiting, outcomes |
 | Region | `src/sim/region.ts` | The 3×3 stand mosaic: one heightfield, drainage and streams, water table, communities, adjacency, wind, seed validation |
 | Regional match | `src/sim/match.ts` | Every stand in a region, stepped in a fixed order, with spores carried between neighbours and colonies founded for what the parent paid |
-| Integration | `src/game.ts`, `src/main.ts` | Frame loop, input, view state, simulation/render/UI/audio synchronization |
+| Integration | `src/game.ts`, `src/main.ts` | Regional fixed-step loop, stand switching, local view rebinding, input, UI/audio synchronization |
 | Connected camera | `src/render/camera.ts` | Forest and underground camera goals, remembered player framing, wall-clock view crossings, viewport re-framing, reduced motion |
 | Overlay fade | `src/render/fade.ts` | Dissolves the networks, motes, roots and rewards through a view crossing |
 | Surface forest | `src/render/surface.ts` | Seeded 3D tree placement, forest floor, tree picking, wind, leaves, rain, seasonal presentation |
 | Authored models | `src/render/assets.ts`, `src/render/lod.ts`, `public/assets/forest-manifest.json`, `tools/{make-forest-assets.py,check-forest-assets.mjs}` | Manifest-driven glTF intake, per-asset tiers and fallback; projected-size LOD selection with hysteresis; reproducible Blender art and exported-pack QA |
+| Tree batches | `src/render/tree-batches.ts` | Region-wide authored wood/foliage instances with stable stand:tree identity, per-instance transforms and colours |
+| Local disposal | `src/render/dispose.ts` | Release wholly owned soil/root/reward GPU resources on stand changes |
 | Underground world | `src/render/{soil,forest,hyphae,living}.ts` | Soil, roots, networks, flow motes, mushrooms, spores, interaction feedback |
 | Shared stage | `src/render/{stage,quality,textures}.ts` | WebGL renderer, lights, fog, paper/specimen transition, bloom, opt-in fast QA preset |
 | Audio | `src/audio/soundscape.ts` | Ambient synthesis, bond/fruit/action cues |
@@ -177,24 +180,24 @@ and equivalent useful details have been accounted for, then remove it.
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
-| ASSET-01 | Partial | Authored model intake | The existing registry loads six replacement botanical models; scaling, ground correction, seasonal/health material tint and procedural fallback are unchanged. Tree and sapling GLBs now contain `anchor_crown`; the loader still ignores it. Remaining: browser missing-file/late-load checks, anchor consumption, LOD selection, dead-variant switching and foliage instancing. Current art verification is recorded under 19 September below; the 18 September browser results describe the previous art. |
+| ASSET-01 | Partial | Authored model intake | The existing registry loads six replacement botanical models; scaling, ground correction, seasonal/health material tint and procedural fallback are unchanged. Tree and sapling GLBs now contain `anchor_crown`; the loader still ignores it. Manifest LOD and regional wood/foliage batching are implemented. Remaining: browser missing-file/late-load checks, anchor consumption and dead-variant switching. Current art verification is recorded under 19 September below; the 18 September browser results describe the previous art. |
 | ASSET-02 | Partial | Botanical asset pack | `tools/make-forest-assets.py` builds 21 original low-poly assets / 39 GLBs: three living species and their dead/hollow variants, three saplings, fern, grass, stump, log, snag, root plate, four reproductive bodies and two rock props. The six original paths replace placeholders immediately; other files are listed in `forest-manifest.json` for integration. Remaining: art-direction acceptance, fruiting-body integration into LivingView/surface outcomes, community-driven prop placement, new understory/rock/spore usage, and runtime dead variants. This is a stylized botanical first pass, not photoreal scanned art. |
-| ASSET-03 | Partial | Asset contract, LOD and validation | `DESIGN.md` specifies separate tier files, 2,000/900/320 tree triangle budgets, 500 for props, Y-up metres, ground contact, named double-sided foliage and crown anchors. All trees, dead variants and saplings carry three tiers. `tools/check-forest-assets.mjs` checks the shipped pack through Three.js for exported counts, bounds, anchors, materials and budgets. `src/render/assets.ts` now reads `forest-manifest.json` for each asset's tier files, loads tier 0 eagerly and warms the rest in the background; `src/render/lod.ts` selects a tier from a tree's projected height as a fraction of the viewport, with a 15% hysteresis margin so a tree on a boundary cannot flicker. A swap replaces geometry only: the placed copy keeps its position, rotation and scale, and a tree keeps its simulation ID and asset across every tier. Remaining: foliage/wood instancing, authored wind clips, a general dropped-in-file validator, and camera-distance transition tuning. Pack QA does not cover loader failure paths. |
+| ASSET-03 | Partial | Asset contract, LOD and validation | Manifest-driven projected-size LOD with 15% hysteresis is retained. Region-wide TreeBatches groups authored parts by asset, tier, geometry and material; instance matrices retain placement, growth and wind, and instance colours retain health and season. Stable stand:tree mappings survive slot/tier changes; crown proxies remain selectable. Focused batch tests cover transforms, colours, buffer growth, tier migration and re-entry. Remaining: authored wind clips, dropped-in-file validation, loader failure/late-load QA, crown anchors, dead variants and distance-transition tuning. |
 
 ### Regional map, terrain, forest stands, and water
 
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
-| MAP-01 | Partial | Multi-stand regional map | A match is now a seeded 3×3 region of logical stands with orthogonal adjacency, chosen at 3×3 for prototyping. Every stand is reachable from the founding stand by construction, and that reachability is validated. Remaining: the region is not rendered or navigable in the game yet, and the shipping size is still open. |
+| MAP-01 | Partial | Multi-stand regional map | All nine stands render continuously and colonized stands can be entered through Survey a stand or a selected crown. Game steps RegionalMatch; the original founding world is retained for opening compatibility. Remaining: shipping region size and complete terrain/soil boundary integration. |
 | MAP-02 | Partial | Continuous regional surface | There is one `heightAt` for the whole region, the shared edges of neighbouring stands agree exactly, and the renderer draws every stand floor and its trees as one continuous forest rather than one stand of floor. Remaining: the stream, ponds and exposed rock are not drawn yet, and the tiles nearest the camera still lose their floor below the slab. |
 | MAP-03 | Partial | Terrain-first generation | Elevation, a regional fall line, a valley, drainage from a priority flood, flow accumulation and aspect are all generated before anything is placed, deterministically from the seed. Remaining: exposed rock, parent material and deadwood are still local, and there is no generator-version field. |
 | MAP-04 | Partial | Hydrology and water features | Watersheds, flow paths and a stream are derived from the terrain; the stream crosses three to six stand borders depending on the seed, and its course is a polyline the renderer could draw. The water table follows relief and flow, and each stand passes its own table depth into the local soil generator. Remaining: ponds, vernal pools, springs, seasonal channels, erosion and saturation barriers. |
 | MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. Remaining: density, age structure, canopy openness, understory, litter and deadwood still do not vary by community, and the floor props are seeded per stand rather than chosen by the community. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
 | MAP-07 | Partial | Cross-stand fungal network | A colony can found a daughter stand across an explicit adjacency edge, carried by wind, and what crosses the border is only what the parent paid, in carbon, water and mineral, asserted exactly. Remaining: cords, resource transport, infection and warnings across a boundary, and roots crossing one. |
-| MAP-08 | Planned | Regional exploration and information | Let the player survey the region from above, select a stand/tree/water feature, and descend to the correct local underground context. Use soil opacity, incomplete surveys, and network sensing as fog of war rather than a conventional minimap. |
+| MAP-08 | Partial | Regional exploration and information | Stand survey and crown selection lead into a colonized stand's persistent underground context. Orders, catalogue, rail, roots, rewards and networks use that stand; the forest camera is rebased with the landscape so return preserves context. Uncolonized ground explains why descent is unavailable. Remaining: water-feature selection, incomplete surveys and network sensing. |
 | MAP-09 | Partial | Generated-map fairness | Validation refuses a region whose stands cannot be reached from the founding stand, or whose founding stand has no water in reach; the founding stand is chosen for habitable ground near water on the way down. Remaining: no repair pass, no threat-counterplay check, and no check that a loss is recoverable. |
-| MAP-10 | Partial | Regional colonization loop | A bloom releases spores that ride the region's own wind: adjacent stands by default, and stands beyond them only in a storm. A spore founds a daughter colony that begins as a germinating spore holding exactly the fund its parent paid. Remaining: the regional objective is still the two-bloom prototype victory, and the hops are not drawn. |
+| MAP-10 | Partial | Regional colonization loop | The browser now runs regional spore release and announces daughter stands. A colony's outcome offers exploration when another colony exists. Fixed founding resources: the parent pays actual connected node stores in carbon, water and nitrogen; the daughter keeps these in its nodes rather than losing summary-only reserves on the next tick. Remaining: drawn spore hops, a regional victory objective and balance of unattended daughter colonies. All stands now share a regional seasonal clock, including dormant ground and completed colonies. |
 | MAP-11 | Planned | Regional atlas interface | Provide a restrained botanical survey layer showing stand identity, explored state, broad health, water, infection, and network continuity. It must use the established field-record language and avoid a generic RTS minimap or tile HUD. |
 | MAP-12 | Partial | Simulation streaming and level of detail | Every colonized stand steps at full fidelity every tick, in stand order, and ground with no colony in it is not simulated at all, which is what keeps nine stands affordable. Moving between stands provably changes no number (asserted against an unwatched match). Remaining: coarse cadence for distant colonies, rendering LOD, pooled geometry and bounded particles. |
 | MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
@@ -382,14 +385,19 @@ Ecological references supporting this direction:
 | UX-03 | Partial | Responsive layouts | Desktop render is inspected; compact styles exist. `npm run test:view` now asserts at 1600×1000, 1366×768, and 390×844 that the canvas fills the viewport, that the view controls stay on screen, and that all 13 catalogue figures are present and inside the viewport. Remaining: touch input, real phone and tablet hardware, and the 1180px breakpoint band. |
 | AUDIO-01 | Partial | Generative soundscape | Ambient synthesis and restrained event cues exist. Add weather/forest layers and verify toggle, suspension, restart, and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Audit focus order/restoration, canvas alternatives, and color-independent state cues. |
-| PERF-01 | Planned | Measured performance budget | Measure simulation time, render time, draw calls, GPU/CPU memory, and frame time at opening, mature match, and the configured network ceiling on stated hardware. |
-| PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) now halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are now chosen at runtime from projected size (`ASSET-03`): the 19 September fast-preset run recorded the region overview at 0 LOD0 / 57 LOD1 / 18 LOD2 of 75 trees and a close camera at 44 / 31 / 0. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and a measured frame-time and draw-call budget. Production JS remains about 752 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle savings alone are not a measured frame-time or draw-call budget. |
+| PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960×640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles, with authored trees batched into 12 draws over 150 parts. Remaining: hardware-GPU measurements, simulation and network-ceiling budgets, and byte-accurate GPU memory. |
+| PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 762.97 kB with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle counts alone are not a frame-time budget. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
 ## Current priorities
 
 Work in this order unless the user explicitly changes priority.
+
+19 September user override: implement neighboring-stand exploration first, then
+forest batching and performance. Navigation is implemented and its focused
+browser fixture passed before batching; current combined verification is being
+recorded below. Existing projected-size LOD work is preserved.
 
 19 September art-lane override: build the botanical asset pack in the requested
 order (trees and variants, understory/deadwood, fungi, rocks). Runtime machinery
@@ -400,12 +408,12 @@ tiers; the opt-in fast QA preset is implemented, but it does not close the
 profiling gap. Seasons use procedural tint; underground structure stays
 procedural. The new art does not close any of those runtime gaps.
 
-Stopping point requested by the user on 19 September: the asset pack and its
-rebuild/QA tooling are ready to commit. Runtime LOD selection now reads
-`forest-manifest.json`; resume with foliage and wood instancing (ASSET-03), then
-consume crown anchors and dead variants. Re-run the complete browser view suite
+Superseded stopping point requested by the user earlier on 19 September: the asset pack and its
+rebuild/QA tooling are ready to commit. Runtime LOD selection reads
+`forest-manifest.json`; living-tree batching now builds on it. Crown anchors
+and dead variants remain separate future work. Re-run the complete browser view suite
 independently of Blender rendering before claiming current-tree interaction
-verification.
+verification; the combined checks for this work are recorded below.
 
 ### Next asset machinery approach (ASSET-03, PERF-01, PERF-02)
 
@@ -417,10 +425,10 @@ unchanged.
    tree size, with separate thresholds for entering and leaving a tier so a
    tree on a boundary cannot flicker. Tiers past LOD0 are warmed in the
    background and a swap keeps the placed model's position, rotation and scale.
-2. Batch wood and foliage by species, living/dead variant, LOD and material
+2. **Implemented for living authored trees.** Batch wood and foliage by species, living/dead variant, LOD and material
    using `InstancedMesh`. Carry health, seasonal tint and wind variation as
    per-instance data so batching preserves each tree's state.
-3. Maintain an explicit instance-index-to-simulation-tree-ID mapping for
+3. **Implemented for living authored trees.** Maintain an explicit instance-index-to-simulation-tree-ID mapping for
    selection, including when instances move between batches. Preserve the
    living model's scale, ground contact and crown anchor across tier/variant
    changes; never feed presentation choices back into the simulation.
@@ -503,8 +511,8 @@ work in order.
 3. **Half done.** Terrain and water cross stand borders coherently and the
    stream crosses three to six of them; `RegionalMatch` keeps a stand's
    simulation alive while nobody is looking and lets the player re-enter it.
-   Remaining: nothing *renders* the region, and no control descends into a
-   second stand yet.
+   The region renders and controls now descend into colonized stands. Remaining:
+   connected water rendering and cross-boundary resource cords.
 4. **Done in this changeset.** Every colonized stand steps at full fidelity
    every tick, in stand order; uncolonized ground is not simulated at all. A
    two-minute match is asserted to be identical whether or not the player moves
@@ -518,8 +526,8 @@ work in order.
 Exit criteria: at least four connected logical stands render as one continuous
 forest, share coherent terrain and water, retain persistent underground state,
 and exchange resources through deterministic boundary connections. The terrain,
-water, persistence and boundary exchange now hold in the simulation; rendering
-the region and navigating it is what remains.
+water, persistence and boundary exchange now hold in the simulation; cross-boundary
+resource cords and connected water rendering remain; region navigation now works.
 
 ### P2 — establish real roots and ecological opposition
 
@@ -590,29 +598,26 @@ either foundation.
 
 - The forest is a seeded presentation strip over a 2D soil simulation, not a
   fully simulated 3D terrain volume.
-- The current match contains one stand-sized transect. There is no regional
-  view, atlas, cross-stand cord, or distant-stand cadence yet. The region exists
-  in the simulation — a 3×3 mosaic with continuous terrain, a stream, per-stand
-  communities and wind-carried spores — but the game still opens, renders and
-  plays on the founding stand alone, and nothing draws the region or lets the
-  player descend into a second stand.
+- The match renders nine stands and players can enter colonized underground
+  transects. A local view is rebuilt and its owned GPU resources disposed on
+  each stand change; this bounds residency but may hitch on entry. There is no
+  atlas, cross-stand cord, or distant-stand simulation cadence yet.
 - A colony that has fruited twice stops growing, as it always has, so a regional
   match is a founding colony plus whatever its spores founded before it won. A
   regional objective is still an open design question (MAP-10).
 - Ground with no colony in it is not simulated at all: its history begins when a
   spore lands. That is deterministic and cheap, but it means an uncolonized
   stand does not drift while the player is away from it.
-- The region renders as one forest now: every stand draws its own floor and its
-  own trees, crowns in another stand can be selected and named, and the browser
-  console is clean. What is still wrong, and is the immediate next work: the
-  tiles nearest the camera lose their floor below the slab while their trees
-  hang over the edge, the stream and standing water are not drawn, and nothing
-  yet lets the player enter a second stand’s underground view (the stand has
-  to be rebindable: `SoilMesh`, `ForestView`, `LivingView` and the camera all
-  still hold one stand).
-- Surface and underground geometry share state but do not yet have automated
-  round-trip identity tests beyond the crown → root landing check in
-  `tools/test-view.mjs`.
+- The region renders as one forest and every colonized stand can be entered
+  underground with its own local views rebound. What is still wrong: the tiles
+  nearest the camera lose their floor below the slab while their trees hang over
+  the edge, and the stream, ponds and exposed rock are not drawn (`MAP-02`,
+  `MAP-04`).
+- `tools/test-navigation.mjs` traces a crown back to its own stand and root
+  across re-entry and verifies that local views and orders are rebound;
+  `tools/test-view.mjs` covers the crown → root landing and tier identity. There
+  is still no automated round-trip identity test for the geometry or resource
+  state a local view rebuilds.
 - A crossing is one camera rising through one scene rather than a blend of two
   rendered views. Under software WebGL a single frame can take over a second, so
   the dissolve is quantized to two or three steps even though the crossing still
@@ -625,8 +630,10 @@ either foundation.
   time they become visible. Moving that cost to boot has not been measured.
 - Surface weather is rain only; there is no general weather state machine.
 - Wind has no explicit shared vector or strength and leaves do not settle.
-- Surface performance has not been profiled; procedural tree geometry and one
-  instanced foliage mesh per tree may become expensive on larger stands.
+- Forest profiling now has a bounded, reproducible software-WebGL harness.
+  These samples are not a hardware GPU budget. Authored parts are batched, but
+  per-tree transform/material objects remain for tinting and LOD compatibility;
+  procedural fallback foliage remains per tree.
 - The fast QA preset is a visual smoke path, not an adaptive production quality
   tier: it adds no LOD, instancing, foliage/weather tier, automatic selection or
   measured frame-time budget. Its half-resolution, no-bloom image is unsuitable
@@ -647,6 +654,64 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 19 September 2026: regional exploration and forest batching
+
+Regional travel, wood/foliage batching and the funding repair were verified on
+the finished tree as a whole. Every command below ran after the last edit in
+this changeset; the partial runs recorded while the work was in progress are
+superseded by these results.
+
+- `npm run typecheck` and `npm run build` pass. Production JS is 762.97 kB
+  (202.21 kB gzip); the nonfatal Browserslist, Tailwind-content and chunk-size
+  warnings remain.
+- `node tools/test-navigation.mjs --qa fast` — 14 checks pass, no browser
+  errors: uncolonized ground refuses descent, the stand selector rebinds the
+  simulation and every local view, the catalogue shows the daughter's own
+  reserves, orders touch only the active colony, a crown returns to its own
+  stand and root, the daughter advances while another stand is viewed, re-entry
+  keeps its orders, repeated travel releases the previous local views and soil
+  geometry, normal-motion descent crosses on the wall clock, an outer stand pans
+  without clamping back to the founding stand, keyboard zoom enters the selected
+  stand, batched IDs survive travel and tier swaps, and the stand controls fit
+  the portrait viewport. This is an explicitly funded two-colony fixture, not a
+  whole match played through the interface.
+- `node tools/test-batches.mjs` — 3 groups pass: independent transforms, colours
+  and `stand:tree` identities through capacity growth; tier migration and stand
+  hiding dropping old slots without losing identity; re-entry restoring hidden
+  stands without drawing the original copies.
+- `node tools/test-region.mjs` — 13 checks pass, including one shared regional
+  season across colonized and dormant stands, funding debited from real node
+  stores with an atomic refusal that charges nothing, off-screen growth,
+  watched-versus-unwatched determinism over two minutes, and same-seed
+  colonization. The older checks mistook summary counters for separate reserves;
+  the funding checks now inspect node stores and the next simulation tick.
+- `npm test` — 10 checks pass, including a full public-order journey on
+  `ironwood` (2 blooms, 480 spores, 354 s, 190 living strands) and the
+  determinism guard. `JOURNEY_SEEDS=raven-wood REGIONAL_JOURNEY=1 node
+  tools/test-sim.mjs` — 8 checks pass with a regional match behind the same
+  journey (raven-wood, 2 blooms, 480 spores, 354 s, 198 living strands).
+- `node tools/test-journey.mjs --accelerated` — 13 checks pass at the normal
+  preset, driven through the sheet's own controls and ending in a fresh sheet.
+- `node tools/test-view.mjs` at the normal preset — 69 checks pass,
+  `PROBLEMS: none`. This closes the normal-quality pass the LOD entry below had
+  left owed: all 12 tier files load, the overview draws 0 / 57 / 18, a focused
+  crown refines the stand to 75 fine trees, a close camera draws 44 / 31 / 0,
+  all 75 `stand:tree` keys survive, 56 of 56 tier swaps preserve placement, and
+  every crossing, framing, viewport and input check passes at shipping quality.
+- `node tools/profile-forest.mjs` at the normal preset (960×640, SwiftShader
+  software backend, 13th Gen Intel i7-13700HX, 16 GiB) — opening median 723.6 ms
+  and p95 777.3 ms; a 180-second steward-grown forest median 752.0 ms and p95
+  809.1 ms; both 183 draw calls and 322,014 triangles. The authored trees are 12
+  batched draws over 150 parts carrying 75 stable identities. These are
+  software-rasterizer numbers with a GPU readback included, so they bound this
+  backend rather than a desktop-GPU budget.
+
+Not verified in this changeset: regional spore release through the real fruiting
+UI (the navigation fixture funds its colony directly), connected water and
+exposed rock rendering, cross-stand cords, an atlas, distant-stand simulation
+cadence, and hardware-GPU performance. The regional victory objective is still
+open design.
 
 ### 19 September 2026: projected-size LOD selection
 
@@ -697,16 +762,13 @@ Verification on this tree:
 - `npm test` — 10 checks pass; the simulation is untouched by this work and no
   number in it changed.
 
-Not verified here, and recorded so the next agent does not assume it: the
-full-quality browser regression was started at the normal preset and stopped
-after fourteen minutes of SwiftShader rendering without finishing, so the tier
-counts above are from the fast preset. Tier choice is a viewport fraction and
-the calibration is pinned by `tools/test-lod.mjs`, but a normal-preset
-`test:view` pass is still owed before the milestone. `ASSET-03` remains Partial:
-instancing, authored wind clips, a general dropped-in-file validator, camera
-transition tuning and the loader failure/late-load paths are still open, and the
-`PERF-01` measurement that would turn these triangle counts into a frame-time
-budget has not been taken.
+The normal-quality pass this entry originally left owed is recorded in the
+regional entry above: `node tools/test-view.mjs` at the normal preset passes 69
+checks with these same tier counts, and `node tools/profile-forest.mjs` now
+measures the resulting draw calls and frame times on this backend. `ASSET-03`
+remains Partial: authored wind clips, a general dropped-in-file validator,
+camera transition tuning, crown anchors, dead variants and the loader
+failure/late-load paths are still open.
 
 ### 19 September 2026: fast visual QA preset
 
@@ -1006,6 +1068,23 @@ feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
 ## Change log
+
+### 19 September 2026: regional travel and forest batching
+
+- Connected Game to RegionalMatch while retaining the existing founding opening;
+  added stand survey, persistent local view rebinding, isolated orders, crown
+  return, colonization notices and continuation into daughter stands.
+- Repaired regional funding to transfer real connected carbon, water and mineral
+  stores into usable daughter nodes, with atomic affordability and next-tick tests.
+- Shared regional seasons now continue across uncolonized and completed stands;
+  regional camera bounds follow the full forest when its local origin changes.
+- Batched authored wood/foliage across stands and retained stable identities,
+  transforms, health, seasonal tint and sway through tier changes. Omit the
+  closed underground soil at the fully surfaced endpoint.
+- Added focused navigation/batching checks and bounded GPU-readback profiling.
+  Synthetic view checks can advance state without drawing every intermediate
+  frame; actual visual/input checks still use the requested rendering preset.
+
 
 ### 19 September 2026
 

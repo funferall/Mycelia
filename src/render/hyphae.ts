@@ -162,6 +162,14 @@ export class HyphaeMesh {
   }
 
   /** Bring the drawn geometry in line with the simulation's network. */
+  reset(): void {
+    this.slotOf.fill(-1);
+    this.nodeOf.fill(-1);
+    this.slotCount = 0;
+    this.mesh.count = 0;
+    this.tips.geometry.setDrawRange(0, 0);
+  }
+
   sync(net: Network): void {
     const nodes = net.nodes;
     this.ensureNodeCapacity(nodes.length);
@@ -328,6 +336,11 @@ export class Motes {
     );
     this.points.frustumCulled = false;
     this.points.renderOrder = 3;
+  }
+
+  reset(): void {
+    this.nodeOf.fill(-1);
+    this.points.geometry.setDrawRange(0, 0);
   }
 
   update(net: Network, dt: number): void {

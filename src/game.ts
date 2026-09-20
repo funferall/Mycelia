@@ -4,8 +4,10 @@ import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
 import { TILE_SIZE, SurfaceForest } from './render/surface';
-import { COMMUNITY_LABEL, communityThresholds, createRegion, type Region } from './sim/region';
-import { createStandWorld } from './sim/world';
+import { COMMUNITY_LABEL, type Region } from './sim/region';
+import { RegionalMatch } from './sim/match';
+import { disposeView } from './render/dispose';
+import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import type { WorldView } from './render/camera';
 import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
@@ -63,27 +65,30 @@ export class Game {
   private readonly canvas: HTMLCanvasElement;
   private readonly stage: Stage;
   private sim: Simulation;
-  private readonly soil: SoilMesh;
+  private soil: SoilMesh;
   private readonly playerMesh: HyphaeMesh;
   private readonly rivalMesh: HyphaeMesh;
   private readonly playerMotes: Motes;
   private readonly rivalMotes: Motes;
-  private readonly forest: ForestView;
+  private forest: ForestView;
   private readonly ui: SheetUI;
-  private readonly living: LivingView;
+  private living: LivingView;
   /**
-   * One surface per stand, so the region is drawn as one landscape. Only the
-   * stand the player's colony stands in can be entered; the rest are ground the
-   * forest shows and the simulation is not yet running.
+   * One surface per persistent stand. Colonized stands can be entered, while
+   * uncolonized ground remains a survey until a paid spore arrives.
    */
   private readonly surfaces: SurfaceForest[] = [];
   private readonly region: Region;
+  readonly match: RegionalMatch;
+  private reportedColonies = 1;
+  private readonly acknowledgedOutcomes = new Set<number>();
   /** Authored models, if any have been built yet; the game runs without them. */
   private readonly assets = new AssetLibrary();
+  private readonly treeBatches: TreeBatches;
   /** Stand the selected crown stands in, or null while nothing is chosen. */
   private selectedStandId: number | null = null;
   /** Everything drawn inside the soil, faded as one body during a crossing. */
-  private readonly overlays: OverlayFade;
+  private overlays: OverlayFade;
   private readonly sound = new Soundscape();
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   private ambientMotion = !this.reducedMotion;
@@ -121,6 +126,8 @@ export class Game {
     this.canvas = canvas;
     this.ui = ui;
     this.sim = new Simulation(seedText);
+    this.match = new RegionalMatch(seedText, this.sim);
+    this.region = this.match.region;
 
     this.stage = new Stage(canvas, quality);
     const glow = makeGlowTexture(64);
@@ -140,8 +147,9 @@ export class Game {
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
     this.stage.scene.add(this.forest.group);
-    this.region = createRegion(seedText);
     this.buildRegionStand();
+    this.treeBatches = new TreeBatches(this.surfaces.reduce((sum, surface) => sum + surface.trees.length, 0));
+    this.stage.scene.add(this.treeBatches.group);
     // Art is opportunistic: the stand above is already drawn procedurally, and
     // whatever loads is handed over as it arrives.
     void this.assets.load().then(() => this.adoptAssets());
@@ -183,13 +191,7 @@ export class Game {
     const founding = this.region.stands[this.region.foundingStand];
     if (!founding) return;
     for (const site of this.region.stands) {
-      const world =
-        site.id === founding.id
-          ? this.sim.world
-          : createStandWorld(site.seed, {
-              waterTableCm: site.waterTableCm,
-              mix: communityThresholds(site.community),
-            });
+      const world = this.match.stands[site.id].sim.world;
       const surface = new SurfaceForest(world, {
         id: site.id,
         originX: site.sx * TILE_SIZE,
@@ -221,11 +223,11 @@ export class Game {
 
   /** The stand the player can enter: the one their colony stands in. */
   private get surface(): SurfaceForest {
-    return this.surfaces[this.region.foundingStand] as SurfaceForest;
+    return this.surfaces[this.match.activeStandId] as SurfaceForest;
   }
 
   private get enterableStand(): number {
-    return this.region.foundingStand;
+    return this.match.activeStandId;
   }
 
   /** Recompute the default framing for the current viewport. */
@@ -236,7 +238,7 @@ export class Game {
     const span = this.region.cols * TILE_SIZE;
     // Centred on the region rather than on the colony's own tile, so the rows
     // nearest the camera stay in the picture.
-    const founding = this.region.stands[this.region.foundingStand];
+    const founding = this.region.stands[this.match.activeStandId];
     this.stage.rig.forestCentre = {
       x: ((this.region.cols - 1) / 2 - (founding?.sx ?? 0)) * TILE_SIZE,
       // A tile's own depth runs from its near edge back to z = -TILE_SIZE, so
@@ -258,7 +260,7 @@ export class Game {
     this.awaken();
     const steps = Math.max(0, Math.min(60 * 60 * 8, Math.round(seconds * 60)));
     for (let i = 0; i < steps; i++) {
-      this.sim.step(FIXED_STEP);
+      this.match.step(FIXED_STEP);
       // Let the stand-in player act while we fast-forward, otherwise a warmed
       // match is only ever a network that never bonded a tree.
       if (this.steward && i % 240 === 0) this.stewardTick();
@@ -373,6 +375,7 @@ export class Game {
     selectedStandId: number | null;
     selectedTreeId: number | null;
     simSeconds: number;
+    batching: ReturnType<TreeBatches['report']>;
   } {
     const surfaces = this.surfaces.filter((surface): surface is SurfaceForest => Boolean(surface));
     const lodTiers = [0, 0, 0];
@@ -395,12 +398,13 @@ export class Game {
         failures: this.assets.failures.length,
       },
       selectedStandId: this.selectedStandId,
-      selectedTreeId: this.surfaces[this.region.foundingStand]?.selectedId ?? null,
+      selectedTreeId: this.selectedStandId === null ? null : this.surfaces[this.selectedStandId]?.selectedId ?? null,
       simSeconds: Math.round(this.sim.time),
+      batching: this.treeBatches.report(),
     };
   }
 
-  private frame(now: number): void {
+  private frame(now: number, draw = true): void {
     // Two clocks, deliberately. `elapsed` is the real time since the previous
     // frame and drives presentation that must take the same wall-clock time on
     // any machine, such as the crossing between the two views. `dt` is clamped
@@ -418,7 +422,7 @@ export class Game {
     this.accumulator += dt * this.speed;
     let steps = 0;
     while (this.accumulator >= FIXED_STEP && steps < 24) {
-      this.sim.step(FIXED_STEP);
+      this.match.step(FIXED_STEP);
       this.accumulator -= FIXED_STEP;
       steps++;
     }
@@ -437,6 +441,9 @@ export class Game {
     }
     this.forest.update(dt);
     const blend = this.stage.rig.surfaceBlend;
+    // The cutaway has completely closed at the surface endpoint. Its 34k soil
+    // particles cannot contribute to the forest image and need no draw call.
+    this.soil.group.visible = blend < 1;
     // The soil's contents dissolve through the middle of a crossing rather than
     // switching off at a threshold, so the terrain closes over the network on
     // the way up and they return as it opens on the way down.
@@ -446,11 +453,14 @@ export class Game {
     // its trees stay at their unplaced origin, buried under the slab.
     for (const surface of this.surfaces) {
       if (!surface) continue;
-      surface.update(dt, blend, this.sim.season.id, this.sim.seasonClock / this.sim.season.seconds, !this.ambientMotion);
+      const standSim = this.match.stands[surface.standId].sim;
+      surface.group.visible = blend > 0.01 || surface.standId === this.match.activeStandId;
+      surface.update(dt, blend, standSim.season.id, standSim.seasonClock / standSim.season.seconds, !this.ambientMotion);
       // Which authored tier each tree wears follows its size on screen, so the
       // region can draw nine stands without every one of them paying LOD0.
       surface.updateLod(this.stage.rig.camera);
     }
+    this.treeBatches.sync(this.authoredTrees());
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
@@ -475,11 +485,22 @@ export class Game {
       this.journey = deriveJourney(this.sim);
     }
     this.ui.update(this.sim, dt, this.journey);
-    this.ui.showOutcome(this.sim, () => this.restart());
+    if (!this.acknowledgedOutcomes.has(this.match.activeStandId)) {
+      this.ui.showOutcome(this.sim, () => this.restart(), this.match.colonizedStands > 1 ? () => {
+        this.acknowledgedOutcomes.add(this.match.activeStandId);
+        this.setView('forest');
+      } : undefined);
+    }
+    if (this.reportedColonies !== this.match.colonizedStands) {
+      this.reportedColonies = this.match.colonizedStands;
+      const arrival = this.match.colonization.at(-1);
+      this.refreshStandOptions();
+      if (arrival) this.ui.setNote(`A spore has taken hold in stand ${arrival.to + 1}. Rise to the forest and choose it under Survey a stand.`);
+    }
     // Last word on the overlays: the views above write their own opacities, so
     // the fade is applied after them and nothing is left half lit.
     this.overlays.apply(overlay);
-    this.stage.render(dt);
+    if (draw) this.stage.render(dt);
     this.markerClock += dt;
     if (this.markerClock > 0.1) {
       this.markerClock = 0;
@@ -496,6 +517,12 @@ export class Game {
     this.ui.setNote('Click a root label to reach toward it. Click again when close to bond.');
   }
 
+  private *authoredTrees(): Iterable<BatchedTree> {
+    for (const surface of this.surfaces) for (const entry of surface.trees) {
+      if (entry.model) yield { key: `${surface.standId}:${entry.tree.id}`, model: entry.model, visible: surface.group.visible };
+    }
+  }
+
   private setSpeed(speed: number): void {
     this.speed = speed;
     for (const button of document.querySelectorAll<HTMLButtonElement>('.speed-row button')) {
@@ -506,8 +533,9 @@ export class Game {
   }
 
   private bindExperience(): void {
-    document.querySelector('#begin')!.addEventListener('click', () => { this.descend(); this.awaken(); });
+    document.querySelector('#begin')!.addEventListener('click', () => { if (this.prepareLocalAction()) this.awaken(); });
     document.querySelector('#rest')!.addEventListener('click', () => {
+      if (!this.prepareLocalAction()) return;
       if (this.sim.outcome !== 'playing') return;
       this.sim.player.resting = !this.sim.player.resting;
       this.ui.setNote(this.sim.player.resting ? 'The frontier rests. Your trees keep trading.' : 'The frontier begins to grow again.');
@@ -528,6 +556,7 @@ export class Game {
     document.querySelector('#immersive')!.addEventListener('click', toggleNotes);
     document.querySelector('#restore-notes')!.addEventListener('click', toggleNotes);
     document.querySelector('#focus-root')!.addEventListener('click', () => {
+      if (!this.prepareLocalAction()) return;
       const journey = deriveJourney(this.sim);
       const target = journey.roots.find(entry => entry.state !== 'bonded');
       if (!target) { this.ui.setNote('Every tree is bonded. Rest, then fruit near the surface.'); return; }
@@ -549,6 +578,10 @@ export class Game {
     document.querySelector('#view-forest')!.addEventListener('click', () => this.setView('forest'));
     document.querySelector('#view-underground')!.addEventListener('click', () => this.descend());
     document.querySelector('#descend-tree')!.addEventListener('click', () => this.descend());
+    document.querySelector('#forest-stand')!.addEventListener('change', event => {
+      this.selectStand(Number((event.target as HTMLSelectElement).value));
+    });
+    this.refreshStandOptions();
     document.querySelector('#forest-tree')!.addEventListener('change', event => {
       const [standId, treeId] = (event.target as HTMLSelectElement).value.split(':').map(Number);
       if (standId !== undefined && treeId !== undefined) this.selectTree(standId, treeId);
@@ -569,7 +602,7 @@ export class Game {
         option.value = `${standId}:${entry.tree.id}`;
         // The colony's own stand is described as what it is. The rest of the
         // region is described by the community the region generated for it.
-        const where = standId === this.enterableStand ? 'your stand' : COMMUNITY_LABEL[site.community];
+        const where = `stand ${standId + 1} \u00b7 ${COMMUNITY_LABEL[site.community]}`;
         option.textContent = `${SPECIES[entry.tree.species].common} · ${entry.tree.id + 1} · ${where}`;
         select.append(option);
       }
@@ -591,11 +624,20 @@ export class Game {
   }
 
   private descend(): void {
-    // Only the stand holding the colony can be entered: the others are ground
-    // the region is keeping for a spore that has not landed yet.
     if (this.selectedStandId !== null && this.selectedStandId !== this.enterableStand) {
-      this.ui.setNote('That stand has no colony in it yet. Fruit spores into it from ground you hold.');
-      return;
+      if (!this.match.stands[this.selectedStandId]?.sim.hasColony) {
+        this.setView('forest');
+        this.ui.setNote('No colony here yet. Fruit in an occupied stand to send spores on the wind.');
+        return;
+      }
+      // A wheel crossing is requested by the rig before it reaches this method.
+      // Return to its surface endpoint before rebinding a different soil slice.
+      if (this.stage.rig.view !== 'forest') this.stage.rig.setView('forest', true);
+      if (this.stage.rig.transitioning) {
+        this.ui.setNote('Let the forest come into view, then explore beneath this stand.');
+        return;
+      }
+      this.enterStand(this.selectedStandId);
     }
     const id = this.surface.selectedId;
     if (id === null) this.setView('underground');
@@ -614,7 +656,9 @@ export class Game {
     const entry = surface?.trees.find((tree) => tree.tree.id === id);
     if (!surface || !entry) return;
     this.selectedStandId = standId;
+    for (const other of this.surfaces) other.selectedId = null;
     surface.selectedId = id;
+    document.querySelector<HTMLSelectElement>('#forest-stand')!.value = String(standId);
     document.querySelector<HTMLSelectElement>('#forest-tree')!.value = `${standId}:${id}`;
     // The camera frames the region from the founding stand's own origin, so a
     // neighbouring stand's tree has to be moved into that frame to be looked at.
@@ -623,37 +667,88 @@ export class Game {
     this.updateTreeNote();
   }
 
+  private selectStand(id: number): void {
+    const surface = this.surfaces[id];
+    if (!surface) return;
+    this.selectedStandId = id;
+    for (const other of this.surfaces) other.selectedId = null;
+    document.querySelector<HTMLSelectElement>('#forest-tree')!.value = '';
+    this.stage.rig.focusTree(surface.group.position.x, surface.group.position.z - TILE_SIZE / 2);
+    this.updateTreeNote();
+  }
+
+  private refreshStandOptions(): void {
+    const select = document.querySelector<HTMLSelectElement>('#forest-stand')!;
+    select.replaceChildren(...this.match.stands.map(stand => {
+      const option = document.createElement('option');
+      option.value = String(stand.site.id);
+      option.textContent = `${stand.site.id + 1} · ${COMMUNITY_LABEL[stand.site.community]} · ${stand.sim.hasColony ? 'colony' : 'uncolonized'}`;
+      return option;
+    }));
+    select.value = String(this.selectedStandId ?? this.match.activeStandId);
+    this.updateTreeNote();
+  }
+
+  /** Rebuild only local presentation; the stand's simulation is never replaced. */
+  private enterStand(id: number): void {
+    const old = this.region.stands[this.match.activeStandId];
+    const next = this.region.stands[id];
+    if (!next || !this.match.stands[id].sim.hasColony || id === old.id) return;
+    this.overlays.apply(1);
+    for (const group of [this.soil.group, this.forest.group, this.living.group]) disposeView(group);
+    this.match.selectStand(id);
+    this.sim = this.match.sim;
+    const dx = (old.sx - next.sx) * TILE_SIZE;
+    const dz = (next.sy - old.sy) * TILE_SIZE;
+    for (const surface of this.surfaces) surface.group.position.add(new THREE.Vector3(dx, 0, dz));
+    this.stage.rig.rebaseForest(dx, dz);
+    this.soil = new SoilMesh(this.sim.world);
+    this.forest = new ForestView(this.sim.world);
+    this.forest.showRootsOnly();
+    this.living = new LivingView(this.sim);
+    this.stage.scene.add(this.soil.group, this.forest.group, this.living.group);
+    this.playerMesh.reset();
+    this.rivalMesh.reset();
+    this.playerMotes.reset();
+    this.rivalMotes.reset();
+    this.overlays = new OverlayFade([this.playerMesh.group, this.rivalMesh.group, this.playerMotes.points, this.rivalMotes.points, this.forest.group, this.living.group]);
+    this.overlays.apply(0);
+    this.seasonId = '';
+    this.journey = null;
+    this.markerActions.clear();
+    for (const button of this.markerButtons.values()) button.hidden = true;
+    this.lastBonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
+    this.lastFruits = this.sim.player.fruited;
+    this.ui.resetStand();
+    this.ui.buildRail(this.sim);
+    this.ui.update(this.sim, 1, deriveJourney(this.sim));
+    this.lastView = '';
+  }
+
   private updateTreeNote(): void {
-    const standId = this.selectedStandId;
-    const site = standId === null ? null : this.region.stands[standId];
-    const tree = standId === null ? null : this.surfaces[standId]?.trees.find((tree) => tree.tree.id === this.surfaces[standId]?.selectedId)?.tree;
-    const where = site
-      ? standId === this.enterableStand
-        ? 'your own stand'
-        : `${COMMUNITY_LABEL[site.community]} · no colony here yet`
-      : '';
-    const status = !tree
-      ? 'Choose a crown to follow its roots.'
-      : `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${
-          standId === this.enterableStand
-            ? tree.rootTips.some((tip) => tip.bondedTo !== null)
-              ? 'Bonded to your network'
-              : 'Not yet bonded'
-            : 'beyond your colony'
-        } · ${where}`;
-    document.querySelector('#tree-status')!.textContent = status;
+    const standId = this.selectedStandId ?? this.match.activeStandId;
+    const stand = this.match.stands[standId];
+    const surface = this.surfaces[standId];
+    const tree = surface?.trees.find(entry => entry.tree.id === surface.selectedId)?.tree;
+    const occupied = stand.sim.hasColony;
+    document.querySelector('#stand-status')!.textContent =
+      `Stand ${standId + 1} · ${occupied ? 'Colony established' : 'No colony yet; spores arrive after fruiting'} · ${this.match.colonizedStands} of ${this.match.stands.length} occupied`;
+    document.querySelector<HTMLButtonElement>('#descend-tree')!.disabled = !occupied;
+    document.querySelector('#tree-status')!.textContent = tree
+      ? `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${occupied ? tree.rootTips.some(tip => tip.bondedTo !== null) ? 'Bonded to your network' : 'Not yet bonded' : 'Beyond your colony'}`
+      : 'Choose a crown, or explore beneath this stand.';
   }
 
   private syncViewUI(): void {
     const rig = this.stage.rig;
     const transition = rig.transitioning;
-    const state = `${rig.view}:${transition}`;
+    const state = `${rig.view}:${transition}:${this.match.activeStandId}`;
     if (this.lastView === state) return;
     this.lastView = state;
     document.body.dataset.view = rig.view;
     document.body.classList.toggle('view-transition', transition);
     for (const view of ['forest', 'underground']) document.querySelector(`#view-${view}`)!.setAttribute('aria-pressed', String(rig.view === view));
-    document.querySelector('#view-status')!.textContent = transition ? (rig.view === 'forest' ? 'Rising through the canopy…' : 'Following the roots…') : (rig.view === 'forest' ? 'Above the forest floor' : 'Within the living soil');
+    document.querySelector('#view-status')!.textContent = transition ? (rig.view === 'forest' ? 'Rising through the canopy…' : 'Following the roots…') : (rig.view === 'forest' ? 'Above the forest floor' : `Within stand ${this.match.activeStandId + 1} \u00b7 ${COMMUNITY_LABEL[this.match.active.site.community]}`);
     document.querySelector('.camera-hint')!.textContent = rig.view === 'forest'
       ? 'Drag to wander · Shift-drag to orbit · Scroll to descend · V to switch views'
       : 'Drag to wander · Scroll to look closer · F to reframe · V to rise';
@@ -854,9 +949,7 @@ export class Game {
       (event) => {
         event.preventDefault();
         const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.canvas.clientHeight : 1);
-        const before = this.stage.rig.view;
-        this.stage.rig.zoomBy(Math.exp(THREE.MathUtils.clamp(delta, -160, 160) * 0.0011));
-        if (before === 'forest' && this.stage.rig.view === 'underground') this.descend();
+        this.zoom(Math.exp(THREE.MathUtils.clamp(delta, -160, 160) * 0.0011));
       },
       { passive: false }
     );
@@ -868,8 +961,8 @@ export class Game {
         event.preventDefault();
         this.stage.rig.pan(event.key === 'ArrowLeft' ? -6 : event.key === 'ArrowRight' ? 6 : 0, event.key === 'ArrowUp' ? 6 : event.key === 'ArrowDown' ? -6 : 0);
       }
-      if (event.key === '+' || event.key === '=') this.stage.rig.zoomBy(0.85);
-      if (event.key === '-') this.stage.rig.zoomBy(1.15);
+      if (event.key === '+' || event.key === '=') this.zoom(0.85);
+      if (event.key === '-') this.zoom(1.15);
       if (event.code === 'Space' && !(event.target instanceof HTMLButtonElement)) {
         event.preventDefault();
         this.awaken();
@@ -890,6 +983,12 @@ export class Game {
       // player has aimed the camera themselves.
       this.stage.rig.reframe();
     });
+  }
+
+  private zoom(factor: number): void {
+    const before = this.stage.rig.view;
+    this.stage.rig.zoomBy(factor);
+    if (before === 'forest' && this.stage.rig.view === 'underground') this.descend();
   }
 
   private worldPerPixel(): number {
@@ -946,7 +1045,7 @@ export class Game {
   }
 
   private applyOrder(order: OrderId): void {
-    if (this.stage.rig.view === 'forest') this.descend();
+    if (!this.prepareLocalAction()) return;
     this.ui.setActiveOrder(order);
     const hints: Record<OrderId, string> = {
       grow: 'Click the soil to send the growth frontier there.',
@@ -955,6 +1054,11 @@ export class Game {
       fruit: 'Click near the surface to raise a fruiting body.',
     };
     this.ui.setNote(hints[order]);
+  }
+
+  private prepareLocalAction(): boolean {
+    if (this.stage.rig.view === 'forest') this.descend();
+    return this.stage.rig.view === 'underground';
   }
 
   private pickTree(clientX: number, clientY: number): void {
@@ -972,7 +1076,7 @@ export class Game {
       // Find the stand whose ground the click landed on, then its nearest tree.
       const standId = intersections[0].object.userData.standId as number | undefined;
       const surface = standId === undefined ? this.surface : this.surfaces[standId];
-      const tree = surface?.nearestTree(point.x, point.z);
+      const tree = surface?.nearestTree(point.x - surface.group.position.x, point.z - surface.group.position.z);
       if (tree && surface) this.selectTree(surface.standId, tree.id);
     }
   }

@@ -216,8 +216,18 @@ export class SheetUI {
     must('#rest').innerHTML = net.resting ? 'Resume growing <span aria-hidden="true">R</span>' : 'Rest & gather <span aria-hidden="true">R</span>';
   }
 
-  showOutcome(sim: Simulation, onRestart: () => void): void {
-    if (sim.outcome === 'playing' || !this.outcome.hidden) return;
+  resetStand(): void {
+    this.outcome.hidden = true;
+    this.outcome.querySelectorAll('button').forEach(button => button.remove());
+    this.refreshClock = 1;
+  }
+
+  showOutcome(sim: Simulation, onRestart: () => void, onExplore?: () => void): void {
+    if (sim.outcome === 'playing') return;
+    if (!this.outcome.hidden) {
+      if (!onExplore || this.outcome.querySelector('[data-explore]')) return;
+      this.resetStand();
+    }
     this.outcomeTitle.textContent =
       sim.outcome === 'fruited' ? 'Fruiting recorded' : 'Accession closed';
     this.outcomeBody.textContent =
@@ -229,6 +239,17 @@ export class SheetUI {
     button.textContent = 'Open a new sheet';
     button.addEventListener('click', onRestart);
     this.outcome.append(button);
+    if (onExplore) {
+      const explore = document.createElement('button');
+      explore.type = 'button';
+      explore.textContent = 'Explore daughter stands';
+      explore.dataset.explore = '';
+      explore.addEventListener('click', () => {
+        this.resetStand();
+        onExplore();
+      });
+      this.outcome.append(explore);
+    }
     this.outcome.hidden = false;
   }
 

@@ -1,6 +1,7 @@
-import { ECON } from './content';
+import { ECON, SEASONS } from './content';
 import { createRegion, downwindStands, type Region, type StandSite } from './region';
 import { Simulation, type MatchOutcome } from './sim';
+import { payColonyFund } from './network';
 
 /**
  * A match is a region, not a stand.
@@ -60,8 +61,11 @@ export class RegionalMatch {
   /** Stand the player is looking at. Presentation only; see the class note. */
   activeStandId: number;
   private sporeClock = 0;
+  private elapsed = 0;
+  private seasonIndex = 0;
+  private seasonClock = 0;
 
-  constructor(seedText = 'raven-wood') {
+  constructor(seedText = 'raven-wood', foundingSimulation?: Simulation) {
     this.region = createRegion(seedText);
     this.stands = this.region.stands.map((site) => ({
       site,
@@ -70,6 +74,9 @@ export class RegionalMatch {
       arrivals: [],
     }));
     this.activeStandId = this.region.foundingStand;
+    // The browser retains its established opening while the remaining stands
+    // use the region's site conditions. Headless regional callers use all sites.
+    if (foundingSimulation) this.require(this.activeStandId).sim = foundingSimulation;
     // Only the founding stand starts with a colony in it.
     for (const stand of this.stands) stand.sim.hasColony = false;
     this.require(this.activeStandId).sim.hasColony = true;
@@ -92,7 +99,7 @@ export class RegionalMatch {
   }
 
   get time(): number {
-    return this.sim.time;
+    return this.elapsed;
   }
 
   get colonizedStands(): number {
@@ -145,6 +152,19 @@ export class RegionalMatch {
     for (const stand of this.stands) {
       if (stand.sim.hasColony) stand.sim.step(dt);
     }
+    this.elapsed += dt;
+    this.seasonClock += dt;
+    while (this.seasonClock >= SEASONS[this.seasonIndex % SEASONS.length].seconds) {
+      this.seasonClock -= SEASONS[this.seasonIndex % SEASONS.length].seconds;
+      this.seasonIndex++;
+    }
+    // Weather belongs to the region, including ground awaiting a spore and
+    // colonies whose local outcome has stopped growth. No dormant soil is run.
+    for (const stand of this.stands) {
+      stand.sim.seasonIndex = this.seasonIndex;
+      stand.sim.seasonClock = this.seasonClock;
+      stand.sim.world.rainfall = stand.sim.season.rain;
+    }
     this.stepSpores(dt);
   }
 
@@ -169,7 +189,7 @@ export class RegionalMatch {
 
   private release(from: StandState): void {
     const parent = from.sim.player;
-    const wind = this.region.windAt(from.sim.time);
+    const wind = this.region.windAt(this.time);
     const reach = wind.strength >= STORM_STRENGTH ? 2.01 : 1.01;
     for (const targetId of downwindStands(this.region, from.site.id, wind, reach)) {
       const target = this.require(targetId);
@@ -178,8 +198,7 @@ export class RegionalMatch {
       // A colony pays for its daughter out of what it is holding. A parent that
       // cannot afford the journey does not send anyone, and the spore is only
       // ever a score.
-      if (parent.carbon < cost.carbon) return;
-      parent.carbon -= cost.carbon;
+      if (!payColonyFund(parent, cost)) return;
       this.found(target, from, cost, wind.strength);
       return;
     }
@@ -189,8 +208,9 @@ export class RegionalMatch {
     // The stand's own ground is left exactly as it is: the colony arrives in
     // the soil that was already under it.
     target.sim.foundColony(cost);
+    target.sim.time = this.time;
     target.released = 0;
-    const at = from.sim.time;
+    const at = this.time;
     target.arrivals.push({ at, from: from.site.id, spores: cost.carbon });
     this.colonization.push({ at, from: from.site.id, to: target.site.id, wind, cost: { ...cost } });
     target.sim.events.unshift({

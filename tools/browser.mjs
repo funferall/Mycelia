@@ -97,8 +97,7 @@ export function launchBrowser() {
 }
 
 /** Collect console errors and page exceptions for a run. */
-export function collectProblems(page) {
-  const problems = [];
+export function collectProblems(page, problems = []) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') problems.push(`console.error: ${msg.text()}`);
   });

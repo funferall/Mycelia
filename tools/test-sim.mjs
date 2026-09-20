@@ -16,13 +16,14 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile only the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-sim-'));
-for (const name of ['content', 'rng', 'region', 'world', 'network', 'sim']) {
+for (const name of ['content', 'rng', 'region', 'world', 'network', 'sim', 'match']) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
   writeFileSync(join(output, `${name}.mjs`), compiled.replace(/from '(.+?)'/g, "from '$1.mjs'"));
 }
 const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
 const { Simulation } = await load('sim');
+const { RegionalMatch } = await load('match');
 const { createNetwork, makeCord, spawnTip, startFruiting, stepNetwork } = await load('network');
 const { createWorld } = await load('world');
 const { ECON, GRID } = await load('content');
@@ -273,13 +274,14 @@ const results = [];
  */
 function playJourney(seedText, budgetSeconds = 1800) {
   const sim = new Simulation(seedText);
+  const match = process.env.REGIONAL_JOURNEY ? new RegionalMatch(seedText, sim) : null;
   // `JOURNEY_TRACE=1` prints the state every five seconds of a journey, which is
   // how a balance failure gets diagnosed without editing this file.
   const trace = Boolean(process.env.JOURNEY_TRACE);
   let traceClock = 0;
   const advance = (seconds) => {
     for (let i = 0; i < Math.round(seconds * 60); i++) {
-      sim.step(1 / 60);
+      (match ?? sim).step(1 / 60);
       if (!trace) continue;
       traceClock += 1 / 60;
       if (traceClock >= 5) {
@@ -344,6 +346,10 @@ function playJourney(seedText, budgetSeconds = 1800) {
     sim.player.blooms.every((bloom) => bloom.gy <= 12),
     'blooms are recorded at the surface where they were raised'
   );
+  if (match) {
+    assert.ok(match.colonization.length >= 1, 'a real bloom must found at least one daughter');
+    console.log(`  regional: ${match.colonization.length} daughter colonies funded by actual blooms`);
+  }
   return sim;
 }
 

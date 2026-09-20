@@ -152,3 +152,10 @@ intent, pause and variable speed as core features, and no color-only channel
 requirement has been recorded. Species identity is currently assigned by
 colour, which is a known risk for colour-vision deficiency and must be paired
 with form, texture, or motion differences before it carries meaning alone.
+
+Regional interaction now exposes colonized stands through the forest survey.
+Each keeps a persistent local underground colony, and all occupied stands run
+while the player is elsewhere. The established founding map remains compatible
+with the original opening; neighboring worlds use regional site conditions.
+A local two-bloom outcome can be followed by exploration of daughter stands;
+the final regional victory condition remains undecided.

@@ -1059,7 +1059,7 @@ function progressFruiting(net: Network, ctx: StepContext): void {
   }
 }
 
-function updateTotals(net: Network): void {
+export function updateTotals(net: Network): void {
   let carbon = 0;
   let water = 0;
   let nitrogen = 0;
@@ -1082,6 +1082,26 @@ function updateTotals(net: Network): void {
   net.nitrogen = nitrogen;
   net.starving = starving;
   if (living === 0) net.extinct = true;
+}
+
+/** Transfer a founding kit out of connected stores, atomically and in node order. */
+export function payColonyFund(net: Network, cost: { carbon: number; water: number; nitrogen: number }): boolean {
+  markConnectivity(net);
+  updateTotals(net);
+  const resources = ['carbon', 'water', 'nitrogen'] as const;
+  if (resources.some(resource => !Number.isFinite(cost[resource]) || cost[resource] < 0 || net[resource] < cost[resource])) return false;
+  for (const resource of resources) {
+    let remaining = cost[resource];
+    for (const node of net.nodes) {
+      if (!node.alive || !node.connected) continue;
+      const paid = Math.min(Math.max(0, node[resource]), remaining);
+      node[resource] -= paid;
+      remaining -= paid;
+      if (remaining <= 0) break;
+    }
+  }
+  updateTotals(net);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
