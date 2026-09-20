@@ -2384,6 +2384,13 @@ When handing work to another agent, point them to this file and the affected
 feature IDs. A valid handoff is a current feature row, remaining gap, and
 verification entry—not a new document.
 
+**More than one agent shares this working tree.** Stage explicit paths rather
+than `git add -A`: a commit that sweeps the whole tree will pick up another
+lane's half-written files, and a pushed commit cannot be taken back. Check
+`git status` immediately before committing, keep your lane's files and theirs
+apart, and re-run your checks once the other lane has settled if you touched
+shared files such as `src/game.ts`.
+
 ## Change log
 
 ### 20 September 2026: sections as a control, and a body with thickness
