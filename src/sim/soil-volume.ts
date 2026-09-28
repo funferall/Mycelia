@@ -303,6 +303,11 @@ export class SoilVolume {
     return cell;
   }
 
+  /** Fast lookup for a local soil view that has already resolved its voxel. */
+  changedMaterialForKey(key: string): SoilCell | null {
+    return this.changes.get(key)?.cell ?? null;
+  }
+
   /** Apply a change through the mutation path. */
   mutate(x: number, y: number, z: number, patch: Partial<SoilCell>): SoilCell {
     const cell = this.materialAt(x, y, z);

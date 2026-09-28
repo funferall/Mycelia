@@ -88,7 +88,13 @@ for (const asset of manifest.assets) {
   }
   console.log(`PASS ${asset.id}: ${asset.lods.map(t => t.triangles).join(' / ')} triangles`);
 }
-for (const id of ['tree.oak', 'tree.birch', 'tree.hemlock', 'prop.stump', 'prop.log', 'fungus.fruitingBody']) {
+for (const id of [
+  'tree.oak', 'tree.birch', 'tree.hemlock', 'prop.stump', 'prop.log',
+  'fungus.fruitingBody', 'fungus.fruiting-cluster', 'fungus.spore-body',
+  'fungus.underground-fruiting-body',
+  'fungus.porcini-button', 'fungus.porcini-opening', 'fungus.porcini-mature',
+  'fungus.chanterelle', 'fungus.amethyst-deceiver',
+]) {
   assert(ids.has(id), `existing registry asset ${id}`);
 }
 console.log(`PASS ${ids.size} assets, ${files} GLBs, ${(bytes / 1024).toFixed(1)} KiB; Three.js load, bounds, anchors, geometry, materials, budgets.`);

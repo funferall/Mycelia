@@ -1,6 +1,6 @@
 # Mycelia
 
-An ecological real-time strategy game played on a dark herbarium specimen sheet.
+An ecological real-time strategy game with a living forest and a quiet, organic interface.
 You wake as a fungal intelligence in a single spore beneath a forest floor, grow
 a mycelial network through living soil, form symbioses with tree roots, and
 fruit before the forest fails.
@@ -70,9 +70,14 @@ strand's brightness comes from its thickness, health and actual resource flow.
 Motes only appear on edges that moved carbon this tick, so the drifting light is
 a readout of the economy rather than an ambient effect.
 
-**The interface is printed, not drawn.** All text is real HTML in EB Garamond
-and Courier Prime. The depth rail is generated from the map's own strata, so it
-cannot disagree with the soil it measures.
+**The interface uses semantic HTML.** Three complete rings show the strength of
+connected reserves, with exact amounts on hover or focus. Grow, Share and Rest
+lead; open the disclosures for Cord, Fruit, forest exploration and readings.
+Unfold the tech tree to learn milestone-earned adaptations across Exchange,
+Resilience and Fruiting. All branches belong to the same fungal network.
+After the first bloom, completed branches unlock contextual powers: Forest
+pulse, Mend the web and Second spring. Each runs for twenty seconds with a
+two-minute cooldown from activation.
 
 **Surface art is optional by construction.** `src/render/assets.ts` loads the
 glTF models listed in `public/assets/`, scales each one to the simulation's own
@@ -98,6 +103,8 @@ written down under "Authored 3D assets" in `DESIGN.md`.
 | `H` | Hide or restore field notes |
 | `S` | Open or close the regional survey |
 | `1`–`4` | Grow / Bond / Cord / Fruit |
+| `[` / `]` / `X` / `G` | Previous / next section, flip orientation, follow a strand in a regional section |
+| `N` | Toggle the forest Network projection when a spatial colony is present |
 
 Click the sheet to apply the selected order. With **Bond** selected, click a
 root tip to form a symbiosis; a bonded tree ships carbon in exchange for water
@@ -110,12 +117,28 @@ in the stand, so a network that reaches the stream drinks from it rather than
 crossing it. **Grow** tells you which of the two it met if an order is refused.
 
 Use **Survey a stand** in the forest to select a community. **Explore beneath**
-enters an occupied stand; selecting a crown follows that tree's roots. Fruiting
-can send a paid spore to another stand, which becomes available in the survey.
+opens an underground section in any of the nine stands, even before it holds a
+colony; the section's **Forest stand** selector moves directly between them.
+Selecting a crown follows that tree's roots in an occupied stand. Fruiting
+can send a paid spore to another stand. The daughter starts its own network on
+the same regional soil, with no physical or resource link to its parent.
 All colonized stands keep running while you explore, and orders and resource
 figures belong to the stand currently underground. After a local outcome,
 **Explore daughter stands** continues the regional lineage when another colony
 exists. A regional victory condition is still being designed.
+
+**Grow through a stand edge** in the forest directs the selected colony toward a
+passable neighboring stand. Its existing network becomes one regional body with
+one resource inventory; its strands keep their physical positions when regional
+growth begins. Crossing the edge is growth, not spore founding. The
+underground **Section** controls browse that body. A spore daughter gets its own
+spatial body and can be selected and directed separately. **Seek a root** directs growth
+toward an unbonded partner in the open stand, or bonds when a strand is close
+enough. **Return to forest** restores the view from which you descended;
+**Network** then projects the same strands over the ground, and selecting one
+opens its section. Flip a section and click **Grow** to steer toward a passable
+point in any horizontal direction or depth; the frontier checks the intervening
+3D soil as it goes. Comparing two sections at once remains in development.
 
 **Survey the region** (or `S`) opens a printed ledger of all nine stands: what
 each one holds, its water, its broad forest health once a colony has held it, and
@@ -164,6 +187,7 @@ npm run profile:forest -- --qa fast # bounded software-WebGL measurements
 npm run test:lod    # projected-size LOD selection: bands, hysteresis
 npm run test:view   # browser checks for the forest <-> underground crossing
 npm run test:journey # plays a whole match through the printed controls
+npm run test:regional-spatial # builds and checks a natural seam crossing in the browser
 node tools/shoot.mjs \
   --url "http://127.0.0.1:5173/?warm=300&steward=1" \
   --canvas-out design/shots/latest.png \
@@ -178,17 +202,16 @@ that grows one colony across a stand boundary. It includes a live water-depth
 slider and a ten-second fixed-step advance. These are explicitly synthetic
 fixtures; ordinary URLs keep the normal opening and economy.
 
-While a spatial colony exists, going **Underground** opens a real vertical
-section through it and the sheet carries a **Section** panel with **Previous**,
-**Next**, **Flip**, **Follow**, **Return to forest** and **Surface here** - or
+Going **Underground** opens a vertical section through the selected stand, and
+the sheet carries a **Section** panel with **Previous**,
+**Next**, **Flip**, **Follow**, **Seek a root**, **Return to forest**, **Surface here** and a stand selector - or
 `[`, `]`, `X`, `G` and `Escape` on the keyboard. The panel names the stand, the
 community, the orientation, the position in the family and the strand count, and
 says plainly when a section holds no network.
 
 **Network** in the forest panel projects the colony's actual strands over the
 terrain, and clicking a projected strand opens the section through it. A crown
-still wins a click. An ordinary match has no spatial colony, so none of these
-controls appear in it.
+still wins a click. Empty stands show a section without inventing strands.
 
 In the forest scene the bench also carries the dressing controls: background
 vegetation on, off, or at the medium and dense trial bands, and a community
@@ -205,6 +228,7 @@ npm run test:feature -- water --browser # rebuild + focused browser check
 npm run test:feature -- water --browser --normal # full-quality water check
 npm run test:feature -- spatial         # coordinates and the shared soil volume
 npm run test:feature -- crossing        # one colony across one stand edge
+npm run test:regional-mature -- --qa fast # independent spore daughter and nine-tile browser controls
 npm run test:feature -- dressing         # background planting; add --browser for the renderer check
 npm run test:feature -- sections         # sections and the reveal; add --browser for the renderer check
 npm run test:feature -- views           # rebuild + fast view smoke

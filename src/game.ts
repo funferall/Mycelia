@@ -3,9 +3,12 @@ import { ECON, GRID, SPECIES } from './sim/content';
 import { nearestNode } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
+import { FruitingView, type FruitingSite } from './render/fruiting';
 import { TILE_SIZE, SurfaceForest } from './render/surface';
 import { COMMUNITY_LABEL, type Region } from './sim/region';
 import { RegionalMatch } from './sim/match';
+import { CrossingMatch } from './sim/crossing';
+import { standFrameOf, type Vec3 } from './sim/spatial';
 import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import { ForestDressing } from './render/forest-dressing';
@@ -39,6 +42,18 @@ import type { QualityPreset } from './render/quality';
 import { deriveJourney, type Journey, type RootTarget } from './ui/journey';
 import { SheetUI, type OrderId } from './ui/sheet';
 import { SurveySheet } from './ui/survey';
+import { StormUI } from './ui/storm';
+import { StormView } from './render/storm';
+import { FireView } from './render/wildfire';
+import { FireUI } from './ui/wildfire';
+import { FLOOR_DROUGHT, FLOOR_FIRE, FLOOR_FLOOD } from './render/forest-floor';
+import { DroughtView } from './render/drought';
+import { DroughtUI } from './ui/drought';
+import { UndergroundWeather } from './render/underground-weather';
+import { FloodView } from './render/flood';
+import { FLOOD } from './sim/flood';
+import { DRESSING_FIRE_MAP } from './render/forest-dressing';
+import { FIRE } from './sim/wildfire';
 import { buildSurvey } from './sim/survey';
 
 const FIXED_STEP = 1 / 60;
@@ -147,16 +162,39 @@ export class Game {
   private dressing: ForestDressing;
   private dressingBand: DressingBand = 'medium';
   private dressingDirty = false;
+  /**
+   * The player's own fruiting bodies above ground. The sheet inside the soil
+   * shows an eruption in section; this is the same body standing on the floor
+   * of the region, where the simulation recorded it.
+   */
+  private readonly fruiting: FruitingView;
+  private readonly stormUI: StormUI;
+  private readonly stormView: StormView;
+  private readonly fireView: FireView;
+  private readonly fireUI: FireUI;
+  private readonly droughtView: DroughtView;
+  private readonly droughtUI: DroughtUI;
+  /** Presentation-eased drought severity, so cracks open and close smoothly. */
+  private droughtShown = 0;
+  /** The active stand's soil-side weather overlay; rebuilt with its groundwater view. */
+  private undergroundWeather: UndergroundWeather | null = null;
+  private readonly floodView: FloodView;
+  /** Render-only: the silt stain left after a flood, fading over a minute. */
+  private floodSilt = 0;
+  /** Render-only: how long burned ground stays charred after the fire's own record clears. */
+  private scorchFade = 0;
+  /** Windfalls already struck by presentation lightning. */
+  private windfallsSeen = 0;
 
   /**
-   * The spatial fixture, when `?lab=crossing` attached one.
-   *
-   * Held as a structural contract so the crossing simulation stays out of the
-   * ordinary bundle: the sections and the reveal only need to read its graph.
+   * The spatial body from the running match or the crossing bench. Sections and
+   * the forest reveal both read its one graph.
    */
   private spatial: SpatialFixture | null = null;
+  private emptySectionViewer: SpatialFixture | null = null;
   private reveal: NetworkReveal | null = null;
   private sectionView: SectionView | null = null;
+  private spatialRefreshClock = 0;
   private revealEnabled = false;
   private selectedEdgeKey: string | null = null;
   private lastStrandPick: RevealPickInfo | null = null;
@@ -176,8 +214,9 @@ export class Game {
   private syncSectionUI(): void {
     const panel = document.querySelector<HTMLElement>('#section-browser');
     if (!panel) return;
-    document.body.classList.toggle('spatial-colony', this.spatial !== null);
-    panel.hidden = this.spatial === null;
+    const show = this.section !== null || this.match.spatialColonies.has(this.match.activeStandId);
+    document.body.classList.toggle('spatial-colony', show);
+    panel.hidden = !show;
     const status = document.querySelector('#section-status');
     if (status) {
       status.textContent = this.section
@@ -233,6 +272,29 @@ export class Game {
     // can be inspected, folded and culled on its own.
     this.dressing = this.buildDressing();
     this.stage.scene.add(this.dressing.group);
+    // The earned reward above ground, standing in the region's own coordinates
+    // so it moves with the ground when the player enters another stand.
+    this.fruiting = new FruitingView(this.assets, (point) => this.regionToScenePoint(point));
+    this.stage.scene.add(this.fruiting.group);
+    this.stormUI = new StormUI(this.match, text => { this.ui.setNote(text); if (text === 'Storm announced') this.ui.resetStand(); });
+    const stormWidth = this.region.cols * TILE_SIZE, stormDepth = this.region.rows * TILE_SIZE;
+    this.stormView = new StormView(stormWidth,stormDepth,this.stage.quality.id === 'fast');
+    this.stormView.group.position.copy(this.regionToScenePoint({x:stormWidth/2,y:stormDepth/2,z:this.region.heightAt(stormWidth/2,stormDepth/2)}));
+    this.stage.scene.add(this.stormView.group);
+    this.fireUI = new FireUI(this.match, text => this.ui.setNote(text));
+    this.fireView = new FireView(stormWidth, stormDepth,
+      (x, y) => this.regionToScenePoint({ x, y, z: this.region.heightAt(x, y) }),
+      this.stage.quality.id === 'fast');
+    this.stage.scene.add(this.fireView.group);
+    this.droughtUI = new DroughtUI(this.match, text => this.ui.setNote(text));
+    this.droughtView = new DroughtView(stormWidth, stormDepth,
+      (x, y) => this.regionToScenePoint({ x, y, z: this.region.heightAt(x, y) }),
+      this.stage.quality.id === 'fast');
+    this.stage.scene.add(this.droughtView.group);
+    this.floodView = new FloodView(this.stream.course,
+      (x, y) => this.regionToScenePoint({ x, y, z: this.region.heightAt(x, y) }),
+      this.stage.quality.id === 'fast');
+    this.stage.scene.add(this.floodView.group);
     // A tier file that arrives changes which geometry the scenery can wear, so
     // the next frame rebuilds it rather than waiting for a camera move.
     this.assets.onLoad = () => {
@@ -241,7 +303,7 @@ export class Game {
     // Art is opportunistic: the stand above is already drawn procedurally, and
     // whatever loads is handed over as it arrives.
     void this.assets.load().then(() => this.adoptAssets());
-    this.living = new LivingView(this.sim);
+    this.living = new LivingView(this.sim, this.assets);
     this.stage.scene.add(this.living.group);
     this.groundwater = this.buildGroundwater();
     this.stage.scene.add(this.groundwater.group);
@@ -314,7 +376,30 @@ export class Game {
 
   /** The active stand's channel and water table, rebuilt like the local views. */
   private buildGroundwater(): GroundwaterView {
-    return new GroundwaterView(this.sim.world, this.match.active.site.stream);
+    const view = new GroundwaterView(this.sim.world, this.match.active.site.stream);
+    // The powers as the soil sees them ride with the stand's own water views,
+    // so they are rebuilt, faded and disposed with it.
+    const site = this.match.active.site;
+    this.undergroundWeather = new UndergroundWeather(this.sim.world, {
+      x: site.sx * TILE_SIZE, y: site.sy * TILE_SIZE + TILE_SIZE / 2,
+    });
+    view.group.add(this.undergroundWeather.mesh);
+    return view;
+  }
+
+  /** Storm, flood, fire and drought in the active stand's soil. */
+  private updateUndergroundWeather(dt: number): void {
+    const storm = this.match.storm;
+    const site = this.match.active.site;
+    const rain = storm.phase === 'active' ? 1 : storm.phase === 'recovery' ? this.match.stormIntensity : 0;
+    const soaking = storm.phase === 'active' ? this.match.time - storm.activeAt : storm.phase === 'recovery' ? 40 : 0;
+    this.undergroundWeather?.update(dt, {
+      rain,
+      wetFront: Math.min(45, 4 + soaking * 1.1),
+      flood: this.match.flood.level,
+      floodDepth: (gx) => this.match.flood.depthAt(site, gx),
+      flash: this.stormView.flash,
+    }, this.ambientMotion);
   }
 
   /**
@@ -425,10 +510,48 @@ export class Game {
   }
 
   /**
+   * Every fruiting body the player has earned, in the region's own coordinates.
+   *
+   * A body is placed only where the simulation recorded a site. A transect
+   * that was never bound to regional soil has no address to stand a mushroom
+   * on; the sheet below ground still shows that eruption, and nothing above it
+   * is invented.
+   */
+  private fruitingSites(): FruitingSite[] {
+    const sites: FruitingSite[] = [];
+    for (const stand of this.match.stands) {
+      const player = stand.sim.player;
+      player.blooms.forEach((bloom, index) => {
+        if (!bloom.spatial) return;
+        sites.push({
+          key: `${stand.site.id}:bloom:${index}`,
+          point: this.groundAt(bloom.spatial),
+          progress: 1,
+          bloomed: true,
+        });
+      });
+      const fruit = player.fruit;
+      if (fruit.active && fruit.spatial) {
+        sites.push({
+          key: `${stand.site.id}:rising`,
+          point: this.groundAt(fruit.spatial),
+          progress: fruit.progress,
+          bloomed: false,
+        });
+      }
+    }
+    return sites;
+  }
+
+  /** A recorded site lifted onto the ground above it, where the body stands. */
+  private groundAt(point: Vec3): Vec3 {
+    return { x: point.x, y: point.y, z: this.region.heightAt(point.x, point.y) };
+  }
+
+  /**
    * Explicit opt-in test fixtures; ordinary matches never call this.
    *
-   * The crossing fixture is imported on demand so the spatial simulation stays
-   * out of the ordinary bundle until someone asks for the bench.
+   * The crossing fixture shares the coordinator used by ordinary play.
    */
   async prepareLab(scene: string): Promise<void> {
     this.setSpeed(0);
@@ -448,7 +571,6 @@ export class Game {
       this.setSpeed(0);
     }
     if (scene === 'crossing') {
-      const { CrossingMatch } = await import('./sim/crossing');
       const crossing = new CrossingMatch({ seedText: this.seedText });
       crossing.orderAcross();
       let ticks = 0;
@@ -467,7 +589,7 @@ export class Game {
     this.syncViewUI();
     this.ui.setNote(
       scene === 'crossing'
-        ? 'Test specimen: the crossing fixture is simulated headless. No section or reveal view is drawn yet.'
+        ? 'Test specimen: a funded colony crosses a real seam; sections and Network inspect its body.'
         : 'Test specimen: fixture resources; simulation paused.'
     );
   }
@@ -497,7 +619,7 @@ export class Game {
   }
 
   // -------------------------------------------------------------------------
-  // The spatial fixture: sections and the forest reveal (VIEW-06, VIEW-07)
+  // Shared spatial views: sections and the forest reveal (VIEW-06, VIEW-07)
   // -------------------------------------------------------------------------
 
   /**
@@ -525,11 +647,8 @@ export class Game {
   }
 
   /**
-   * Attach a spatial fixture's colony to the forest view.
-   *
-   * Called by the crossing bench once the fixture exists. Everything the reveal
-   * and the sections draw is read from this colony's own graph; the ordinary
-   * match is untouched, and the fixture itself stays out of the ordinary bundle.
+   * Attach a spatial colony from the running match or the crossing bench.
+   * Both views read this graph's own XYZ edges.
    */
   attachSpatialFixture(fixture: SpatialFixture): void {
     this.spatial = fixture;
@@ -546,13 +665,53 @@ export class Game {
     }
     this.refreshSpatialViews();
     this.syncSectionUI();
-    // A Network control only exists while there is a network to reveal: an
-    // ordinary match has no spatial colony and gets no dead button.
+    // A Network control appears only after a real spatial body exists.
     const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
     if (button) {
-      button.hidden = false;
+      button.hidden = fixture === this.emptySectionViewer;
       button.setAttribute('aria-pressed', String(this.revealEnabled));
     }
+    const standSelect = document.querySelector<HTMLSelectElement>('#section-stand');
+    if (standSelect) {
+      if (standSelect.options.length !== this.match.stands.length) {
+        standSelect.replaceChildren(...this.match.stands.map((stand) => {
+          const option = document.createElement('option');
+          option.value = String(stand.site.id);
+          option.textContent = `Stand ${stand.site.id + 1} · ${COMMUNITY_LABEL[stand.site.community]}`;
+          return option;
+        }));
+      }
+      standSelect.value = String(this.section?.spec.standId ?? this.selectedStandId ?? this.match.activeStandId);
+    }
+    const crossing = document.querySelector<HTMLButtonElement>('#forest-cross');
+    if (crossing) crossing.hidden = false;
+  }
+
+  /** Direct the running colony through a stand edge and open its real sections. */
+  growAcrossStand(): { ok: boolean; message: string } {
+    const selected = this.selectedStandId ?? this.match.activeStandId;
+    if (!this.match.stands[selected]?.sim.hasColony) {
+      return { ok: false, message: 'Choose a stand that holds your colony before directing a crossing.' };
+    }
+    const reachedBody = this.match.spatialForStand(selected);
+    const independent = this.match.spatialColonies.has(selected) || this.match.stands[selected].arrivals.length > 0;
+    if (selected !== this.match.activeStandId && independent) this.enterStand(selected);
+    let result: { ok: boolean; message: string };
+    try {
+      if (reachedBody && !independent) {
+        this.match.spatial = reachedBody;
+        result = reachedBody.orderAcross();
+      } else {
+        result = this.match.growAcross();
+      }
+    } catch (error) {
+      return { ok: false, message: `No passable stand edge was found: ${String(error)}` };
+    }
+    if (!result.ok || !this.match.spatial) return result;
+    this.attachSpatialFixture(this.match.spatial);
+    const opened = this.openSection(selected);
+    if (opened.ok) this.syncViewUI();
+    return { ok: true, message: `${result.message} ${opened.message}` };
   }
 
   /** Re-read the colony: new growth, a cut strand, a stand just reached. */
@@ -575,7 +734,7 @@ export class Game {
 
   /** The Network toggle: a projection of the real strands, off by default. */
   setReveal(enabled: boolean): void {
-    this.revealEnabled = enabled && this.spatial !== null;
+    this.revealEnabled = enabled && this.spatial !== null && this.spatial !== this.emptySectionViewer;
     this.reveal?.setVisible(this.revealEnabled);
     const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
     if (button) button.setAttribute('aria-pressed', String(this.revealEnabled));
@@ -590,9 +749,9 @@ export class Game {
     return this.revealEnabled;
   }
 
-  /** The fixture's opening move: descend into the first section available. */
+  /** Descend into the first section available to this spatial body. */
   openFirstSection(): { ok: boolean; message: string } {
-    if (!this.spatial) return { ok: false, message: 'No spatial colony in this fixture.' };
+    if (!this.spatial) return { ok: false, message: 'No spatial colony in this match.' };
     const stand = this.spatial.reachedStandIds()[0] ?? this.spatial.originStandId;
     return this.openSection(stand);
   }
@@ -631,8 +790,10 @@ export class Game {
    * picked, else an opening plane in that stand.
    */
   openSection(standId?: number, sectionId?: string): { ok: boolean; message: string } {
-    if (!this.spatial) return { ok: false, message: 'No spatial colony in this fixture.' };
-    const browsable = this.spatial.browsableStandIds();
+    if (!this.spatial) return { ok: false, message: 'No spatial colony in this match.' };
+    const browsable = this.match.spatialColonies.size > 0
+      ? this.match.stands.map((stand) => stand.site.id)
+      : this.spatial.browsableStandIds();
     const targetStand = standId ?? this.spatial.reachedStandIds()[0] ?? this.spatial.originStandId;
     if (!browsable.includes(targetStand)) {
       return { ok: false, message: `Stand ${targetStand + 1} has not been reached or sensed.` };
@@ -821,11 +982,46 @@ export class Game {
     return { ok: true, message: `Following the strand into stand ${targetStand + 1}. ${this.sectionReadout()}` };
   }
 
+  /** Ask the nearest real partner in the open stand for a bond, or grow to it. */
+  seekSectionRoot(): { ok: boolean; message: string } {
+    const spatial = this.match.spatial;
+    if (!spatial || !this.section) return { ok: false, message: 'Open a section of the regional colony first.' };
+    const candidate = spatial.nearestUnbondedTip(this.section.spec.standId);
+    if (!candidate) return { ok: false, message: 'No unbonded root in this reached stand.' };
+    const result = candidate.distanceCm <= 3.5 * GRID.cmPerRow
+      ? spatial.bond(candidate.treeRef, candidate.tipId)
+      : spatial.orderTowardTip(candidate.treeRef, candidate.tipId);
+    if (result.ok) this.refreshSpatialViews();
+    return result;
+  }
+
+  /** All nine soil slices can be inspected before a colony reaches them. */
+  private ensureSectionViewer(): void {
+    if (!this.emptySectionViewer) {
+      const match = this.match;
+      this.emptySectionViewer = {
+        region: this.region,
+        originStandId: this.region.foundingStand,
+        get time() { return match.time; },
+        colonyEdges: () => [],
+        reachedStandIds: () => [],
+        browsableStandIds: () => match.stands.map((stand) => stand.site.id),
+        standFrame: (id) => standFrameOf(this.region, id),
+        orderAcross: () => ({ ok: false, message: 'No colony is growing from this stand.' }),
+        step: () => {},
+        report: () => ['Uncolonized regional soil'],
+        hash: () => 'uncolonized-sections',
+      };
+    }
+    this.attachSpatialFixture(this.emptySectionViewer);
+  }
+
   /** The section of a stand that holds one end of a strand. */
   private sectionHolding(edge: RevealEdge, standId: number): SectionSpec | null {
-    if (!this.spatial || !this.section) return null;
+    if (!this.spatial) return null;
     const point = edge.standId === standId ? edge.to : edge.from;
-    const forStand = this.section.sections.filter((spec) => spec.standId === standId);
+    const sections = this.section?.sections ?? browsableSections(this.spatial.region, this.spatial.browsableStandIds());
+    const forStand = sections.filter((spec) => spec.standId === standId);
     return sectionForPoint(this.spatial.region, forStand, point);
   }
 
@@ -849,10 +1045,11 @@ export class Game {
     });
     // Selection and reveal state come back with the picture.
     this.selectedStandId = context.standId;
-    for (const surface of this.surfaces) surface.selectedId = context.treeId;
+    for (const surface of this.surfaces) surface.selectedId = surface.standId === context.standId ? context.treeId : null;
     this.setReveal(context.reveal);
     this.updateTreeNote();
     this.syncSectionUI();
+    this.syncViewUI();
     return { ok: true, message: `Back above stand ${(context.standId ?? this.match.activeStandId) + 1}.` };
   }
 
@@ -897,6 +1094,7 @@ export class Game {
       this.rivalMotes.points,
       this.stream.group,
       this.soil.group,
+      this.fruiting.group,
       ...this.surfaces.filter(Boolean).map((surface) => surface.group),
     ];
   }
@@ -1185,6 +1383,14 @@ export class Game {
     simSeconds: number;
     batching: ReturnType<TreeBatches['report']>;
       dressing: ReturnType<ForestDressing['report']>;
+    /** The player's own fruiting bodies above ground. */
+    fruiting: ReturnType<FruitingView['report']>;
+    storm: ReturnType<StormView['report']>;
+    fire: ReturnType<FireView['report']>;
+    drought: ReturnType<DroughtView['report']> & { severity: number };
+    flood: ReturnType<FloodView['report']> & { level: number; underground: ReturnType<UndergroundWeather['report']> | null };
+    /** What the soil transect is standing, and how much of it is authored. */
+    living: ReturnType<LivingView['report']>;
   } {
     const surfaces = this.surfaces.filter((surface): surface is SurfaceForest => Boolean(surface));
     const lodTiers = [0, 0, 0];
@@ -1222,6 +1428,12 @@ export class Game {
       simSeconds: Math.round(this.sim.time),
       batching: this.treeBatches.report(),
       dressing: this.dressing.report(),
+      fruiting: this.fruiting.report(),
+      storm: this.stormView.report(),
+      fire: this.fireView.report(),
+      drought: { ...this.droughtView.report(), severity: this.droughtShown },
+      flood: { ...this.floodView.report(), level: this.match.flood.level, underground: this.undergroundWeather?.report() ?? null },
+      living: this.living.report(),
     };
   }
 
@@ -1247,9 +1459,17 @@ export class Game {
       this.accumulator -= FIXED_STEP;
       steps++;
     }
+    if (this.spatial && steps > 0) {
+      this.spatialRefreshClock += steps * FIXED_STEP;
+      if (this.spatialRefreshClock >= 0.25) {
+        this.spatialRefreshClock = 0;
+        this.refreshSpatialViews();
+      }
+    }
 
     this.soil.update(dt);
     this.groundwater.update(elapsed, this.ambientMotion);
+    this.updateUndergroundWeather(dt);
     this.playerMesh.sync(this.sim.player);
     this.rivalMesh.sync(this.sim.rival);
     const visualSpeed = Math.max(0.15, this.speed);
@@ -1263,6 +1483,25 @@ export class Game {
     }
     this.forest.update(dt);
     const blend = this.stage.rig.surfaceBlend;
+    const storm = this.match.storm;
+    if (storm.phase !== 'idle' && storm.initiator !== null) {
+      // The vortex turns over the colony that summoned it.
+      const site = this.region.stands[storm.initiator];
+      const eye = this.regionToScenePoint({ x: site.centreX, y: site.centreY, z: 0 }).sub(this.stormView.group.position);
+      this.stormView.setEye(eye.x, eye.z);
+    }
+    this.strikeWindfalls();
+    this.stormView.update(dt, {phase:storm.phase,direction:storm.direction,remaining:this.match.stormRemaining,intensity:this.match.stormIntensity}, !this.ambientMotion, blend);
+    this.stage.stormIntensity = this.match.stormIntensity;
+    this.stage.lightning = this.stormView.flash;
+    this.updateFire(dt, blend);
+    this.updateDrought(dt, blend);
+    this.updateFlood(dt, blend);
+    // Trees lean the storm's way through warning and storm, easing out in recovery.
+    const stormLean = storm.phase === 'idle' ? 0 : this.match.stormIntensity;
+    const surfaceWind = storm.phase === 'idle'
+      ? this.match.wind
+      : { direction: storm.direction, strength: this.match.wind.strength, storm: stormLean };
     // The stream lies on the forest floor, so it folds with it during a rise.
     this.stream.update(blend, elapsed, this.ambientMotion);
     // The cutaway has completely closed at the surface endpoint. Its 34k soil
@@ -1279,7 +1518,7 @@ export class Game {
       if (!surface) continue;
       const standSim = this.match.stands[surface.standId].sim;
       surface.group.visible = blend > 0.01 || surface.standId === this.match.activeStandId;
-      surface.update(dt, blend, standSim.season.id, standSim.seasonClock / standSim.season.seconds, !this.ambientMotion);
+      surface.update(dt, blend, standSim.season.id, standSim.seasonClock / standSim.season.seconds, !this.ambientMotion, surfaceWind);
       // Which authored tier each tree wears follows its size on screen, so the
       // region can draw nine stands without every one of them paying LOD0.
       surface.updateLod(this.stage.rig.camera);
@@ -1297,8 +1536,12 @@ export class Game {
       season: this.sim.season.id,
       progress: this.sim.seasonClock / this.sim.season.seconds,
       reduced: !this.ambientMotion,
+      storm: storm.phase === 'idle' ? undefined : { direction: storm.direction, strength: stormLean },
     });
     this.dressing.refine(this.stage.rig.camera, dt);
+    // The reward above ground: bodies stand only where the simulation recorded
+    // a site, and they fold with the floor they stand on.
+    this.fruiting.update(dt, this.fruitingSites(), blend > 0.3);
     // The reveal and the section follow the same fold and clock, and are drawn
     // in the region's own coordinates so a rebase moves them with the ground.
     if (this.spatial) {
@@ -1328,14 +1571,31 @@ export class Game {
     this.journeyClock += dt;
     if (!this.journey || this.journeyClock >= 0.25) {
       this.journeyClock = 0;
-      this.journey = deriveJourney(this.sim);
+      const activeSpatial = this.section && this.match.spatialColonies.get(this.match.activeStandId);
+      this.journey = activeSpatial
+        ? {
+            step: 2,
+            title: 'One body beneath the forest.',
+            copy: 'Browse sections, direct growth through the soil, and return to the forest to reveal the same strands.',
+            blocker: null,
+            enoughSurplus: activeSpatial.colony.surplus >= ECON.fruitThreshold,
+            roots: [],
+            sites: [],
+            bondedTrees: activeSpatial.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length,
+            livingTrees: activeSpatial.world.trees.filter(tree => !tree.dead).length,
+          }
+        : deriveJourney(this.sim);
     }
     this.ui.update(this.sim, dt, this.journey);
+    this.stormUI.update(dt);
+    this.fireUI.update(dt);
+    this.droughtUI.update(dt);
     // An outcome takes the sheet; the survey is a page of it, not a rival.
     if (this.sim.outcome !== 'playing') this.survey.dismiss();
     if (!this.acknowledgedOutcomes.has(this.match.activeStandId)) {
-      this.ui.showOutcome(this.sim, () => this.restart(), this.match.colonizedStands > 1 ? () => {
+      this.ui.showOutcome(this.sim, () => this.restart(), this.sim.outcome === 'fruited' || this.match.colonizedStands > 1 ? () => {
         this.acknowledgedOutcomes.add(this.match.activeStandId);
+        this.match.continueGrowing();
         this.setView('forest');
       } : undefined);
     }
@@ -1348,6 +1608,7 @@ export class Game {
     // Last word on the overlays: the views above write their own opacities, so
     // the fade is applied after them and nothing is left half lit.
     this.overlays.apply(overlay);
+    if (!this.sim.rivalEnabled) { this.rivalMesh.group.visible = false; this.rivalMotes.points.visible = false; }
     // And the last word on what a section replaces. The match's own stand views
     // and the region's surfaces belong to the ground above, not to the plane
     // being inspected, so they leave while a section is open. This runs after
@@ -1359,6 +1620,15 @@ export class Game {
     } else if (this.sectionHidLocalViews) {
       this.sectionHidLocalViews = false;
       for (const group of this.sectionHiddenGroups()) group.visible = true;
+      // Restore the visibility calculated above for this camera pose. The
+      // forest endpoint hides the soil and underground overlays; making every
+      // group visible here would flash them for the first frame back above.
+      this.overlays.apply(overlay);
+      this.soil.group.visible = blend < 1;
+      this.stream.group.visible = blend > 0.01;
+      for (const surface of this.surfaces) {
+        if (surface) surface.group.visible = blend > 0.01 || surface.standId === this.match.activeStandId;
+      }
     }
     if (draw) this.stage.render(dt);
     this.markerClock += dt;
@@ -1457,6 +1727,10 @@ export class Game {
         ? 'Network revealed. Click a projected strand to open the section through it.'
         : 'Network hidden. The forest is unchanged underneath.');
     });
+    document.querySelector('#forest-cross')?.addEventListener('click', () => {
+      this.awaken();
+      this.ui.setNote(this.growAcrossStand().message);
+    });
     // The section browser's own controls. They exist for the player, not only
     // for the bench: Previous and Next open a section on their first press.
     const sectionAction = (selector: string, run: () => { ok: boolean; message: string }) => {
@@ -1470,8 +1744,18 @@ export class Game {
     sectionAction('#section-next', () => (this.section ? this.stepSection(1) : this.openFirstSection()));
     sectionAction('#section-flip', () => (this.section ? this.flipSectionAxis() : this.openFirstSection()));
     sectionAction('#section-follow', () => (this.section ? this.followConnection() : this.openFirstSection()));
+    sectionAction('#section-root', () => this.seekSectionRoot());
     sectionAction('#section-return', () => this.returnToForest());
     sectionAction('#section-surface', () => this.surfaceHere());
+    document.querySelector<HTMLSelectElement>('#section-stand')?.addEventListener('change', (event) => {
+      const id = Number((event.target as HTMLSelectElement).value);
+      if (this.match.spatialColonies.has(id) && id !== this.match.activeStandId) {
+        this.returnToForest();
+        this.enterStand(id);
+      }
+      const result = this.openSection(id);
+      this.ui.setNote(result.message);
+    });
     this.survey.onChoose((id) => {
       this.selectStand(id);
       this.refreshStandOptions();
@@ -1517,6 +1801,10 @@ export class Game {
   }
 
   private setView(view: WorldView): void {
+    if (view === 'forest' && this.section && this.forestContext) {
+      this.returnToForest();
+      return;
+    }
     this.stage.rig.setView(view);
     this.syncViewUI();
   }
@@ -1526,10 +1814,28 @@ export class Game {
     // sections rather than into the match's own stand transect: the general
     // action reopens the last section, and any other section can be chosen by
     // name or by clicking a projected strand.
-    if (this.spatial) {
+    const targetStand = this.selectedStandId ?? this.match.activeStandId;
+    const target = this.match.stands[targetStand];
+    const localUnpromoted = target?.sim.hasColony && !this.match.spatialColonies.has(targetStand) &&
+      (targetStand === this.region.foundingStand || target.arrivals.length > 0);
+    if (localUnpromoted) {
+      this.section = null;
+      this.sectionView?.setSection(null);
+      this.syncSectionUI();
+    }
+    if (!this.spatial && !this.match.stands[targetStand]?.sim.hasColony) this.ensureSectionViewer();
+    const owned = this.match.spatialColonies.get(targetStand);
+    if (owned && targetStand !== this.match.activeStandId && this.stage.rig.view === 'forest') {
+      this.enterStand(targetStand);
+    }
+    if (owned && owned !== this.spatial) {
+      this.match.spatial = owned;
+      this.attachSpatialFixture(owned);
+    }
+    if (this.spatial && !localUnpromoted) {
       const reopen = this.section
-        ? this.openSection(this.section.spec.standId, this.section.spec.id)
-        : this.openSection();
+        ? this.openSection(targetStand, this.section.spec.standId === targetStand ? this.section.spec.id : undefined)
+        : this.openSection(targetStand);
       if (reopen.ok) {
         this.syncViewUI();
         return;
@@ -1552,6 +1858,7 @@ export class Game {
       }
       this.enterStand(this.selectedStandId);
     }
+    if (localUnpromoted) this.syncSectionUI();
     const id = this.surface.selectedId;
     if (id === null) this.setView('underground');
     else {
@@ -1584,6 +1891,11 @@ export class Game {
     const surface = this.surfaces[id];
     if (!surface) return;
     this.selectedStandId = id;
+    const spatial = this.match.spatialForStand(id);
+    if (spatial && spatial !== this.spatial) {
+      this.match.spatial = spatial;
+      this.attachSpatialFixture(spatial);
+    }
     for (const other of this.surfaces) other.selectedId = null;
     document.querySelector<HTMLSelectElement>('#forest-tree')!.value = '';
     this.stage.rig.focusTree(surface.group.position.x, surface.group.position.z - TILE_SIZE / 2);
@@ -1600,6 +1912,94 @@ export class Game {
     }));
     select.value = String(this.selectedStandId ?? this.match.activeStandId);
     this.updateTreeNote();
+  }
+
+  /**
+   * Draw the wildfire from the simulation's own front. The ground and scenery
+   * shaders use the same projection the simulation judged with, so char lies
+   * exactly where things burned.
+   */
+  private updateFire(dt: number, blend: number): void {
+    const fire = this.match.fire;
+    const phase = fire.phase;
+    const onGround = phase === 'burning' || phase === 'aftermath';
+    const direction = fire.state.direction;
+    FLOOR_FIRE.dir.value.set(Math.cos(direction), Math.sin(direction));
+    FLOOR_FIRE.band.value = FIRE.band;
+    FLOOR_FIRE.time.value += this.ambientMotion ? dt : 0;
+    if (onGround) {
+      FLOOR_FIRE.front.value = fire.frontAt(this.match.time);
+      this.scorchFade = 1;
+    } else if (phase === 'idle') {
+      // Presentation only: the char fades out over twenty seconds.
+      this.scorchFade = Math.max(0, this.scorchFade - dt / 20);
+    } else {
+      this.scorchFade = 0;
+    }
+    FLOOR_FIRE.scorch.value = this.scorchFade;
+    FLOOR_FIRE.regrowth.value = phase === 'aftermath'
+      ? Math.min(1, (this.match.time - fire.state.endsAt) / FIRE.aftermath)
+      : phase === 'idle' ? 1 : 0;
+    // The scenery's instances sit in the dressing group; find its regional origin.
+    const origin = this.sceneToRegion(this.dressing.group.position.x, this.dressing.group.position.z);
+    DRESSING_FIRE_MAP.value.set(origin.x, origin.y);
+    this.fireView.update(dt, {
+      phase, direction, front: fire.frontAt(this.match.time), start: fire.state.start,
+      band: FIRE.band, intensity: fire.intensity,
+    }, !this.ambientMotion, blend);
+    this.stage.fireGlow = this.fireView.glow;
+  }
+
+  /**
+   * Draw the drought from the simulation's severity: cracked, bleached ground
+   * and wilting scenery through shared uniforms, a shrunken stream, dust, glare.
+   * Trees it kills and strands it withers are simulation state already drawn
+   * by the surface and the soil view (which re-colours as soil dries).
+   */
+  private updateDrought(dt: number, blend: number): void {
+    const drought = this.match.drought;
+    const target = drought.phase === 'idle' ? 0 : drought.intensity;
+    this.droughtShown += (target - this.droughtShown) * Math.min(1, dt * 0.6);
+    FLOOR_DROUGHT.severity.value = this.droughtShown;
+    this.stream.setDryness(this.droughtShown);
+    this.droughtView.update(dt, { intensity: this.droughtShown, wind: this.match.wind }, !this.ambientMotion, blend);
+    this.stage.droughtHeat = this.droughtShown;
+  }
+
+  /**
+   * Draw the storm's flood from the simulation's level: water spreading from
+   * the course across the floor, a swollen stream, debris carried downstream,
+   * and a silt stain that fades once the water has gone.
+   */
+  private updateFlood(dt: number, blend: number): void {
+    const level = this.match.flood.level;
+    // Course distance covers the channel's own half-width plus the flood's reach.
+    const reach = 3 + FLOOD.reach * level;
+    if (level > 0.9) this.floodSilt = 1;
+    else if (level <= 0) this.floodSilt = Math.max(0, this.floodSilt - dt / 60);
+    FLOOR_FLOOD.level.value = level;
+    FLOOR_FLOOD.reach.value = reach;
+    FLOOR_FLOOD.silt.value = level > 0 ? 0 : this.floodSilt;
+    FLOOR_FLOOD.siltReach.value = 3 + FLOOD.reach;
+    FLOOR_FLOOD.time.value += this.ambientMotion ? dt : 0;
+    this.stream.setFlood(level);
+    this.floodView.update(dt, level, reach, !this.ambientMotion, blend);
+  }
+
+  /**
+   * Each tree the storm throws down draws the next strike onto its crown.
+   * Presentation only: which trees fall is decided in `RegionalMatch`.
+   */
+  private strikeWindfalls(): void {
+    const falls = this.match.windfalls;
+    for (; this.windfallsSeen < falls.length; this.windfallsSeen++) {
+      const fall = falls[this.windfallsSeen];
+      const crown = this.surfaces.find(surface => surface?.standId === fall.stand)?.crownPosition(fall.tree);
+      if (crown) this.stormView.strike(this.stormView.group.worldToLocal(crown));
+      if (fall.severed.length && fall.stand === this.match.activeStandId) {
+        this.ui.setNote('The storm threw down a bonded tree. Its junction is torn and everything stored there is lost.');
+      }
+    }
   }
 
   /** Rebuild only local presentation; the stand's simulation is never replaced. */
@@ -1622,6 +2022,10 @@ export class Game {
     // The scenery belongs to the region too: shifting beats rebuilding, and the
     // decorations keep their identities across a stand change.
     this.dressing.group.position.add(new THREE.Vector3(dx, 0, dz));
+    // The earned bodies above ground are region scenery too: shifting them
+    // keeps a mushroom standing on the ground it fruited from.
+    this.fruiting.group.position.add(new THREE.Vector3(dx, 0, dz));
+    this.stormView.group.position.add(new THREE.Vector3(dx, 0, dz));
     // The reveal and the section follow the same landscape: they are drawn in
     // region coordinates, so one shift keeps them where the ground is.
     this.sceneShift.x += dx;
@@ -1632,7 +2036,7 @@ export class Game {
     this.soil = new SoilMesh(this.sim.world);
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
-    this.living = new LivingView(this.sim);
+    this.living = new LivingView(this.sim, this.assets);
     this.groundwater = this.buildGroundwater();
     this.stage.scene.add(this.soil.group, this.forest.group, this.living.group, this.groundwater.group);
     this.playerMesh.reset();
@@ -1661,7 +2065,7 @@ export class Game {
     const occupied = stand.sim.hasColony;
     document.querySelector('#stand-status')!.textContent =
       `Stand ${standId + 1} · ${occupied ? 'Colony established' : 'No colony yet; spores arrive after fruiting'} · ${this.match.colonizedStands} of ${this.match.stands.length} occupied`;
-    document.querySelector<HTMLButtonElement>('#descend-tree')!.disabled = !occupied;
+    document.querySelector<HTMLButtonElement>('#descend-tree')!.disabled = false;
     document.querySelector('#tree-status')!.textContent = tree
       ? `${SPECIES[tree.species].common} · ${tree.dead ? 'Deadwood' : tree.health < 0.5 ? 'Struggling' : 'Living'} · ${occupied ? tree.rootTips.some(tip => tip.bondedTo !== null) ? 'Bonded to your network' : 'Not yet bonded' : 'Beyond your colony'}`
       : 'Choose a crown, or explore beneath this stand.';
@@ -1679,7 +2083,7 @@ export class Game {
     document.querySelector('#view-status')!.textContent = transition ? (rig.view === 'forest' ? 'Rising through the canopy…' : 'Following the roots…') : (rig.view === 'forest' ? 'Above the forest floor' : `Within stand ${this.match.activeStandId + 1} \u00b7 ${COMMUNITY_LABEL[this.match.active.site.community]}`);
     document.querySelector('.camera-hint')!.textContent = rig.view === 'forest'
       ? 'Drag to wander · Shift-drag to orbit · Scroll to descend · V to switch views'
-      : this.spatial
+      : this.section
         ? 'Drag to wander · [ ] to move through sections · X to turn the section · G to follow a strand · Esc to rise'
         : 'Drag to wander · Scroll to look closer · F to reframe · V to rise';
     for (const button of this.markerButtons.values()) button.hidden = true;
@@ -1788,12 +2192,12 @@ export class Game {
       text: distant
         ? `\u2197 Reach \u00b7 ${name}`
         : target.state === 'poor'
-          ? `\u25c7 Bond \u00b7 ${name} \u00b7 gathering`
+          ? `\u25c7 ${name} \u00b7 needs carbon`
           : `\u25c7 Bond \u00b7 ${name}`,
       aria: distant
         ? `Grow toward ${spec.common}, about ${Math.round(target.distance)} centimetres away`
         : target.state === 'poor'
-          ? `The strand nearest ${spec.common} has too little carbon to bond yet`
+          ? `The connected network near ${spec.common} has too little carbon to bond yet`
           : `Bond with ${spec.common}`,
       disabled: false,
       onClick: () => {
@@ -1910,7 +2314,7 @@ export class Game {
       }
       if (event.key === '+' || event.key === '=') this.zoom(0.85);
       if (event.key === '-') this.zoom(1.15);
-      if (event.code === 'Space' && !(event.target instanceof HTMLButtonElement)) {
+      if (event.code === 'Space' && !(event.target instanceof HTMLButtonElement) && !(event.target instanceof HTMLElement && event.target.closest('summary'))) {
         event.preventDefault();
         this.awaken();
         this.setSpeed(this.speed === 0 ? 1 : 0);
@@ -1919,14 +2323,14 @@ export class Game {
       if (event.key.toLowerCase() === 'h') document.querySelector<HTMLButtonElement>('#immersive')!.click();
       if (event.key.toLowerCase() === 's') { event.preventDefault(); this.survey.toggle(); if (this.survey.open) this.refreshSurvey(); }
       if (event.key === 'Escape' && this.survey.open) this.survey.hide();
-      // Sections are the one new keyboard path this fixture adds. The keys are
-      // free everywhere else, and they only do anything while a spatial colony
-      // is attached, so an ordinary match is unaffected.
+      // Section keys do not steal input from an independent local colony below.
       if (this.spatial) {
-        if (event.key === '[') { event.preventDefault(); (this.section ? this.stepSection(-1) : this.openFirstSection()); }
-        if (event.key === ']') { event.preventDefault(); (this.section ? this.stepSection(1) : this.openFirstSection()); }
-        if (event.key.toLowerCase() === 'x') { event.preventDefault(); (this.section ? this.flipSectionAxis() : this.openFirstSection()); }
-        if (event.key.toLowerCase() === 'g') { event.preventDefault(); (this.section ? this.followConnection() : this.openFirstSection()); }
+        if (this.section || this.stage.rig.view === 'forest') {
+          if (event.key === '[') { event.preventDefault(); (this.section ? this.stepSection(-1) : this.openFirstSection()); }
+          if (event.key === ']') { event.preventDefault(); (this.section ? this.stepSection(1) : this.openFirstSection()); }
+          if (event.key.toLowerCase() === 'x') { event.preventDefault(); (this.section ? this.flipSectionAxis() : this.openFirstSection()); }
+          if (event.key.toLowerCase() === 'g') { event.preventDefault(); (this.section ? this.followConnection() : this.openFirstSection()); }
+        }
         if (event.key.toLowerCase() === 'n') { event.preventDefault(); this.toggleReveal(); }
         if (event.key === 'Escape' && !this.survey.open && this.section) {
           event.preventDefault();
@@ -1973,9 +2377,57 @@ export class Game {
     return { gx: this.hit.x + GRID.cols / 2, gy: GRID.rows / 2 - this.hit.y };
   }
 
+  /** A click in a section resolves to the same regional XYZ point it displays. */
+  private sectionPointAt(clientX: number, clientY: number): { x: number; y: number; z: number } | null {
+    const spec = this.section?.spec;
+    if (!spec) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, 1 - ((clientY - rect.top) / rect.height) * 2);
+    this.raycaster.setFromCamera(this.pointer, this.stage.rig.camera);
+    const scene = spec.plane.along === 'x'
+      ? this.regionToScene(0, spec.plane.fixed)
+      : this.regionToScene(spec.plane.fixed, 0);
+    const plane = spec.plane.along === 'x'
+      ? new THREE.Plane(new THREE.Vector3(0, 0, 1), -(scene.z + this.sceneShift.z))
+      : new THREE.Plane(new THREE.Vector3(1, 0, 0), -(scene.x + this.sceneShift.x));
+    if (!this.raycaster.ray.intersectPlane(plane, this.hit)) return null;
+    const regional = this.sceneToRegion(this.hit.x, this.hit.z);
+    const along = spec.plane.along === 'x' ? regional.x : regional.y;
+    const z = this.hit.y - GRID.rows / 2;
+    const depthCm = (this.region.heightAt(regional.x, regional.y) - z) * GRID.cmPerRow;
+    if (along < spec.alongFrom || along >= spec.alongTo || depthCm < spec.depthFromCm || depthCm >= spec.depthToCm) return null;
+    return { x: regional.x, y: regional.y, z };
+  }
+
   private applyOrderAt(clientX: number, clientY: number): void {
     if (this.stage.rig.view !== 'underground' || this.stage.rig.transitioning) return;
-    if (!this.awakened || this.sim.outcome !== 'playing') return;
+    if (!this.awakened) return;
+    if (this.section) {
+      const point = this.sectionPointAt(clientX, clientY);
+      if (!point) return;
+      const spatial = this.match.spatial;
+      if (!spatial) {
+        this.ui.setNote('No colony is here yet. A spore can found an independent network.');
+        return;
+      }
+      const order = this.ui.order;
+      let result: { ok: boolean; message: string };
+      if (order === 'grow') {
+        result = spatial.growAt(point, this.section.spec.plane.along, this.section.spec.plane.fixed);
+      } else if (order === 'bond') {
+        result = this.seekSectionRoot();
+      } else if (!spatial.regionalCoordinates && this.section.spec.plane.along !== spatial.plane.along) {
+        result = { ok: false, message: 'Flip back to the colony’s growth corridor to place that order.' };
+      } else if (order === 'cord') {
+        result = spatial.cordAt(point);
+      } else {
+        result = spatial.fruitAt(point);
+      }
+      this.ui.setNote(result.message);
+      if (result.ok) this.refreshSpatialViews();
+      return;
+    }
+    if (this.sim.outcome !== 'playing') return;
     const point = this.gridAt(clientX, clientY);
     if (!point) return;
     const order = this.ui.order;
@@ -2077,8 +2529,8 @@ export class Game {
 /**
  * The crossing bench's fixture, as the game is allowed to see it.
  *
- * A structural type keeps the spatial simulation out of the ordinary import
- * graph: the real class is only fetched when `?lab=crossing` asks for it.
+ * The bench uses the same coordinator as ordinary play but advances it on its
+ * own fixed-step controls.
  */
 interface LabCrossingMatch {
   step(dt: number): void;
@@ -2089,12 +2541,7 @@ interface LabCrossingMatch {
 }
 
 /**
- * The crossing fixture's own contract, as the forest views are allowed to see
- * it.
- *
- * The class itself is imported on demand by the bench, so the spatial
- * simulation stays out of the ordinary bundle; the reveal and the sections only
- * ever need to read its graph.
+ * The contract the forest views need from either spatial coordinator.
  */
 interface SpatialFixture {
   readonly region: Region;

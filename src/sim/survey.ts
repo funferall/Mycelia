@@ -12,9 +12,8 @@
  * - A stand that has never held a colony has never been *surveyed beneath*. Its
  *   terrain and water are visible from the surface and are reported; its forest
  *   health is not, because nobody has been down there to record it.
- * - A colony whose founding chain has been cut is still occupied but no longer
- *   connected to the founding stand. That distinction is the difference between
- *   a region and a set of islands, so the survey keeps it.
+ * - A spore daughter belongs to the same lineage but starts as an independent
+ *   network. Lineage survival and physical supply are separate facts.
  */
 import type { RegionalMatch, StandState } from './match';
 import { COMMUNITY_LABEL, type StandCommunity } from './region';
@@ -41,10 +40,16 @@ export interface StandSurvey {
   readonly deadTrees: number;
   /** Stand the colony here was founded from, or null for the founding stand. */
   readonly parent: number | null;
+  /** Stand first entered by a continuous strand, distinct from spore parent. */
+  readonly growthFrom: number | null;
+  /** Origin stand of this physical network, not the spore's parent. */
+  readonly networkOrigin: number | null;
   /** Recorded distance from the founding stand, in stand-to-stand hops. */
   readonly hop: number | null;
-  /** True when a chain of living colonies reaches the founding stand. */
+  /** True when this stand has a supplied strand in the founding physical graph. */
   readonly connected: boolean;
+  /** True while this colony's spore-parent chain remains alive. */
+  readonly lineageAlive: boolean;
   readonly fruited: number;
   readonly spores: number;
 }
@@ -73,8 +78,10 @@ function healthBand(health: number): StandHealthBand {
 }
 
 /** A colony that still has a living body is a link in the chain. */
-function livingColony(stand: StandState): boolean {
-  return stand.sim.hasColony && stand.sim.outcome !== 'extinct';
+function livingColony(match: RegionalMatch, stand: StandState): boolean {
+  if (!stand.sim.hasColony) return false;
+  const body = match.spatialForStand(stand.site.id);
+  return body ? !body.colony.extinct : stand.sim.outcome !== 'extinct';
 }
 
 function stateOf(stand: StandState): StandStateName {
@@ -90,7 +97,7 @@ function parentOf(stand: StandState): number | null {
   return arrival ? arrival.from : null;
 }
 
-function surveyStand(stand: StandState): Omit<StandSurvey, 'connected' | 'hop'> {
+function surveyStand(stand: StandState): Omit<StandSurvey, 'connected' | 'lineageAlive' | 'networkOrigin' | 'hop' | 'growthFrom'> {
   const trees = stand.sim.world.trees;
   const deadTrees = trees.filter((tree) => tree.dead).length;
   const surveyed = stand.sim.hasColony;
@@ -125,12 +132,29 @@ function surveyStand(stand: StandState): Omit<StandSurvey, 'connected' | 'hop'> 
  */
 export function buildSurvey(match: RegionalMatch): RegionSurvey {
   const walk = lineageWalk(match);
-  const standSurveys: StandSurvey[] = match.stands.map((stand) => ({
-    ...surveyStand(stand),
-    hop: walk.depth.get(stand.site.id) ?? null,
-    // Occupied *and* every link back to the founding stand still alive.
-    connected: stand.sim.hasColony && chainAlive(match, stand.site.id, walk.parent),
-  }));
+  const standSurveys: StandSurvey[] = match.stands.map((stand) => {
+    const id = stand.site.id;
+    const owner = match.spatialForStand(id);
+    const physical = Boolean(owner && !match.spatialColonies.has(id) && stand.arrivals.length === 0);
+    const growthFrom = match.growthCrossings.find((crossing) => crossing.to === id)?.from ?? null;
+    const body = physical ? owner?.nodesInStand(id) ?? [] : [];
+    const lineageAlive = stand.sim.hasColony && chainAlive(match, id, walk.parent);
+    const founding = match.region.foundingStand;
+    const connected = id === founding
+      ? livingColony(match, stand)
+      : Boolean(owner && owner.originStandId === founding && owner.nodesInStand(id).some((node) => node.connected));
+    return {
+      ...surveyStand(stand),
+      state: physical ? (body.length > 0 ? 'established' : 'closed') : stateOf(stand),
+      fruited: physical ? 0 : stand.sim.player.fruited,
+      spores: physical ? 0 : stand.sim.player.spores,
+      growthFrom,
+      networkOrigin: owner?.originStandId ?? (stand.sim.hasColony ? id : null),
+      hop: walk.depth.get(id) ?? null,
+      connected,
+      lineageAlive,
+    };
+  });
   const lineage: number[] = [];
   for (let id: number | undefined = walk.deepest; id !== undefined; id = walk.parent.get(id)) {
     lineage.unshift(id);
@@ -201,7 +225,7 @@ function chainAlive(match: RegionalMatch, id: number, parent: Map<number, number
     if (seen.has(cursor)) return false;
     seen.add(cursor);
     const stand = match.stands[cursor];
-    if (!stand || !livingColony(stand)) return false;
+    if (!stand || !livingColony(match, stand)) return false;
     cursor = parent.get(cursor);
   }
   return true;

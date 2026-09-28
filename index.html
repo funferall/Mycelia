@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Mycelia — Forest Transect Specimen</title>
+    <title>Mycelia — A Living Forest</title>
     <meta
       name="description"
       content="An ecological real-time strategy game. Grow a mycelial network through living forest soil, bond with tree roots, and fruit before the forest fails."
@@ -17,34 +17,9 @@
     />
   </head>
   <body>
-    <!--
-      DIRECTION CONTRACT — The Mounted Specimen
-
-      THESIS: The game is one sheet of dark archival mounting paper. The forest
-      transect is pressed onto it and pinned down; the player's network is the
-      only light. It refuses the category default of a dark battlefield under a
-      floating neon HUD — here there is no HUD at all, only printing on paper.
-
-      OWN-WORLD: Warm near-black sheet (#141110) with fibre grain and foxing;
-      hyphal amber (#ffb347) as the single light; saprotroph pallor (#c9e6b4)
-      for the rival; accession violet (#7d6ba0) used twice per screen; hairline
-      rules, zero border radius, EB Garamond for the specimen line and Courier
-      Prime for every field of data.
-
-      STORY: The visitor understands that they are growing a living network in
-      soil they can measure, that trees are partners with demands, and that the
-      forest itself is the scoreboard. They grow, bond, trade, and fruit.
-
-      FIRST VIEWPORT: A full-height transect mount centred on the sheet, pinned
-      with gummed tape, canopy breaking the top edge. Depth rail down the left
-      with real soil-horizon letters. Accession stamp and barcode upper left.
-      Catalogue block lower right carrying every number. Empty paper between
-      them, and the network glowing in the middle of it.
-
-      FORM: Transect mount — the third of three rendered compositions, chosen
-      from the direction roll key "mycelia-v1" (candidate 5 of 7, the herbarium
-      sheet world).
-    -->
+    <!-- Forest dusk: live world at left, a quiet ring instrument at right.
+         Grow, Share and Rest lead; the living tech tree unfolds on demand.
+         Complete rings express reserves, never a fictional storage maximum. -->
 
     <canvas id="gl" tabindex="0" aria-label="Living forest and underground network. Drag or use arrow keys to pan, shift-drag to orbit, scroll or use plus and minus to zoom. V switches views. Use the tree selector to follow roots."></canvas>
 
@@ -65,11 +40,14 @@
       <section class="section-browser" id="section-browser" aria-label="Underground sections">
         <p class="section-kicker">Section</p>
         <p id="section-status" role="status">No section open.</p>
+        <label for="section-stand">Forest stand</label>
+        <select id="section-stand" aria-label="Choose a stand to inspect underground"></select>
         <div class="section-controls" role="group" aria-label="Move through sections">
           <button type="button" id="section-prev" aria-keyshortcuts="[">Previous <span aria-hidden="true">[</span></button>
           <button type="button" id="section-next" aria-keyshortcuts="]">Next <span aria-hidden="true">]</span></button>
           <button type="button" id="section-flip" aria-keyshortcuts="X">Flip <span aria-hidden="true">X</span></button>
           <button type="button" id="section-follow" aria-keyshortcuts="G">Follow <span aria-hidden="true">G</span></button>
+          <button type="button" id="section-root">Seek a root</button>
         </div>
         <div class="section-controls" role="group" aria-label="Leave the section">
           <button type="button" id="section-return" aria-keyshortcuts="Escape">Return to forest</button>
@@ -84,6 +62,7 @@
           rather than sitting there doing nothing.
         -->
         <button type="button" id="forest-reveal" class="journal-action" aria-pressed="false" hidden>Network</button>
+        <button type="button" id="forest-cross" class="journal-action">Grow through a stand edge</button>
         <label for="forest-stand">Survey a stand</label>
         <select id="forest-stand" aria-describedby="stand-status"></select>
         <p id="stand-status" role="status"></p>

@@ -2,6 +2,7 @@ import { ECON, GRID, STRATA, type StratumId } from '../sim/content';
 import type { Simulation } from '../sim/sim';
 import { horizonBands } from '../render/soil';
 import type { Journey } from './journey';
+import { EvolutionUI } from './evolution';
 
 export type OrderId = 'grow' | 'bond' | 'cord' | 'fruit';
 
@@ -31,6 +32,7 @@ type FieldName = (typeof RECORD_FIELDS)[number];
  * strata, so the ruler can never disagree with the soil it measures.
  */
 export class SheetUI {
+  private evolution: EvolutionUI;
   private readonly cells = new Map<FieldName, HTMLElement>();
   private readonly rail: HTMLElement;
   private readonly notes: HTMLElement;
@@ -83,6 +85,7 @@ export class SheetUI {
       });
     }
 
+    this.evolution = new EvolutionUI();
     document.addEventListener('keydown', (event) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement || event.ctrlKey || event.metaKey || event.altKey) return;
       const map: Record<string, OrderId> = { '1': 'grow', '2': 'bond', '3': 'cord', '4': 'fruit' };
@@ -154,6 +157,7 @@ export class SheetUI {
     this.refreshClock += dt;
     if (this.refreshClock < 0.16) return;
     this.refreshClock = 0;
+    this.evolution.update(sim);
 
     const player = sim.player;
     const rival = sim.rival;
@@ -213,7 +217,7 @@ export class SheetUI {
       if (i === step) element.setAttribute('aria-current', 'step'); else element.removeAttribute('aria-current');
     });
     must('#rest').setAttribute('aria-pressed', String(net.resting));
-    must('#rest').innerHTML = net.resting ? 'Resume growing <span aria-hidden="true">R</span>' : 'Rest & gather <span aria-hidden="true">R</span>';
+    must('#rest').textContent = net.resting ? 'Wake' : 'Rest';
   }
 
   resetStand(): void {
@@ -242,7 +246,7 @@ export class SheetUI {
     if (onExplore) {
       const explore = document.createElement('button');
       explore.type = 'button';
-      explore.textContent = 'Explore daughter stands';
+      explore.textContent = sim.outcome === 'fruited' ? 'Continue growing' : 'Explore daughter stands';
       explore.dataset.explore = '';
       explore.addEventListener('click', () => {
         this.resetStand();

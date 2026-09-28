@@ -41,6 +41,7 @@ import {
   type PlayableTrunk,
 } from './forest-dressing-layout';
 import { SEASON_FOLIAGE } from './surface';
+import { FLOOR_DROUGHT, FLOOR_FIRE } from './forest-floor';
 
 export interface ForestDressingInput {
   readonly region: DressingRegion;
@@ -62,6 +63,8 @@ export interface ForestDressingView {
   readonly season: SeasonId;
   readonly progress: number;
   readonly reduced: boolean;
+  /** A summoned storm: regional radians it blows toward, and 0..1 strength. */
+  readonly storm?: { readonly direction: number; readonly strength: number };
 }
 
 /** Kinds drawn as batched authored models in this changeset. */
@@ -106,12 +109,14 @@ export class ForestDressing {
   private readonly assets: AssetLibrary;
   private readonly input: ForestDressingInput;
   private readonly time = { value: 0 };
+  /** Scene-space storm heading (x, z) and 0..1 strength, shared by both materials. */
+  private readonly storm: StormUniforms = { dir: { value: new THREE.Vector2(1, 0) }, strength: { value: 0 } };
   private readonly cameraPoint = new THREE.Vector3();
   private readonly tint = new THREE.Color('#ffffff');
   private season: SeasonId = 'spring';
   private progress = 0;
   private readonly geometry = new Map<string, { geometry: THREE.BufferGeometry; triangles: number } | null>();
-  private readonly materials = new Map<Category, THREE.MeshStandardMaterial>();
+  private readonly materials = new Map<Category | 'rigid', THREE.MeshStandardMaterial>();
   private readonly meshes: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[] = [];
   private band: DressingBand;
   private readonly kinds: readonly DecorationKind[];
@@ -244,6 +249,10 @@ export class ForestDressing {
   /** Follow the surface's own fade, tint and clock. */
   update(dt: number, view: ForestDressingView): void {
     this.time.value += view.reduced ? 0 : dt;
+    // Regional +y is scene -z. Strength eases so a storm arrives as a build, not a snap.
+    const target = view.storm ? Math.max(0, Math.min(1, view.storm.strength)) : 0;
+    if (view.storm) this.storm.dir.value.set(Math.cos(view.storm.direction), -Math.sin(view.storm.direction));
+    this.storm.strength.value += (target - this.storm.strength.value) * Math.min(1, dt * 1.5);
     this.season = view.season;
     this.progress = view.progress;
     const colour = seasonColour(view.season, view.progress);
@@ -381,7 +390,9 @@ export class ForestDressing {
     const scale = new THREE.Vector3();
     const colour = new THREE.Color();
     for (const batch of batches.values()) {
-      const material = this.categoryMaterial(batch.category);
+      // Stone and fallen wood do not bend in a storm.
+      const rigid = batch.category === 'wood' && batch.decorations.every(d => d.kind === 'rock' || d.kind === 'deadwood');
+      const material = this.categoryMaterial(batch.category, rigid);
       const mesh = new THREE.InstancedMesh(batch.geometry, material, batch.decorations.length);
       mesh.count = 0;
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -460,17 +471,21 @@ export class ForestDressing {
     return merged;
   }
 
-  /** The two shared materials. Wood keeps its vertex colours; foliage is tinted. */
-  private categoryMaterial(category: Category): THREE.MeshStandardMaterial {
-    const existing = this.materials.get(category);
+  /**
+   * The shared materials. Wood keeps its vertex colours; foliage is tinted and
+   * sways; standing wood bends with it in a storm; rigid wood (stone, logs) never moves.
+   */
+  private categoryMaterial(category: Category, rigid = false): THREE.MeshStandardMaterial {
+    const key = rigid ? 'rigid' : category;
+    const existing = this.materials.get(key);
     if (existing) return existing;
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: category === 'foliage' ? 0.85 : 1,
       metalness: 0,
     });
-    if (category === 'foliage') attachWind(material, this.time);
-    this.materials.set(category, material);
+    if (!rigid) attachWind(material, this.time, this.storm, category === 'foliage');
+    this.materials.set(key, material);
     return material;
   }
 
@@ -599,16 +614,113 @@ function seasonColour(season: SeasonId, progress: number): THREE.Color {
  * of motion the playable trees' procedural crowns already use. The geometry is
  * normalised, so `position.y` is a fraction of the tree's own height.
  */
-function attachWind(material: THREE.MeshStandardMaterial, time: { value: number }): void {
+/**
+ * Regional position of the dressing group's origin: regional x = local x + x,
+ * regional y = y - local z. Set by the game whenever the landscape shifts.
+ */
+export const DRESSING_FIRE_MAP = { value: new THREE.Vector2() };
+
+interface StormUniforms {
+  dir: { value: THREE.Vector2 };
+  strength: { value: number };
+}
+
+/**
+ * Storm bend, shared by trunks and foliage so crowns stay on their trunks.
+ *
+ * The heading is in scene space; the instance's own rotation is undone by the
+ * transpose of its matrix, so every tree leans the same way whatever its turn.
+ * The bend grows with the square of height (a trunk flexes, it does not hinge
+ * at the root) and buffets on a per-instance phase.
+ */
+const STORM_BEND_GLSL = /* glsl */ `
+ #ifdef USE_INSTANCING
+ if (stormStrength > 0.001) {
+   vec3 stormLocal = normalize(transpose(mat3(instanceMatrix)) * vec3(stormDir.x, 0.0, stormDir.y) + 1e-5);
+   float stormPhase = instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.13;
+   float stormBuffet = 0.11 + 0.05 * sin(windTime * 2.3 + stormPhase) + 0.02 * sin(windTime * 5.7 + stormPhase * 3.0);
+   float stormBend = stormStrength * stormBuffet * position.y * position.y;
+   transformed += stormLocal * stormBend;
+   transformed.y -= stormBend * stormBend * 0.5;
+ }
+ #endif
+`;
+
+/**
+ * Wildfire on the scenery. Each instance knows its own regional position from
+ * its matrix (plus `fireMap`, the dressing group's regional offset), so the
+ * front test is the floor's and the simulation's: behind the front a tree is
+ * burned, inside the band it is burning. A per-tree hash spares about three in
+ * ten, close to what damp ground and luck spare in the simulation.
+ */
+const FIRE_VERTEX_GLSL = /* glsl */ `
+ #ifdef USE_INSTANCING
+ if (fireScorch > 0.001) {
+   vec2 fireReg = vec2(instanceMatrix[3].x + fireMap.x, fireMap.y - instanceMatrix[3].z);
+   float fireSeed = fract(sin(dot(fireReg, vec2(12.9898, 78.233))) * 43758.5453);
+   float fireBehind = fireFront - dot(fireReg, fireDir) + (fireSeed - .5) * 10.0;
+   float fireTaken = step(0.3, fireSeed);
+   vBurn = smoothstep(0.0, fireBand * .6, fireBehind) * fireTaken * fireScorch;
+   vFlame = smoothstep(-2.0, 2.0, fireBehind) * (1.0 - smoothstep(fireBand * .5, fireBand * 1.3, fireBehind)) * fireTaken * fireScorch;
+ }
+ #endif
+`;
+
+/**
+ * Drought on the scenery: about six trees in ten wilt, crowns yellowing toward
+ * straw and sagging, losing a share of leaves. The rest, deep-rooted or lucky,
+ * hold green, as oak does in the simulation.
+ */
+const DROUGHT_VERTEX_GLSL = /* glsl */ `
+ #ifdef USE_INSTANCING
+ if (droughtSeverity > 0.001) {
+   float wiltSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(41.3, 17.9))) * 24634.6345);
+   vWilt = droughtSeverity * smoothstep(0.3, 0.55, wiltSeed);
+   transformed.y -= vWilt * 0.06 * position.y * position.y;
+ }
+ #endif
+`;
+
+function attachWind(material: THREE.MeshStandardMaterial, time: { value: number }, storm: StormUniforms, sway: boolean): void {
   material.userData.windTime = time;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.windTime = time;
-    shader.vertexShader = `uniform float windTime;\n${shader.vertexShader}`;
+    shader.uniforms.stormDir = storm.dir;
+    shader.uniforms.stormStrength = storm.strength;
+    Object.assign(shader.uniforms, {
+      fireDir: FLOOR_FIRE.dir, fireFront: FLOOR_FIRE.front, fireBand: FLOOR_FIRE.band,
+      fireScorch: FLOOR_FIRE.scorch, fireRegrowth: FLOOR_FIRE.regrowth, fireTime: FLOOR_FIRE.time,
+      fireMap: DRESSING_FIRE_MAP, droughtSeverity: FLOOR_DROUGHT.severity,
+    });
+    const fireUniforms = 'uniform vec2 fireDir;\nuniform float fireFront;\nuniform float fireBand;\nuniform float fireScorch;\nuniform float fireRegrowth;\nuniform float fireTime;\nuniform float droughtSeverity;\nvarying float vWilt;\n';
+    shader.vertexShader = `uniform float windTime;\nuniform vec2 stormDir;\nuniform float stormStrength;\nuniform vec2 fireMap;\n${fireUniforms}varying float vBurn;\nvarying float vFlame;\nvarying vec3 vFireLocal;\n${shader.vertexShader}`;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
-      '#include <begin_vertex>\n' +
-        ' transformed.x += sin(windTime * 1.6 + instanceMatrix[3].x * 1.7 + instanceMatrix[3].z) * 0.06 * position.y;\n' +
-        ' transformed.z += cos(windTime * 1.4 + instanceMatrix[3].x * 1.3) * 0.05 * position.y;'
+      '#include <begin_vertex>\n vBurn = 0.0; vFlame = 0.0; vWilt = 0.0; vFireLocal = position;\n' + FIRE_VERTEX_GLSL + (sway ? DROUGHT_VERTEX_GLSL : '') +
+        (sway
+          ? ' transformed.x += sin(windTime * 1.6 + instanceMatrix[3].x * 1.7 + instanceMatrix[3].z) * 0.06 * position.y;\n' +
+            ' transformed.z += cos(windTime * 1.4 + instanceMatrix[3].x * 1.3) * 0.05 * position.y;\n'
+          : '') +
+        STORM_BEND_GLSL
+    );
+    shader.fragmentShader = `${fireUniforms}varying float vBurn;\nvarying float vFlame;\nvarying vec3 vFireLocal;\n${shader.fragmentShader}`;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\n' +
+        (sway
+          // Burned crowns lose their leaves; what is left is scorched brown-black.
+          ? ' if (vBurn > 0.001 && fract(sin(dot(floor(vFireLocal * 9.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453) < vBurn * .95) discard;\n' +
+            ' diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.09, .05, .025), max(vBurn, vFlame * .7));\n' +
+            // Wilting crowns yellow to straw and thin out.
+            ' if (vWilt > 0.001 && fract(sin(dot(floor(vFireLocal * 7.0), vec3(93.989, 67.345, 21.137))) * 43758.5453) < vWilt * .35) discard;\n' +
+            ' diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.46, .38, .16), vWilt * .7);\n'
+          : ' diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.03, .026, .022), vBurn * .9);\n')
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n totalEmissiveRadiance += vec3(1.0, .38, .08) * vFlame * (.6 + .4 * sin(fireTime * 9.0 + gl_FragCoord.x * .05)) * 1.3;'
     );
   };
+  // Foliage and wood differ in their sway, so they must not share a program.
+  material.customProgramCacheKey = () => `dressing-wind-fire-drought-${sway ? 'foliage' : 'wood'}`;
 }

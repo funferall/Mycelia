@@ -2,6 +2,7 @@ import { ECON, GRID } from './content';
 import { passableAt, type NetworkWorld, type Tree, type World } from './world';
 import type { Rng } from './rng';
 import { distanceCm } from './spatial';
+import type { Vec3 } from './spatial';
 
 export type Owner = 'player' | 'rival';
 
@@ -21,11 +22,16 @@ export interface HyphaNode {
   gx: number;
   gy: number;
   /**
-   * Horizontal region coordinate across the growth plane. Zero on the flat
-   * transect; on a spatial colony it is the stand-crossing axis, so a strand
-   * that runs east keeps its depth and width while its stand index changes.
+   * Regional y after a stand binds its opening soil. Standalone transects
+   * leave it at zero; spatial growth uses it as the second horizontal axis.
    */
   y: number;
+  /** Smooth position across the spatial growth plane. */
+  lateral: number;
+  /** The across-plane coordinate the tip is reaching for. */
+  targetLateral: number;
+  /** Durable physical position, assigned when a match binds regional soil. */
+  spatial?: Vec3;
   /** Stand this strand currently stands in, or -1 on the flat transect. */
   standId: number;
   /** Continuous position for rendering — tips glide between grid cells. */
@@ -81,18 +87,24 @@ export interface Fruiting {
   nodeId: number;
   gx: number;
   gy: number;
+  /** Physical fruit site after a network enters regional growth. */
+  spatial?: Vec3;
 }
 
 /** A mushroom that finished erupting, kept so the sheet can show where it stood. */
 export interface Bloom {
   gx: number;
   gy: number;
+  spatial?: Vec3;
   /** Simulation time the spores left, in seconds. */
   at: number;
 }
 
 export interface Network {
+  evolution: { learned: string[]; age: number; active: Record<string, number>; cooldown: Record<string, number> };
   owner: Owner;
+  /** Stable regional identity; separate spores must never inherit a parent's graph. */
+  colonyId?: string;
   label: string;
   nodes: HyphaNode[];
   rootId: number;
@@ -137,15 +149,14 @@ export interface Network {
   /**
    * The growth plane this network may occupy, in columns and rows.
    *
-   * A single stand's transect is `GRID.cols` wide. A colony that grows across
-   * a stand boundary lives on one wider plane, so its horizon of addressable
-   * cells is the region's, not one square's. This is a property of the colony,
-   * not of whichever stand happens to be on screen.
+   * A single stand's transect is `GRID.cols` wide. Regional growth keeps the
+   * founder's columns unchanged and expands these bounds west and east of it.
+   * `minCol` is negative only when the founder has soil to its west.
    */
-  bounds: { cols: number; rows: number };
+  bounds: { cols: number; rows: number; minCol?: number };
   rng: Rng;
   /** Waypoints the player has queued, oldest first. */
-  waypoints: Array<{ gx: number; gy: number }>;
+  waypoints: Array<{ gx: number; gy: number; lateral?: number }>;
 }
 
 /** The growth frontier is capped so a match stays about expansion decisions. */
@@ -169,6 +180,8 @@ export function createNetwork(
     gx,
     gy,
     y: 0,
+    lateral: 0,
+    targetLateral: 0,
     standId: -1,
     wx: gx + 0.5,
     wy: gy + 0.5,
@@ -194,6 +207,7 @@ export function createNetwork(
   };
 
   const net: Network = {
+    evolution: { learned: [], age: 0, active: {}, cooldown: {} },
     owner,
     label,
     nodes: [root],
@@ -261,7 +275,7 @@ export function spawnTip(
   // Clamp to the colony's own growth plane, which is a region's worth of
   // columns once it has crossed a stand edge.
   const { cols, rows } = net.bounds;
-  tx = Math.max(0, Math.min(cols - 1, tx));
+  tx = Math.max(net.bounds.minCol ?? 0, Math.min(cols - 1, tx));
   ty = Math.max(0, Math.min(rows - 1, ty));
 
   // Draw the child's starting body out of the parent. Water and mineral are
@@ -285,6 +299,9 @@ export function spawnTip(
     gx: from.gx,
     gy: from.gy,
     y: from.y,
+    lateral: from.lateral,
+    targetLateral: from.y,
+    spatial: from.spatial ? { ...from.spatial } : undefined,
     standId: from.standId,
     wx: from.wx,
     wy: from.wy,
@@ -331,6 +348,10 @@ export function isPassable(world: World, gx: number, gy: number): boolean {
  * from cells the network already occupies.
  */
 function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
+  if (world.spatialGrowth) {
+    chooseSpatialTarget(net, world, tip, rng);
+    return;
+  }
   const wantOrder = net.waypoints.length > 0;
   if (wantOrder) {
     const wp = net.waypoints[0] as { gx: number; gy: number };
@@ -410,7 +431,62 @@ function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rn
   tip.paid = false;
 }
 
+/** Score actual neighbouring voxels in all three axes of a regional body. */
+function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
+  let waypoint = net.waypoints[0];
+  if (waypoint && Math.hypot(waypoint.gx + 0.5 - tip.wx, waypoint.gy + 0.5 - tip.wy,
+    (waypoint.lateral ?? tip.y) - tip.lateral) < 2.2) {
+    net.waypoints.shift();
+    waypoint = net.waypoints[0];
+  }
+  const parent = tip.parent >= 0 ? net.nodes[tip.parent] : null;
+  const headingX = parent ? tip.gx - parent.gx : 0;
+  const headingDepth = parent ? tip.gy - parent.gy : 1;
+  const headingLateral = parent ? tip.y - parent.y : 0;
+  let best = { score: -Infinity, dx: 0, dy: 0, dl: 0 };
+  for (let dl = -1; dl <= 1; dl++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    if (dx === 0 && dy === 0 && dl === 0) continue;
+    const cell = world.cellFrom(tip, dx, dy, dl);
+    if (!cell || !world.passableFrom(tip, dx, dy, dl)) continue;
+    let score: number;
+    if (waypoint) {
+      const towardX = waypoint.gx + 0.5 - tip.wx;
+      const towardDepth = waypoint.gy + 0.5 - tip.wy;
+      const towardLateral = (waypoint.lateral ?? tip.y) - tip.lateral;
+      const length = Math.hypot(towardX, towardDepth, towardLateral) || 1;
+      score = (dx * towardX + dy * towardDepth + dl * towardLateral) /
+        (Math.hypot(dx, dy, dl) * length) * 8;
+      score += (cell.nitrogen + cell.water - cell.hardness) * 0.08;
+    } else {
+      score = cell.nitrogen * 1.5 + cell.water * 1.1 + cell.organic * 0.55 -
+        cell.hardness * 0.8 - cell.occupancy * 2.6;
+      const heading = Math.hypot(headingX, headingDepth, headingLateral) || 1;
+      score += (dx * headingX + dy * headingDepth + dl * headingLateral) /
+        (Math.hypot(dx, dy, dl) * heading) * 0.7;
+      if (cell.occupancy === 0) score += 0.5;
+      if (dy > 0) score += 0.18;
+    }
+    score += rng() * (waypoint ? 0.02 : 0.35);
+    if (score > best.score) best = { score, dx, dy, dl };
+  }
+  if (best.score === -Infinity) {
+    tip.targetGx = tip.gx;
+    tip.targetGy = tip.gy;
+    tip.targetLateral = tip.y;
+    tip.ordered = false;
+    tip.paid = false;
+    return;
+  }
+  tip.targetGx = tip.gx + best.dx;
+  tip.targetGy = tip.gy + best.dy;
+  tip.targetLateral = tip.y + best.dl;
+  tip.ordered = Boolean(waypoint);
+  tip.paid = false;
+}
+
 export interface StepContext {
+  /** A summoned warm rain front permits fruiting even during seasonal frost. */
+  fruitingWeather?: boolean;
   world: NetworkWorld;
   /** Photosynthesis multiplier for the current season. */
   light: number;
@@ -442,9 +518,19 @@ export function stepNetwork(net: Network, ctx: StepContext): void {
   }
 
   markConnectivity(net);
+  net.evolution.age += dt;
+  for (const key of Object.keys(net.evolution.active)) net.evolution.active[key] = Math.max(0, net.evolution.active[key]! - dt);
+  for (const key of Object.keys(net.evolution.cooldown)) net.evolution.cooldown[key] = Math.max(0, net.evolution.cooldown[key]! - dt);
+  if (net.evolution.active.mend) for (const node of nodes) {
+    if (!node.alive || !node.connected || node.health >= 1) continue;
+    const repair = Math.min(1 - node.health, dt * 0.08, node.carbon / 2);
+    node.health += repair;
+    node.carbon -= repair * 2;
+    node.pulse = 1;
+  }
   updateTipCeiling(net);
   harvest(net, world, ctx);
-  transport(net, dt);
+  transport(net, dt * (net.evolution.learned.includes('cord-memory') ? 1.25 : 1) * (net.evolution.active.pulse ? 2 : 1));
   respire(net);
   if (!net.resting) extendTips(net, ctx);
   thicken(net, world, dt);
@@ -509,7 +595,7 @@ function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
     if (!cell) continue;
 
     // Water: drawn from the soil, replenished by rain and the water table.
-    const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2);
+    const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2) * (net.evolution.learned.includes('deep-drink') ? 1.2 : 1);
     const got = Math.min(draw, cell.water);
     cell.water -= got * 0.06;
     node.water = Math.min(ECON.nodeWaterCap, node.water + got);
@@ -518,7 +604,7 @@ function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
     // horizon holds a finite standing stock and rebuilds it slowly, so a pocket
     // that has been worked over goes quiet until either the network grows on or
     // the soil has had time to mineralise again.
-    const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness));
+    const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness) * (net.evolution.learned.includes('mineral-weave') ? 1.2 : 1));
     cell.nitrogen = Math.max(0, cell.nitrogen - uptake * ECON.nitrogenSoilCost);
     node.nitrogen = Math.min(ECON.nodeNitrogenCap, node.nitrogen + uptake);
 
@@ -553,7 +639,7 @@ function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
     // Rest directs a measured share of current photosynthesis into reproduction.
     // Starting reserves cannot masquerade as an earned fruiting surplus.
     const saved = net.resting && tree.waterReceived > 0.65 && tree.nutrientReceived > 0.65
-      ? income * 0.55 : 0;
+      ? income * (net.evolution.learned.includes('fruit-memory') ? 0.65 : 0.55) : 0;
     net.surplus = Math.min(ECON.fruitThreshold, net.surplus + saved);
     node.carbon += Math.min(income - saved, Math.max(0, ECON.nodeCarbonCap * 1.6 - node.carbon));
     node.pulse = Math.min(1, node.pulse + dt * 0.6);
@@ -804,9 +890,11 @@ function extendTips(net: Network, ctx: StepContext): void {
     if (!world.passableFrom(node, 0, 0)) continue;
     const toTargetX = node.targetGx - node.gx;
     const toTargetY = node.targetGy - node.gy;
-    if (!world.passableFrom(node, toTargetX, toTargetY)) {
+    const toTargetLateral = world.spatialGrowth ? node.targetLateral - node.y : 0;
+    if (!world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
       node.wx = node.gx + 0.5;
       node.wy = node.gy + 0.5;
+      node.lateral = node.y;
       chooseTarget(net, world, node, net.rng);
       continue;
     }
@@ -815,7 +903,8 @@ function extendTips(net: Network, ctx: StepContext): void {
     const ty = node.targetGy + 0.5;
     const dx = tx - node.wx;
     const dy = ty - node.wy;
-    const dist = Math.hypot(dx, dy);
+    const dl = world.spatialGrowth ? node.targetLateral - node.lateral : 0;
+    const dist = Math.hypot(dx, dy, dl);
 
     if (dist < 0.04) {
       commitTip(net, world, node, ctx);
@@ -824,9 +913,9 @@ function extendTips(net: Network, ctx: StepContext): void {
 
     // Entering a new cell has a one-time cost; moving within the current cell
     // is cheap. Pay on the frame the tip crosses the boundary.
-    const entering = toTargetX !== 0 || toTargetY !== 0;
-    const { cost, stratum } = world.costFrom(node, toTargetX, toTargetY);
-    if (!Number.isFinite(cost) || !world.passableFrom(node, toTargetX, toTargetY)) {
+    const entering = toTargetX !== 0 || toTargetY !== 0 || toTargetLateral !== 0;
+    const { cost, stratum } = world.costFrom(node, toTargetX, toTargetY, toTargetLateral);
+    if (!Number.isFinite(cost) || !world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
       // Impassable target: pick again rather than stalling against stone.
       chooseTarget(net, world, node, net.rng);
       node.retargetAt = nextRetarget(net);
@@ -857,12 +946,14 @@ function extendTips(net: Network, ctx: StepContext): void {
       // Hard strata also slow the tip down as it works through them.
       node.wx += (dx / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
       node.wy += (dy / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
+      node.lateral += (dl / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
       continue;
     }
 
     const stepLen = Math.min(dist, speed * dt);
     node.wx += (dx / dist) * stepLen;
     node.wy += (dy / dist) * stepLen;
+    node.lateral += (dl / dist) * stepLen;
 
     // Re-read the soil on a timer, so growth tracks depletion and a rival's
     // arrival without rescanning the whole network every time a tip commits.
@@ -884,6 +975,8 @@ function commitTip(net: Network, world: NetworkWorld, node: HyphaNode, ctx: Step
   node.wy = node.targetGy + 0.5;
   node.gx = node.targetGx;
   node.gy = node.targetGy;
+  if (world.spatialGrowth) node.y = node.targetLateral;
+  node.lateral = node.y;
   node.isTip = false;
   net.tipCount--;
 
@@ -965,13 +1058,23 @@ function decay(net: Network, world: NetworkWorld, dt: number): void {
       node.health -= dt * 0.03;
       if (node.health <= 0) killNode(net, world, node, 0.5);
     } else {
-      node.health = Math.min(1, node.health + dt * 0.015);
+      node.health = Math.min(1, node.health + dt * (net.evolution.learned.includes('living-sheath') ? 0.025 : 0.015));
     }
     // Very old tips that never found anything are pruned back.
     if (node.isTip && node.age > 140 && Math.hypot(node.wx - node.gx, node.wy - node.gy) < 0.2) {
       killNode(net, world, node, 0.3);
     }
   }
+}
+
+/** Drought withers a strand that has dried out completely. */
+export function witherNode(net: Network, world: NetworkWorld, node: HyphaNode): void {
+  killNode(net, world, node, 0.4);
+}
+
+/** Fire kills a strand outright; its body becomes ash-rich organic matter. */
+export function burnNode(net: Network, world: NetworkWorld, node: HyphaNode): void {
+  killNode(net, world, node, 1);
 }
 
 /** Remove a node, converting its body into soil organic matter. */
@@ -991,7 +1094,10 @@ function killNode(net: Network, world: NetworkWorld, node: HyphaNode, organicRet
   if (node.bondedTree >= 0 && node.bondedRootTip >= 0) {
     const tree = world.trees[node.bondedTree];
     const tip = tree?.rootTips[node.bondedRootTip];
-    if (tip) tip.bondedTo = null;
+    if (tip && (tip.bondedColonyId ?? null) === (net.colonyId ?? null)) {
+      tip.bondedTo = null;
+      tip.bondedColonyId = null;
+    }
   }
 }
 
@@ -999,14 +1105,16 @@ function killNode(net: Network, world: NetworkWorld, node: HyphaNode, organicRet
  * The nearest living strand joined to the root within a patch, or null if the
  * network has been cut away from that ground entirely.
  */
-function feederAt(net: Network, gx: number, gy: number, wantWater: number, wantNitrogen: number): HyphaNode | null {
+function feederAt(net: Network, gx: number, gy: number, wantWater: number, wantNitrogen: number, spatial?: Vec3): HyphaNode | null {
   let best: HyphaNode | null = null;
   let bestDist = Infinity;
   let nearest: HyphaNode | null = null;
   let nearestDist = Infinity;
   for (const node of net.nodes) {
     if (!node.alive || !node.connected) continue;
-    const d = Math.hypot(node.gx - gx, node.gy - gy);
+    const d = spatial && node.spatial
+      ? Math.hypot(node.spatial.x - spatial.x, node.spatial.y - spatial.y, node.spatial.z - spatial.z)
+      : Math.hypot(node.gx - gx, node.gy - gy);
     if (d > 2) continue;
     if (d < nearestDist) {
       nearestDist = d;
@@ -1052,7 +1160,7 @@ function progressFruiting(net: Network, ctx: StepContext): void {
   // cut between the site and the root still does.
   const wantWater = ECON.fruitWaterDraw * ctx.dt;
   const wantNitrogen = ECON.fruitNitrogenDraw * ctx.dt;
-  const feeder = feederAt(net, fruit.gx, fruit.gy, wantWater, wantNitrogen);
+  const feeder = feederAt(net, fruit.gx, fruit.gy, wantWater, wantNitrogen, fruit.spatial);
   const fed = Boolean(
     feeder && feeder.water >= wantWater && feeder.nitrogen >= wantNitrogen
   );
@@ -1078,10 +1186,10 @@ function progressFruiting(net: Network, ctx: StepContext): void {
 
   // Drought and frost halt an eruption. The sky has a veto, but it only ever
   // costs time: the committed store waits with the body.
-  const kindSky = ctx.warmth > 0.3 && ctx.world.rainfall > 0.45;
+  const kindSky = ctx.fruitingWeather || (ctx.warmth > 0.3 && ctx.world.rainfall > 0.45);
   if (!kindSky) return;
 
-  const step = ctx.dt / ECON.fruitSeconds;
+  const step = ctx.dt / ECON.fruitSeconds * (net.evolution.learned.includes('spore-memory') ? 1.15 : 1) * (net.evolution.active.bloom ? 2 : 1);
   const spend = Math.min(fruit.store, ECON.fruitThreshold * step);
   setFruitStore(net, fruit.store - spend);
 
@@ -1090,7 +1198,7 @@ function progressFruiting(net: Network, ctx: StepContext): void {
     fruit.progress = 0;
     fruit.store = 0;
     net.fruited++;
-    net.blooms.push({ gx: fruit.gx, gy: fruit.gy, at: ctx.time });
+    net.blooms.push({ gx: fruit.gx, gy: fruit.gy, spatial: fruit.spatial ? { ...fruit.spatial } : undefined, at: ctx.time });
     net.spores += ECON.sporesPerFruit;
     net.genetic += 4;
     ctx.log('Spores are away. The lineage travels.');
@@ -1141,6 +1249,7 @@ export function updateTotals(net: Network): void {
 export function bondedJunction(net: Network, tree: Tree): HyphaNode | null {
   for (const tip of tree.rootTips) {
     if (tip.bondedTo === null) continue;
+    if ((tip.bondedColonyId ?? null) !== (net.colonyId ?? null)) continue;
     const node = net.nodes[tip.bondedTo];
     if (node && node.alive && node.connected) return node;
   }
@@ -1148,8 +1257,9 @@ export function bondedJunction(net: Network, tree: Tree): HyphaNode | null {
 }
 
 /** True when a tree still believes it is bonded to something. */
-export function holdsAnyBond(tree: Tree): boolean {
-  return tree.rootTips.some((tip) => tip.bondedTo !== null);
+export function holdsAnyBond(tree: Tree, colonyId?: string): boolean {
+  return tree.rootTips.some((tip) => tip.bondedTo !== null &&
+    (colonyId === undefined || (tip.bondedColonyId ?? null) === colonyId));
 }
 
 /**
@@ -1223,14 +1333,14 @@ export function payColonyFund(net: Network, cost: { carbon: number; water: numbe
 // ---------------------------------------------------------------------------
 
 /** Send the growth frontier toward a point. Ordered tips break off first. */
-export function orderWaypoint(net: Network, gx: number, gy: number, world?: NetworkWorld): void {
+export function orderWaypoint(net: Network, gx: number, gy: number, world?: NetworkWorld, lateral?: number): void {
   // The order has to land on the colony's own growth plane, not on one stand's
   // width: a strand that has crossed a boundary can be sent further into the
   // neighbouring square.
   if (
     !Number.isFinite(gx) ||
     !Number.isFinite(gy) ||
-    gx < 0 ||
+    gx < (net.bounds.minCol ?? 0) ||
     gy < 0 ||
     gx >= net.bounds.cols ||
     gy >= net.bounds.rows
@@ -1239,7 +1349,7 @@ export function orderWaypoint(net: Network, gx: number, gy: number, world?: Netw
   }
   net.resting = false;
   net.waypoints.length = 0;
-  net.waypoints.push({ gx, gy });
+  net.waypoints.push({ gx, gy, lateral });
   if (net.waypoints.length > 6) net.waypoints.shift();
   if (world) {
     // Retarget now, not after each strand has finished its previous journey.
@@ -1247,9 +1357,39 @@ export function orderWaypoint(net: Network, gx: number, gy: number, world?: Netw
   }
 }
 
+export const BOND_REACH_CM = 3.5 * GRID.cmPerRow;
+
+/** The nearest unbonded junction and the carbon on its connected route home. */
+export function bondCandidate(
+  net: Network,
+  world: NetworkWorld,
+  tree: Tree,
+  tip: Tree['rootTips'][number]
+): { node: HyphaNode; distanceCm: number; availableCarbon: number } | null {
+  let best: HyphaNode | null = null;
+  let bestDist = Infinity;
+  const tipPosition = world.rootTipPosition(tree, tip);
+  for (const node of net.nodes) {
+    if (!node.alive || !node.connected || node.bondedTree >= 0) continue;
+    const distance = distanceCm(world.nodePosition(node), tipPosition);
+    if (distance < bestDist) {
+      bestDist = distance;
+      best = node;
+    }
+  }
+  if (!best) return null;
+  let availableCarbon = 0;
+  for (let source: HyphaNode | undefined = best; source; source = source.parent >= 0 ? net.nodes[source.parent] : undefined) {
+    if (!source.alive || !source.connected) break;
+    availableCarbon += Math.max(0, source.carbon);
+  }
+  return { node: best, distanceCm: bestDist, availableCarbon };
+}
+
 /**
- * Attempt a symbiosis. The nearest tip within reach bonds to the root tip and
- * the tree starts trading. Costs carbon, and the tree expects to be supplied.
+ * Attempt a symbiosis. The closest free strand within reach makes the junction.
+ * Its connected ancestors can fund the small bond charge, so a lean tip beside
+ * a root is not stranded while the founding spore still holds ample carbon.
  */
 export function tryBond(
   net: Network,
@@ -1258,32 +1398,31 @@ export function tryBond(
   rootTipId: number,
   // Reach is a real 3D distance now, so the flat transect's old 3.5 grid cells
   // becomes the same number of centimetres rather than a different scale.
-  reach = 3.5 * GRID.cmPerRow
+  reach = BOND_REACH_CM
 ): boolean {
   const tree = world.trees[treeId];
   const tip = tree?.rootTips[rootTipId];
   if (!tree || !tip || tip.bondedTo !== null || tree.dead) return false;
 
-  let best: HyphaNode | null = null;
-  let bestDist = Infinity;
-  const tipPosition = world.rootTipPosition(tree, tip);
-  for (const node of net.nodes) {
-    if (!node.alive || !node.connected || node.bondedTree >= 0) continue;
-    const d = distanceCm(world.nodePosition(node), tipPosition);
-    if (d < bestDist) {
-      bestDist = d;
-      best = node;
-    }
+  const candidate = bondCandidate(net, world, tree, tip);
+  if (!candidate || candidate.distanceCm > reach || candidate.availableCarbon < ECON.bondCharge) return false;
+  const best = candidate.node;
+  const path: HyphaNode[] = [];
+  for (let source: HyphaNode | undefined = best; source; source = source.parent >= 0 ? net.nodes[source.parent] : undefined) path.push(source);
+  let remaining = ECON.bondCharge;
+  // The founder pays first when it can; a junction keeps its own working float.
+  for (const source of path.reverse()) {
+    const paid = Math.min(Math.max(0, source.carbon), remaining);
+    source.carbon -= paid;
+    remaining -= paid;
+    if (remaining <= 0) break;
   }
-  if (!best || bestDist > reach) return false;
-  if (best.carbon < ECON.bondCharge) return false;
-
-  best.carbon -= ECON.bondCharge;
   best.bondedTree = treeId;
   best.bondedRootTip = rootTipId;
   best.thickness = Math.max(best.thickness, 0.55);
   best.pulse = 1;
   tip.bondedTo = best.id;
+  tip.bondedColonyId = net.colonyId ?? null;
   net.genetic += 1;
   return true;
 }
@@ -1311,17 +1450,22 @@ export function makeCord(net: Network, nodeId: number): boolean {
  *
  * @returns the strand the body rose from, or null if the order was refused.
  */
-export function startFruiting(net: Network, world: World, gx: number, gy: number): HyphaNode | null {
+export function startFruiting(net: Network, world: World | (() => boolean), gx: number, gy: number,
+  placement?: { nodeId: number; spatial: Vec3 }): HyphaNode | null {
   if (gy < 0 || gy > 12) return null;
   if (net.fruit.active) return null;
   if (net.surplus < ECON.fruitThreshold) return null;
-  if (!isPassable(world, gx, gy)) return null;
+  if (!(typeof world === 'function' ? world() : isPassable(world, gx, gy))) return null;
   // Fruiting bodies erupt above ground, so they need a strand near the surface.
   let near: HyphaNode | null = null;
   let bestDist = Infinity;
   for (const node of net.nodes) {
     if (!node.alive || !node.connected) continue;
-    const d = Math.hypot(node.gx - gx, node.gy - gy);
+    if (placement && node.id !== placement.nodeId) continue;
+    const d = placement && node.spatial
+      ? Math.hypot(node.spatial.x - placement.spatial.x, node.spatial.y - placement.spatial.y,
+        node.spatial.z - placement.spatial.z)
+      : Math.hypot(node.gx - gx, node.gy - gy);
     if (d <= 2 && d < bestDist) {
       bestDist = d;
       near = node;
@@ -1334,6 +1478,14 @@ export function startFruiting(net: Network, world: World, gx: number, gy: number
   net.fruit.nodeId = near.id;
   net.fruit.gx = gx;
   net.fruit.gy = gy;
+  // The body stands where its own strand physically stands, so a bloom can be
+  // found again above ground. A caller naming its own site (a regional order
+  // that has already chosen a voxel) still wins over the strand's address.
+  net.fruit.spatial = placement
+    ? { ...placement.spatial }
+    : near.spatial
+      ? { ...near.spatial }
+      : undefined;
   return near;
 }
 

@@ -166,7 +166,9 @@ check(
 );
 
 // The fastest pace the sheet offers, so the match is minutes rather than hours.
+await page.getByText('Pace & atmosphere', { exact: true }).click();
 await page.click('.speed-row button[data-speed="4"]');
+await page.getByText('Pace & atmosphere', { exact: true }).click();
 if (accelerated) await advanceFrames(1);
 
 // 2. Reach a root through its label, then bond through the label that appears.
@@ -205,6 +207,7 @@ if (accelerated) await advanceFrames(1);
 }
 
 // 4. Rest to bank the reserve, then raise two fruiting bodies from marked strands.
+await page.getByText('Shape the network', { exact: true }).click();
 for (const bloom of [1, 2]) {
   const before = await matchState();
   if (!before.resting) await page.click('#rest');
@@ -227,6 +230,33 @@ for (const bloom of [1, 2]) {
       `bloom ${bloom} is recorded where it stood`,
       finished && after.fruited >= bloom,
       `${after.fruited} blooms, ${after.spores} spores, at ${after.time}s`
+    );
+    // The reward has to be somewhere, not just counted: the simulation records
+    // the ground the body stood on, the soil draws an authored body, and the
+    // same body stands on the forest floor above that site.
+    const placed = await page.evaluate(() => {
+      const game = window.mycelia.game;
+      const report = game.renderReport();
+      return {
+        site: game.sim.player.blooms.at(-1)?.spatial ?? null,
+        fruiting: report.fruiting,
+        living: report.living,
+      };
+    });
+    check(
+      `bloom ${bloom} records the ground it stood on`,
+      Boolean(placed.site) && Number.isFinite(placed.site?.x) && Number.isFinite(placed.site?.y),
+      JSON.stringify(placed.site)
+    );
+    check(
+      `bloom ${bloom} is drawn as an authored body in the soil`,
+      placed.living.authored >= 1 && placed.living.bodies === placed.living.authored,
+      JSON.stringify(placed.living)
+    );
+    check(
+      `bloom ${bloom} stands on the forest floor above its site`,
+      placed.fruiting.standing >= bloom && placed.fruiting.waiting === 0,
+      JSON.stringify(placed.fruiting)
     );
   }
 }

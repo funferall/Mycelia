@@ -33,6 +33,14 @@ import {
 } from './browser.mjs';
 import { startPreview } from './preview.mjs';
 
+/** Advanced controls now live in native disclosures. Open them as a player would. */
+async function revealControl(page, selector) {
+  const disclosure = page.locator('details').filter({ has: page.locator(selector) });
+  if (await disclosure.count() && !(await disclosure.evaluate(el => el.open))) {
+    await disclosure.locator('summary').click();
+  }
+}
+
 /** Must match CROSSING_SECONDS in `src/render/camera.ts`. */
 const CROSSING_SECONDS = 1.5;
 /** Frame rates the crossing is measured at. Below 10fps the old smoothing
@@ -243,6 +251,7 @@ if (smoke) {
     selected ? `${selected.text} -> "${selected.status}"` : 'no tree option'
   );
 
+  await revealControl(page, '#descend-tree');
   await page.click('#descend-tree');
   await settle(page);
   const underground = await report(page);
@@ -469,7 +478,8 @@ function movement(series) {
     });
     await page.click('#view-forest');
     await settle(page);
-    await page.click('#descend-tree');
+    await revealControl(page, '#descend-tree');
+  await page.click('#descend-tree');
     await settle(page);
     // Descending from a crown must land on one of that tree's own root tips,
     // wherever the rig chose to stand off from it.
@@ -650,7 +660,8 @@ function movement(series) {
         status: document.querySelector('#view-status')?.textContent?.trim() ?? '',
         values: [...document.querySelectorAll('#record dd')].map((dd) => dd.textContent?.trim() ?? ''),
         buttons: box('.view-buttons'),
-        record: box('#record'),
+        reserves: box('.resource-legend'),
+        folded: !document.querySelector('#record').closest('details').open,
       };
     });
     const onScreen = (rect) =>
@@ -666,8 +677,8 @@ function movement(series) {
       `status "${layout.status}"`
     );
     check(
-      `every resource figure stays on screen at ${size}`,
-      layout.values.length > 0 && layout.values.every((value) => value.length > 0) && onScreen(layout.record),
+      `resource names stay on screen and exact figures remain in folded readings at ${size}`,
+      layout.values.length === 13 && layout.values.every((value) => value.length > 0) && layout.folded && onScreen(layout.reserves),
       `${layout.values.length} figures: ${layout.values.join(', ')}`
     );
 
@@ -735,6 +746,7 @@ function movement(series) {
   await settle(page);
   // Paused, so the effect of an order is unambiguous: a waypoint either exists
   // or it does not.
+  await revealControl(page, '#btn-pause');
   await page.click('.speed-row button[data-speed="0"]');
 
   const soil = async () => {
@@ -910,7 +922,8 @@ function movement(series) {
     // a player could actually be typing into it.
     await page.click('#view-forest');
     await settle(page);
-    await page.focus('#forest-tree');
+    await revealControl(page, '#forest-tree');
+  await page.focus('#forest-tree');
     const focused = await page.evaluate(() => document.activeElement?.id ?? null);
     const before = await state();
     await page.keyboard.press('v');
@@ -1145,8 +1158,10 @@ if (!smoke) {
     game.refreshStandOptions();
     return { home, target };
   });
+  await revealControl(page, '#forest-stand');
   await page.selectOption('#forest-stand', String(fixture.target));
   await settle(page);
+  await revealControl(page, '#descend-tree');
   await page.click('#descend-tree');
   await settle(page);
   const below = await page.evaluate(() => {

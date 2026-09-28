@@ -401,6 +401,89 @@
           "bytes": 9156
         }
       ]
+    },
+    {
+      "id": "fungus.porcini-button",
+      "species": "Boletus edulis",
+      "referenceUrls": [
+        "https://explore.beatymuseum.ubc.ca/mushroomsup/B_edulis.html",
+        "https://www.first-nature.com/fungi/boletus-edulis.php"
+      ],
+      "generator": "tools/make-mushroom-assets.py",
+      "lods": [
+        {
+          "file": "fungi/porcini-button.glb",
+          "triangles": 416,
+          "maxTriangles": 500,
+          "bytes": 11032
+        }
+      ]
+    },
+    {
+      "id": "fungus.porcini-opening",
+      "species": "Boletus edulis",
+      "referenceUrls": [
+        "https://explore.beatymuseum.ubc.ca/mushroomsup/B_edulis.html",
+        "https://www.first-nature.com/fungi/boletus-edulis.php"
+      ],
+      "generator": "tools/make-mushroom-assets.py",
+      "lods": [
+        {
+          "file": "fungi/porcini-opening.glb",
+          "triangles": 416,
+          "maxTriangles": 500,
+          "bytes": 11036
+        }
+      ]
+    },
+    {
+      "id": "fungus.porcini-mature",
+      "species": "Boletus edulis",
+      "referenceUrls": [
+        "https://explore.beatymuseum.ubc.ca/mushroomsup/B_edulis.html",
+        "https://www.first-nature.com/fungi/boletus-edulis.php"
+      ],
+      "generator": "tools/make-mushroom-assets.py",
+      "lods": [
+        {
+          "file": "fungi/porcini-mature.glb",
+          "triangles": 416,
+          "maxTriangles": 500,
+          "bytes": 11032
+        }
+      ]
+    },
+    {
+      "id": "fungus.chanterelle",
+      "species": "Cantharellus cibarius",
+      "referenceUrls": [
+        "https://www.first-nature.com/fungi/cantharellus-cibarius.php"
+      ],
+      "generator": "tools/make-mushroom-assets.py",
+      "lods": [
+        {
+          "file": "fungi/chanterelle.glb",
+          "triangles": 480,
+          "maxTriangles": 500,
+          "bytes": 11912
+        }
+      ]
+    },
+    {
+      "id": "fungus.amethyst-deceiver",
+      "species": "Laccaria amethystina",
+      "referenceUrls": [
+        "https://www.first-nature.com/fungi/laccaria-amethystina.php"
+      ],
+      "generator": "tools/make-mushroom-assets.py",
+      "lods": [
+        {
+          "file": "fungi/amethyst-deceiver.glb",
+          "triangles": 264,
+          "maxTriangles": 500,
+          "bytes": 8864
+        }
+      ]
     }
   ]
 }

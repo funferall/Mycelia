@@ -41,7 +41,20 @@ export type AssetId =
   | 'prop.log'
   | 'prop.snag'
   | 'prop.boulder'
-  | 'fungus.fruitingBody';
+  /**
+   * Reproductive bodies. The ids match `forest-manifest.json` exactly, so the
+   * manifest's own tiers and triangle counts apply to them rather than being
+   * dropped as unrecognised.
+   */
+  | 'fungus.fruitingBody'
+  | 'fungus.fruiting-cluster'
+  | 'fungus.spore-body'
+  | 'fungus.porcini-button'
+  | 'fungus.porcini-opening'
+  | 'fungus.porcini-mature'
+  | 'fungus.chanterelle'
+  | 'fungus.amethyst-deceiver'
+  | 'fungus.underground-fruiting-body';
 
 export interface AssetSpec {
   readonly id: AssetId;
@@ -58,6 +71,11 @@ export interface AssetSpec {
  * `assets.failed`.
  */
 export const ASSETS: readonly AssetSpec[] = [
+  { id: 'fungus.porcini-button', file: 'fungi/porcini-button.glb', use: 'Boletus edulis button' },
+  { id: 'fungus.porcini-opening', file: 'fungi/porcini-opening.glb', use: 'Boletus edulis opening cap' },
+  { id: 'fungus.porcini-mature', file: 'fungi/porcini-mature.glb', use: 'Boletus edulis mature bloom' },
+  { id: 'fungus.chanterelle', file: 'fungi/chanterelle.glb', use: 'Cantharellus cibarius art candidate' },
+  { id: 'fungus.amethyst-deceiver', file: 'fungi/amethyst-deceiver.glb', use: 'Laccaria amethystina art candidate' },
   { id: 'tree.oak', file: 'trees/oak.glb', use: 'oak crown' },
   { id: 'tree.birch', file: 'trees/birch.glb', use: 'birch crown' },
   { id: 'tree.hemlock', file: 'trees/hemlock.glb', use: 'hemlock crown' },
@@ -70,7 +88,10 @@ export const ASSETS: readonly AssetSpec[] = [
   { id: 'prop.log', file: 'props/log.glb', use: 'fallen log on the forest floor' },
   { id: 'prop.snag', file: 'props/snag.glb', use: 'standing dead wood' },
   { id: 'prop.boulder', file: 'props/boulder.glb', use: 'exposed rock' },
-  { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'fruiting body' },
+  { id: 'fungus.spore-body', file: 'fungi/spore-body.glb', use: 'erupting primordium' },
+  { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'a rising fruiting body' },
+  { id: 'fungus.fruiting-cluster', file: 'fungi/fruiting-cluster.glb', use: 'a bloom that has released its spores' },
+  { id: 'fungus.underground-fruiting-body', file: 'fungi/underground-fruiting-body.glb', use: 'subterranean reproductive body' },
 ];
 
 /** Every id the runtime knows how to ask for. */

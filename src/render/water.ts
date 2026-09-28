@@ -43,6 +43,54 @@ export class StreamView {
   readonly group = new THREE.Group();
   private readonly summary: StreamReport;
   private readonly flow = waterMaterial('stream');
+  private water: THREE.Mesh | null = null;
+  /** The ribbon's full-flow vertices, edges in pairs, for a drought to narrow. */
+  private fullWidth: Float32Array | null = null;
+  private dryness = 0;
+
+  /**
+   * A drought draws the stream in: the water narrows toward its centreline and
+   * drops a little, leaving the muddy bed (the bank ribbon) exposed. 0 is full
+   * flow; 1 leaves a quarter of the width.
+   */
+  setDryness(level: number): void {
+    this.reshape(Math.max(0, Math.min(1, level)), this.flooding);
+  }
+
+  /**
+   * The storm's flood swells the channel: the ribbon widens to twice
+   * times its width (the floor draws the wider spread) and rides up its banks. The floor shader draws the water
+   * that spreads beyond it.
+   */
+  setFlood(level: number): void {
+    this.reshape(this.dryness, Math.max(0, Math.min(1, level)));
+  }
+
+  private flooding = 0;
+
+  private reshape(dry: number, flood: number): void {
+    if (!this.water || !this.fullWidth) return;
+    if (Math.abs(dry - this.dryness) < 0.005 && Math.abs(flood - this.flooding) < 0.005) return;
+    this.dryness = dry;
+    this.flooding = flood;
+    const full = this.fullWidth;
+    const position = this.water.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const keep = (1 - 0.75 * dry) * (1 + 1.0 * flood);
+    const lift = -0.1 * dry + 0.3 * flood;
+    for (let i = 0; i + 1 < position.count; i += 2) {
+      const a = i * 3, b = (i + 1) * 3;
+      const cx = (full[a]! + full[b]!) / 2, cz = (full[a + 2]! + full[b + 2]!) / 2;
+      position.setXYZ(i, cx + (full[a]! - cx) * keep, full[a + 1]! + lift, cz + (full[a + 2]! - cz) * keep);
+      position.setXYZ(i + 1, cx + (full[b]! - cx) * keep, full[b + 1]! + lift, cz + (full[b + 2]! - cz) * keep);
+    }
+    position.needsUpdate = true;
+  }
+
+  /** The stream's course in regional coordinates, for anything drifting down it. */
+  get course(): Array<{ x: number; y: number }> {
+    return this.path;
+  }
+  private path: Array<{ x: number; y: number }> = [];
 
   constructor(region: Region, foundingStandId: number) {
     const founding = region.stands[foundingStandId];
@@ -53,6 +101,7 @@ export class StreamView {
     // tributary. Arc-length sampling also keeps flow speed steady in bends.
     const curve = new THREE.CatmullRomCurve3(course.map(p => new THREE.Vector3(p.x, 0, p.y)), false, 'centripetal');
     const path = curve.getSpacedPoints(Math.ceil(curve.getLength() / 2)).map(p => ({ x: p.x, y: p.z }));
+    this.path = path;
     // Region coordinates to the forest's own frame; the same inverse the floor
     // geometry uses, so the ribbon lies on the ground rather than beside it.
     const originX = founding.sx * TILE_SIZE;
@@ -111,6 +160,8 @@ export class StreamView {
 
     this.group.add(this.ribbon(banks, indices, BANK_COLOR, 0.5, 0));
     const ribbon = this.ribbon(water, indices, BANK_COLOR, 0.86, 1);
+    this.water = ribbon;
+    this.fullWidth = Float32Array.from(water.flatMap((p) => [p.x, p.y, p.z]));
     (ribbon.material as THREE.Material).dispose();
     ribbon.material = this.flow.material;
     ribbon.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));

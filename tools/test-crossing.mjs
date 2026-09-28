@@ -31,22 +31,29 @@ function check(name, fn) {
 }
 
 try {
-  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'crossing']) {
+  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'match', 'survey']) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '(.+?)'/g, "from '$1.mjs'"));
   }
   const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
   const { CrossingMatch } = await load('crossing');
+  const { RegionalMatch } = await load('match');
+  const { buildSurvey } = await load('survey');
   const { ECON, GRID, MAX_TIPS } = await load('content');
   const {
     MAX_NODES,
+    bondedJunction,
+    createNetwork,
+    holdsAnyBond,
     makeCord,
     markConnectivity,
     stepNetwork,
     updateTotals,
+    tryBond,
   } = await load('network');
-  const { entryCostFor } = await load('world');
-  const { segmentStands, traverseSegment, vec3 } = await load('spatial');
+  const { createStandWorld, entryCostFor } = await load('world');
+  const { mulberry32 } = await load('rng');
+  const { elevationAtDepthCm, segmentStands, traverseSegment, vec3 } = await load('spatial');
 
   const DT = 1 / 30;
   const stepFor = (match, seconds) => {
@@ -420,6 +427,219 @@ try {
     assert.ok(watched.portals().length > 0, 'the watched run crossed');
     assert.equal(watched.hash(), unwatched.hash(), 'a section view is not a simulation input');
     assert.ok(updateTotals(watched.colony) === undefined);
+  });
+
+  check('the running match promotes its own funded body and steps it once', () => {
+    const region = new RegionalMatch('old-growth');
+    const origin = region.activeStandId;
+    const sim = region.active.sim;
+    const body = sim.player;
+    const corridor = new CrossingMatch({ seedText: 'old-growth', originStandId: origin, direction: 'east' });
+    const frame = corridor.standFrame(origin);
+    const local = corridor.direction === 'west' ? 8 : frame.size - 8;
+    for (const node of body.nodes) {
+      const shift = local - node.gx;
+      node.gx += shift;
+      node.wx += shift;
+      node.targetGx += shift;
+      node.gy = corridor.depthRow;
+      node.wy = corridor.depthRow + 0.5;
+      node.targetGy = corridor.depthRow;
+    }
+    sim.syncRegionalPositions();
+    const before = body.nodes.reduce((sum, node) => sum + node.carbon + node.water + node.nitrogen, 0);
+    assert.equal(region.growAcross('east').ok, true);
+    assert.equal(region.spatial.colony, body, 'the existing network is adopted, not copied');
+    assert.equal(region.spatial.region, region.region, 'the running region is shared');
+    assert.equal(region.spatial.stand(origin).world, sim.world, 'the same trees are used');
+    const after = body.nodes.reduce((sum, node) => sum + node.carbon + node.water + node.nitrogen, 0);
+    assert.ok(Math.abs(before - after) < 1e-9, 'promotion charges no founding kit');
+    assert.equal(region.colonization.length, 0, 'a growth order is not a spore arrival');
+    const timeBefore = region.time;
+    region.step(DT);
+    assert.ok(Math.abs(region.spatial.time - region.time) < 1e-8, 'one regional tick advances one shared body');
+    assert.ok(region.time > timeBefore);
+    for (let i = 0; i < 60 / DT && region.spatial.portals().length === 0; i++) region.step(DT);
+    assert.ok(region.spatial.portals().length > 0, 'the running match reaches the neighboring stand');
+    assert.equal(region.colonization.length, 0, 'the new stand was reached by growth, not spores');
+    assert.equal(region.stands[region.spatial.destinationStandId].sim.hasColony, true);
+    assert.equal(region.spatial.colony, body, 'the far strand still belongs to the original body');
+    assert.equal(region.growthCrossings.length, 1, 'a separate physical-arrival record is kept');
+    const destination = buildSurvey(region).stands[region.spatial.destinationStandId];
+    assert.equal(destination.growthFrom, origin);
+    assert.equal(destination.parent, null, 'a strand crossing is not spore parentage');
+    assert.equal(destination.connected, true, 'the survey reads the body’s actual supply');
+  });
+
+  check('opening XYZ survives promotion and an order steers through a perpendicular section', () => {
+    const region = new RegionalMatch('old-growth');
+    for (let i = 0; i < 45; i++) region.step(DT);
+    const net = region.active.sim.player;
+    const before = net.nodes.map((node) => ({ ...node.spatial }));
+    const addresses = net.nodes.map(({ gx, gy, wx, wy, y, lateral, standId }) =>
+      ({ gx, gy, wx, wy, y, lateral, standId }));
+    const soilBefore = region.soil.hash();
+    assert.ok(before.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z)));
+    assert.equal(region.growAcross('north').ok, true);
+    const body = region.spatial;
+    assert.equal(body.direction, 'north', 'the requested edge is chosen independently of the opening slice');
+    assert.deepEqual(net.nodes.slice(0, addresses.length).map(({ gx, gy, wx, wy, y, lateral, standId }) =>
+      ({ gx, gy, wx, wy, y, lateral, standId })), addresses, 'promotion changes no existing node address');
+    assert.equal(region.soil.hash(), soilBefore, 'promotion moves no material');
+    for (let i = 0; i < before.length; i++) {
+      const after = body.nodePosition(net.nodes[i]);
+      assert.ok(Math.hypot(after.x - before[i].x, after.y - before[i].y, after.z - before[i].z) < 1e-8,
+        `node ${i} kept its original regional position`);
+    }
+    const initialX = net.nodes.map((node) => body.nodePosition(node).x);
+    const left = Math.min(...initialX);
+    const right = Math.max(...initialX);
+    const founder = net.nodes[net.rootId];
+    const centre = body.nodePosition(founder);
+    const depth = (region.region.heightAt(centre.x, centre.y) - centre.z) * GRID.cmPerRow;
+    const targets = [
+      { x: right + 6, y: centre.y + 5 }, { x: left - 6, y: centre.y - 5 },
+      { x: right + 4, y: centre.y - 4 }, { x: left - 4, y: centre.y + 4 },
+    ]
+      .map(({ x, y }) => ({ x, y, z: elevationAtDepthCm(region.region, x, y, depth) }))
+      .filter((point) => body.soil.passableAt(point.x, point.y, point.z));
+    assert.ok(targets.length > 0, 'a lateral destination has passable soil');
+    const target = targets[0];
+    assert.equal(body.growAt(target, 'x', target.y).ok, true, 'a perpendicular section can direct growth');
+    assert.equal(net.waypoints[0].lateral, target.y);
+    assert.ok(net.nodes.some((node) => node.isTip && node.targetLateral !== node.y), 'a tip aims laterally');
+    for (let i = 0; i < 30 / DT; i++) region.step(DT);
+    const moved = net.nodes.some((node) => node.alive &&
+      (target.x > right ? body.nodePosition(node).x > right + 1 : body.nodePosition(node).x < left - 1));
+    assert.ok(moved, 'the real network leaves its opening plane toward the lateral order');
+  });
+
+  check('an opening slice survives a region with no passable east-west seam corridor', () => {
+    const region = new RegionalMatch('old-growth');
+    const original = region.soil.segment;
+    region.soil.segment = () => ({ blocked: true });
+    try {
+      const slice = region.ensureSharedSoil(4);
+      assert.equal(slice.alongIsX, true);
+      const root = region.stands[4].sim.player.nodes[0];
+      assert.ok(root.spatial, 'the independent opening still records a regional position');
+      assert.equal(region.soil.passableAt(root.spatial.x, root.spatial.y, root.spatial.z), true);
+    } finally {
+      region.soil.segment = original;
+    }
+  });
+
+  check('a lateral 3D arrival crosses its own stand edge and records the correct portal', () => {
+    const region = new RegionalMatch('old-growth');
+    assert.equal(region.growAcross('north').ok, true);
+    const body = region.spatial;
+    const origin = body.originStandId;
+    const frame = body.standFrame(origin);
+    const seam = frame.originX;
+    let site = null;
+    for (let y = frame.originY + 12; y < frame.originY + frame.size - 12 && !site; y += 2) {
+      for (let gy = 2; gy < 8; gy++) {
+        const from = body.voxelAt(0, y + 0.5, gy);
+        const to = body.voxelAt(-1, y + 0.5, gy);
+        if (from && to && !body.soil.segment(from, to).blocked) {
+          site = { y, gy };
+          break;
+        }
+      }
+    }
+    assert.ok(site, 'there is passable soil across a perpendicular stand boundary');
+    const tip = body.colony.nodes.find((node) => node.alive && node.isTip);
+    assert.ok(tip);
+    tip.gx = 0;
+    tip.wx = 0.5;
+    tip.gy = site.gy;
+    tip.wy = site.gy + 0.5;
+    tip.y = site.y + 0.5;
+    tip.lateral = tip.y;
+    tip.targetGx = -1;
+    tip.targetGy = tip.gy;
+    tip.targetLateral = tip.y;
+    tip.standId = origin;
+    tip.carbon = 100;
+    tip.water = 10;
+    tip.nitrogen = 10;
+    tip.paid = false;
+    assert.equal(body.world.passableFrom(tip, -1, 0, 0), true);
+    for (let i = 0; i < 180 && tip.standId === origin; i++) {
+      stepNetwork(body.colony, { world: body.world, light: 1, warmth: 1, rival: null,
+        time: i * DT, log() {}, dt: DT });
+    }
+    assert.equal(tip.standId, origin - 1, 'a real 3D tip enters the western stand');
+    const portal = body.portals().find((entry) => entry.nodeId === tip.id);
+    assert.equal(portal?.edge, 'west');
+    assert.equal(portal?.seam, seam);
+  });
+
+  check('a naturally bonded ordinary colony can be directed across an edge', () => {
+    const region = new RegionalMatch('old-growth');
+    const sim = region.active.sim;
+    const founder = sim.player.nodes[sim.player.rootId];
+    const options = sim.world.trees.flatMap((tree) => tree.rootTips.map((tip) => ({ tree, tip })));
+    options.sort((a, b) =>
+      Math.hypot(a.tip.gx - founder.gx, a.tip.gy - founder.gy) -
+      Math.hypot(b.tip.gx - founder.gx, b.tip.gy - founder.gy));
+    const target = options[0];
+    assert.ok(sim.growTo(target.tip.gx, target.tip.gy).ok);
+    let bonded = false;
+    for (let i = 0; i < 120 / DT && !bonded; i++) {
+      region.step(DT);
+      if (i % 5 === 0) bonded = sim.orderBondTip(target.tree.id, target.tip.id).ok;
+    }
+    assert.ok(bonded, 'the ordinary opening reached and bonded a root');
+    assert.ok(region.growAcross('east').ok);
+    for (let i = 0; i < 360 / DT && region.spatial.portals().length === 0; i++) region.step(DT);
+    assert.ok(region.spatial.portals().length > 0, 'the naturally funded body crossed');
+  });
+
+  check('a paid spore founds a separate spatial body on the same soil volume', () => {
+    const region = new RegionalMatch('raven-wood');
+    const origin = region.activeStandId;
+    const parent = region.active.sim.player;
+    const root = parent.nodes[parent.rootId];
+    root.carbon = 300;
+    root.water = 12;
+    root.nitrogen = 8;
+    updateTotals(parent);
+    parent.fruited++;
+    for (let i = 0; i < 120 && region.colonization.length === 0; i++) region.step(DT);
+    assert.equal(region.colonization.length, 1, 'one paid spore landed');
+    const to = region.colonization[0].to;
+    const daughter = region.stands[to].sim.player;
+    const body = region.spatialColonies.get(to);
+    assert.ok(body, 'the daughter has its own regional graph immediately');
+    assert.notEqual(body.colony, parent, 'the daughter is not a branch of its parent');
+    assert.equal(body.soil, region.soil, 'both bodies use one material volume');
+    assert.equal(body.colony, daughter, 'daughter orders address the live graph');
+    assert.equal(body.colony.nodes[body.colony.rootId].parent, -1, 'the daughter has its own root');
+    assert.equal(region.spatialColonies.has(origin), false, 'the parent need not be promoted to found it');
+    const before = parent.waypoints.length;
+    assert.ok(body.orderAcross().ok, 'the daughter can be directed independently');
+    assert.equal(parent.waypoints.length, before, 'directing the daughter does not direct the parent');
+  });
+
+  check('two networks in one stand cannot claim each other’s root bond', () => {
+    const world = createStandWorld(4312);
+    const tree = world.trees.find((candidate) => candidate.rootTips.length > 0);
+    assert.ok(tree);
+    const tip = tree.rootTips[0];
+    const make = (id) => {
+      const net = createNetwork('player', id, tip.gx, tip.gy, mulberry32(42), 120);
+      net.colonyId = id;
+      return net;
+    };
+    const parent = make('parent');
+    const daughter = make('daughter');
+    assert.equal(tryBond(parent, world, tree.id, tip.id), true);
+    assert.equal(tip.bondedColonyId, 'parent');
+    assert.ok(bondedJunction(parent, tree));
+    assert.equal(bondedJunction(daughter, tree), null);
+    assert.equal(holdsAnyBond(tree, 'daughter'), false);
+    assert.equal(tryBond(daughter, world, tree.id, tip.id), false, 'the daughter cannot take the occupied tip');
   });
 
   const elapsed = ((performance.now() - started) / 1000).toFixed(2);

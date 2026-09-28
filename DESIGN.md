@@ -1,11 +1,11 @@
 ---
 name: Mycelia
-description: An ecological real-time strategy game played on a dark herbarium specimen sheet.
+description: A living forest with a quiet ring-based interface and branching adaptations.
 colors:
-  sheet-ground: "#141110"
-  mount-shadow: "#0b0908"
-  pinned-paper: "#e8dcc0"
-  label-ink: "#cbbfa4"
+  sheet-ground: "#171209"
+  mount-shadow: "#0d0a05"
+  pinned-paper: "#f1e2c5"
+  label-ink: "#d0bea0"
   hyphal-amber: "#ffb347"
   ember-glow: "#ff8a1e"
   saprotroph-pallor: "#c9e6b4"
@@ -86,89 +86,40 @@ components:
 
 ## Overview
 
-**Scope note — connected surface forest:** Mycelia now has a dimensional
-bird's-eye forest in addition to the underground mounted specimen. The forest
-uses real z-depth, natural light, atmospheric motion, weather, and seasonal
-colour while keeping the same restrained botanical annotations at the edges.
-The flat-sheet, earned-light, and near-silhouette rules below remain binding for
-the underground view. Where this document describes the entire game as flat,
-read that as the underground specimen unless a later surface rule says
-otherwise. `PROJECT_STATUS.md` records implementation maturity and remaining
-work.
+**Creative direction: Forest dusk.** The supplied forest-and-concentric-rings
+reference replaces the archival catalogue interface. The live forest and its
+underground network fill the viewport. A dark brown, softly receding right-hand
+panel holds the colony name, season, three complete resource rings, and Grow,
+Share, Rest. The rings use amber carbon, slate water and sage nitrogen.
 
-**Creative North Star: "The Mounted Specimen"**
+Ring brightness expresses connected reserves relative to one centimetre of
+growth per active tip: scarce below one such growth budget, steady below five,
+abundant above that. Rings never fill toward an invented global capacity.
+Hover or keyboard focus reveals the amount and qualitative state. These are
+reserves, not income rates or a promise that every strand is supplied.
 
-The whole game is one sheet of dark archival mounting paper. A living forest
-transect — canopy, litter, soil, clay, stone — is pressed flat onto it and pinned
-down under strips of gummed tape. The player's mycelial network glows inside the
-mount in warm amber; it is the only light in the world. Everything a game
-normally puts on screen is instead printed onto the paper the way a herbarium
-label is printed: a ruled depth ruler down the left edge with real soil-horizon
-letters, an accession stamp and barcode in a corner, a folded fragment packet
-holding spores, and one dense ruled catalogue block in the lower right that
-carries every number in the game.
+The tech tree is an intentionally focused native dialog: three compatible
+branches, two adaptations each, with visible connecting stems, prerequisites,
+effects and learned/available states. Each branch culminates in a late-game
+power. Powers appear beside ordinary orders only once earned. Their conditions,
+activity and recovery remain explicit. The dialog contains keyboard focus;
+world shortcuts do not fire while it is open.
 
-This is the refusal: no HUD panels, no floating chrome, no minimap, no resource
-bar, and no glowing outline around anything. Nothing is drawn on top of the
-world. The interface is paper and ink living at the edges of the mount, and the
-only saturated colour anywhere is bioluminescence — light the simulation
-actually produced. If a number needs to be on screen it takes its place in the
-ruled block like a field in a catalogue record.
-
-The mood is documentary rather than dramatic. The sheet is old, foxed and quiet,
-lit by one raking museum light. The drama comes from watching something alive
-and fragile do well or badly inside it.
-
-**Key Characteristics:**
-
-- A warm near-black ground; the network is the only bright thing on it.
-- Every interface element is printed onto the sheet — ruled, never floated,
-  never boxed.
-- Depth is a real spatial axis, measured in centimetres on a printed ruler.
-- Amber is the player; sickly pale green is the rival; violet is truffle and
-  officialdom, and appears roughly twice per screen.
-- Motion belongs to the specimen. The paper never moves.
-
-**The Light Is Earned Rule.** Colour is never applied as decoration. Any warm
-pixel on screen must correspond to living network, and any cold pixel to a
-rival, a parasite, or an accession mark. A frame with no network in it is
-essentially monochrome.
-
-**The Two Violet Rule.** Violet is the rarest colour in the game: the accession
-stamp and the truffle nodes, nothing else. More than two violet elements on a
-screen means something has gone wrong.
+Detailed readings, network shaping, forest exploration and pacing live in
+native disclosures. Guidance opens initially; the numerical catalogue, barcode,
+packet and ruler no longer dominate the screen. The live renderer is retained;
+the reference is UI direction, not a replacement screenshot of the battlefield.
 
 ## Colors
 
-### Primary
+The HUD uses brown-black #171209, edge ground #100c06 and warm ivory #f1e2c5.
+Body ink is #d0bea0, secondary ink #b4a387. Amber #e49a38 marks the active
+order and earned powers. Resource rings use carbon #de8b2c, water #78969a,
+nitrogen #9cab7d; their labels and hover/focus descriptions explain every state.
 
-- **Hyphal Amber** (#ffb347): the player's network — the bright centre of a cord,
-  a growing tip, a bonded root junction. The only large-area warm colour.
-- **Ember Glow** (#ff8a1e): the outward bloom around amber filaments and the
-  colour of motes travelling along a cord. Never flat, always falloff.
-
-### Secondary
-
-- **Saprotroph Pallor** (#c9e6b4): the rival network. Cold, thin and sickly
-  against the amber, and deliberately less luminous, so a contested frame reads
-  as warmth losing to pallor.
-
-### Tertiary
-
-- **Accession Violet** (#7d6ba0): the rubber-stamp mark and the truffle nodes.
-  Under-inked, never crisp, never glowing.
-
-### Neutral
-
-- **Sheet Ground** (#141110): the mounting paper, and the dominant colour of the
-  game by area.
-- **Mount Shadow** (#0b0908): the deepest soil in the transect, the backing
-  behind the specimen, and the vignette at the sheet's edges.
-- **Pinned Paper** (#e8dcc0): the gummed tape and the spore packet. In the
-  render the tape sits at 14% opacity over a #8d8266 base, so it reads as
-  translucent gum rather than as a white card.
-- **Label Ink** (#cbbfa4): all printed text. Warm bone, never pure white, and
-  never above 80% opacity for body fields.
+World lighting remains simulation-owned: player filaments use warm amber and
+ember falloff; rival filaments use saprotroph pallor #c9e6b4 and distinct texture.
+Truffles may retain violet. HUD resource colours do not change species identity.
 
 Soil material colours are a separate, darker register, read as albedo and then
 lit: litter #4a3620, humus #3a2814, loam #2f2317, clay #332a23, sand #3c3220,
@@ -188,80 +139,23 @@ flat blue fill.
 
 ## Typography
 
-**Display Font:** EB Garamond (with Georgia, serif)
-**Body Font:** EB Garamond (with Georgia, serif)
-**Label / Data Font:** Courier Prime (with Courier New, monospace)
-
-**Character:** A botanical-publication roman paired with a typewriter face —
-the historical pairing of an actual herbarium sheet. The printed monograph gives
-the species its dignity; the typewritten label gives the collection its record.
-The monospace is never atmospheric, only ever used for data a person would have
-typed into a field.
-
-### Hierarchy
-
-- **Outcome** (400, 20px, 0.16em tracking, uppercase, EB Garamond): the result
-  of a finished match, and the only thing in the game permitted above the
-  specimen line. See the One Announcement Rule below.
-- **Specimen Line** (400, 17px, 0.2em tracking, uppercase, EB Garamond): the
-  species name heading the catalogue block. The largest type in the game, and
-  there is exactly one per screen.
-- **Order** (400, 15px, EB Garamond): the four acts in the orders list — Grow,
-  Bond, Cord, Fruit. The largest body type, because these are the verbs.
-- **Annotation** (400, 12.5px, italic, EB Garamond, 70% opacity): the map's own
-  voice — notes, season remarks, event announcements. A curator's aside, never
-  a system message.
-- **Field Value** (400, 12px, Courier Prime, tabular numerals): the right column
-  of the catalogue block, always right-aligned so it scans vertically.
-- **Horizon Letter** (400, 11px, 0.2em tracking, Courier Prime, 62% opacity):
-  the soil-horizon designations on the depth rail.
-- **Field Label** (400, 10px, 0.14em tracking, uppercase, Courier Prime, 62%
-  opacity): the left column of the catalogue block — CARBON, WATER, SUBSTRATE.
-- **Ruler Numeral** (400, 10px, Courier Prime, 38% opacity): depth marks and the
-  horizon letters beside them.
-- **Micro** (400, 9px, Courier Prime, 0.14–0.3em tracking, 38% opacity): the
-  smallest printed matter — the stamp's division line, the barcode caption, the
-  section heading over the orders list, and the spore packet's label.
-
-**The No Display Type Rule.** There is no headline face and no large type. Every
-size in the game sits between 9px and 17px. Nothing shouts.
-
-**The One Announcement Rule.** The finished-match outcome is the single
-permitted exception, at 20px. It appears once, at the end, and then the sheet is
-closed. Nothing else in this world is ever allowed to be louder than the
-specimen line.
+EB Garamond with Georgia fallback is the interface face. The colony title is
+32px; primary actions 23px; disclosure labels 16px; explanatory text 14–17px.
+The tech-tree title is 38px and adaptation names 21px. Courier Prime remains
+only for tabular measurements in expanded readings. Main text uses warm ivory
+#f1e2c5, body #d0bea0, secondary #b4a387 on brown-black #171209 / #100c06.
+Resource colours are #de8b2c carbon, #78969a water, #9cab7d nitrogen. Names and
+focusable text accompany all colour states.
 
 ## Layout
 
-The viewport is the sheet. Three regions, all printed onto the same ground, none
-of them boxed:
-
-- **Depth rail** — left, at `left: 26px; top: 206px; bottom: 96px; width: 104px`.
-  A ruled scale from 0 to −112cm, a tick every 5cm, a numeral every 10cm, and
-  the soil-horizon letter (Oi, Oa, A, B, BC, C) printed where that horizon
-  begins. It is generated from the simulation's own strata, so it is a legend
-  and a measurement at once and can never disagree with the map.
-- **The mount** — the battlefield. A slab of instanced soil grit roughly 2:1,
-  pinned along its flanks and corners with gummed tape, with the canopy breaking
-  its top edge. The camera frames it so the mount's left edge lands about 12%
-  across the viewport, leaving the left margin for the rail and everything right
-  of it as bare paper.
-- **Catalogue block** — `right: 154px; bottom: 34px; width: 336px`. A ruled grid
-  with no border and no fill, sitting directly on the sheet. Its only backing is
-  a radial gradient that reads as the paper falling into shadow. The **spore
-  fragment packet** sits to its right at `right: 34px; width: 104px` and fills
-  as spores are banked.
-- **Orders** — bottom left, a ruled list of four acts (Grow, Bond, Cord, Fruit)
-  with keyboard equivalents 1–4.
-
-Responsive: below 1180px the rail narrows to 66px and drops its numerals and the
-catalogue moves in to 150px. Below 900px the catalogue docks full-width to the
-bottom edge and the packet is hidden. The game is desktop-first; small screens
-are a graceful degradation, not a target.
-
-The specimen and the stand are framed from the viewport at any size: at a
-portrait aspect the stand is framed whole and reads smaller rather than being
-cropped at its ends.
+At desktop widths the edge panel is 370px wide and scrolls independently.
+The view switch is centred over the remaining world. Rings are at most 280px
+wide, reduced to 200px on short desktop windows. Grow, Share and Rest form one
+horizontal row; Cord and Fruit remain available under Shape the network.
+Below 760px the panel occupies the bottom 52% of the viewport, the ring emblem
+shrinks to 120px, and the tech-tree branches stack vertically. Controls keep
+visible focus outlines; details can be opened without a pointer.
 
 ## Motion
 
@@ -289,31 +183,11 @@ is the crossing between the two views.
 
 ## Elevation & Depth
 
-In the underground view there are no interface shadows or elevation. Every
-annotation is printed onto one flat sheet, and depth in the specimen comes from
-the soil's own darkness—near-black at bedrock, warmer toward the litter—plus the
-falloff in the glow. The interface has no z-axis. The surface forest is the
-deliberate exception: its terrain, trunks, crowns, atmosphere, and camera occupy
-real depth, while its annotations retain the flat botanical grammar.
-
-Cards, panels, modals, tooltips and popovers do not exist in this world. If
-information must appear, it is printed on the sheet or added to the catalogue
-block.
-
-## Shapes
-
-Rectilinear and ruled. Every corner in the interface is square — zero border
-radius anywhere, including the mount, the tape, the stamp, the packet and the
-catalogue block. The recurring geometry is the hairline rule: a one-pixel line
-that separates fields, marks a horizon, or paces the depth rail.
-
-The one organic shape in the game is the network, and that is because the
-simulation drew it. The only other curve in the interface is the rounded surface
-of the spore heap inside the fragment packet, and that is a poured material
-rather than a shape — it curves the way a heap of spores actually curves. No
-interface element has a radius.
-
-## Components
+World depth comes from real forest geometry and the soil's darkness. The HUD
+recedes into a brown-black edge gradient. The research dialog uses a dark
+backdrop to protect focus. Resource tooltips are small opaque reading surfaces.
+No ornamental glass or neon outlines. The reference's circles are intentional:
+complete rings and tiny research buds are the interface's recurring geometry.
 
 ## Authored 3D assets
 
@@ -334,6 +208,40 @@ when supported, rather than four separately authored seasonal meshes. Living
 and dead/hollow trees are distinct models. Underground soil, roots, hyphae,
 cords and flow stay procedural; small authored reproductive bodies may sit
 within that environment without replacing it.
+
+### The fruiting body in both views
+
+An eruption is one event seen twice, wearing the same three models, so a player
+who descends through the ground is looking at the mushroom they just watched
+break the litter:
+
+| Stage | Model | What it is |
+|---|---|---|
+| Primordium, the first 42 % of an eruption | `fungi/porcini-button.glb` | the brown button on a stout pale stem |
+| Opening cap | `fungi/porcini-opening.glb` | the convex cap expanding above the litter |
+| Finished bloom | `fungi/porcini-mature.glb` | the broad mature cap with a pale pore-bearing underside |
+
+These original, texture-free models draw on real *Boletus edulis* (porcini),
+an ectomycorrhizal bolete. They establish the player's visual identity without
+adding a faction or species-specific simulation rules. The underside is a
+continuous sponge surface rather than gills; fine pores are omitted at this
+scale. `tools/make-mushroom-assets.py` builds all three stages plus comparison
+specimens of *Cantharellus cibarius* (wavy funnel, descending forked folds) and
+*Laccaria amethystina* (slender violet stem, widely spaced gills). The two
+comparison species are registered but not placed in ordinary play. Source-photo
+URLs are recorded per specimen in `forest-manifest.json`; photographs are not
+shipped as textures. Each specimen stays under 500 triangles and three materials.
+
+The two views draw the same stage at their own scale: about 6 cm on the soil
+transect, and about a metre on the forest floor, which is a small thing beside
+an 8–10 m tree rather than a landmark. Above ground a body is placed only where
+the simulation recorded a site, and it is left out rather than guessed at when
+a transect was never bound to regional soil.
+
+`fungi/underground-fruiting-body.glb` — a truffle-type subterranean body — is
+deliberately unplaced. In this game's language the truffle is a separate
+organism (deep violet, `Accession Violet`), not a stage of the player's amber
+loop, so it waits for that species rather than being miscast.
 
 ### The contract a model must meet
 
@@ -382,63 +290,18 @@ the same fog and bloom pass as everything else in the scene. A model that
 arrives after the stand was built is swapped in; a model that never arrives
 changes nothing about how the game plays.
 
-### Order rows
+## Interface components
 
-- **Shape:** no box, no radius; a single hairline rule beneath each row.
-- **Rest:** field-value type at 62% opacity, with a small Courier key numeral.
-- **Active:** the rule and the label take Hyphal Amber. There is no fill.
-- **Hover:** the row indents 6px on a 200ms curve. The page never lifts.
-
-### Speed toggles
-
-- **Shape:** a joined ruled strip, each cell separated by a hairline.
-- **Active:** inverted — Label Ink fill with Mount Shadow text.
-
-### Catalogue block
-
-- **Shape:** a two-column grid of hairline-ruled fields, no border.
-- **Backing:** a radial gradient only, so it holds legibility over the soil.
-- **Values:** tabular numerals, right-aligned. Colour carries state: amber for
-  carbon, pallor for the rival, violet for genetic potential.
-
-### Depth rail
-
-- **Ticks:** 5cm minor, 10cm major; numerals at 38% opacity.
-- **Horizons:** letters set 0.2em apart and offset from the numerals, so the two
-  scales never collide.
-
-## Do's and Don'ts
-
-### Do:
-
-- **Do** keep the sheet as the ground for everything. Print on it; never place a
-  panel over it.
-- **Do** draw the depth rail and its horizon letters from the simulation's real
-  strata.
-- **Do** right-align every number in the catalogue block so the column scans.
-- **Do** let the network be the only bright thing, and let it dim when starved —
-  the picture must reflect the network's real state.
-- **Do** keep tape, foxing and grain slightly irregular. Perfect symmetry reads
-  as a template rather than a specimen.
-- **Do** render the network with normal blending, never additive. Thousands of
-  overlapping strands blend additively into a white smear, which destroys the
-  filament structure the whole art direction depends on. Bloom supplies the glow
-  instead, at a threshold above the soil's albedo so nothing else catches it.
-
-### Don't:
-
-- **Don't** add rounded corners, drop shadows, glass panels, blur, or gradients
-  as surfaces. None of them exist in an archive.
-- **Don't** draw a resource bar, minimap, tooltip, toast, or floating panel.
-- **Don't** use pure white or pure black. Every value is warm and slightly off.
-- **Don't** animate the paper. Growth, flow, spore drift and light belong to the
-  specimen.
-- **Don't** use colour as the only channel for team identity. The rival reads as
-  a different filament *texture* — thinner, straighter, colder — as well as a
-  different hue, so the distinction survives colour-vision deficiency.
-- **Don't** let the canopy become a bright mass. It is a near-silhouette
-  (#151c0f in spring, dropping to #0c0b08 in winter) against the lit paper.
-
+- Primary actions are unboxed serif labels with an amber underline for the
+  selected order. Share issues the existing bond order; Rest toggles growth.
+- Each tech branch uses a thin vertical stem with buds for the two adaptations.
+  Learned, ready and locked states always have text in addition to colour.
+- Detailed readings retain the complete semantic definition list.
+- Native disclosure summaries, buttons and dialog controls support keyboard
+  interaction. Reduced motion removes ring transitions.
+- Keep actual network topology and resource flow authoritative. Preserve the
+  renderer's normal blending; bloom supplies light without whitening strands.
+- Use the supplied reference's restrained warm palette, not extra chrome.
 
 ## Water in the living specimen
 

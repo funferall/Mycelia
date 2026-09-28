@@ -19,6 +19,7 @@ import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode = True
 SEED = 20260919
 TAU = math.tau
 
@@ -560,6 +561,13 @@ def main():
             entry['lods'].append(record)
             bpy.data.objects.remove(obj, do_unlink=True)
         manifest['assets'].append(entry)
+    # Keep the species specimens in full-pack rebuilds as well as their fast,
+    # isolated authoring loop. The helper imports this module without main().
+    import importlib.util
+    species_spec = importlib.util.spec_from_file_location('mushroom_assets', Path(__file__).with_name('make-mushroom-assets.py'))
+    species_pack = importlib.util.module_from_spec(species_spec)
+    species_spec.loader.exec_module(species_pack)
+    manifest['assets'].extend(species_pack.generate(out))
     out.mkdir(parents=True, exist_ok=True)
     (out / 'forest-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     if args.render:

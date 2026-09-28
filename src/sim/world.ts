@@ -10,6 +10,7 @@ import {
   type TreeSpeciesId,
 } from './content';
 import { makeNoise2D, mulberry32, range, type Rng } from './rng';
+import type { Vec3 } from './spatial';
 
 export interface SoilCell {
   stratum: StratumId;
@@ -38,6 +39,8 @@ export interface SoilCell {
   stream: boolean;
   /** 0..1 dampness from the stream: 1 in the channel, fading over the bank. */
   streamNear: number;
+  /** Under floodwater (see `flood.ts`): waterlogged, and closed to growth. */
+  flooded?: boolean;
 }
 
 export interface RootTip {
@@ -47,6 +50,8 @@ export interface RootTip {
   gy: number;
   /** Node id once a hypha has bonded here, otherwise null. */
   bondedTo: number | null;
+  /** Which independent colony owns `bondedTo`; null for a standalone match. */
+  bondedColonyId?: string | null;
 }
 
 export interface Tree {
@@ -67,6 +72,14 @@ export interface Tree {
   rootTips: RootTip[];
   /** Set when the tree has died and become decomposable matter. */
   dead: boolean;
+  /** Set when a storm threw the tree down: which way it fell and when. */
+  fallen?: { direction: number; at: number };
+  /** Set when a wildfire burned the tree (or its snag): a charred standing trunk. */
+  burned?: { at: number };
+  /** Set when a drought killed the tree: it stands dead, bleached and leafless. */
+  parched?: { at: number };
+  /** Set when floodwater drowned the tree's roots. */
+  drowned?: { at: number };
   seed: number;
 }
 
@@ -80,10 +93,9 @@ export interface NodePosition {
 /**
  * The part of a node a world lookup needs to know.
  *
- * `gx`/`gy` are the growth plane: a column and a depth row on the flat
- * transect, and the same two axes on a spatial section. `y` is the horizontal
- * coordinate *across* that plane, which the flat transect leaves at zero and a
- * spatial colony carries on every strand.
+ * `gx`/`gy` are a founder-relative column and a depth row. Once bound to a
+ * region, `y` is the second horizontal coordinate and `lateral` is its smooth
+ * moving position; a standalone transect leaves both at zero.
  */
 export interface PositionedNode {
   gx: number;
@@ -94,6 +106,7 @@ export interface PositionedNode {
   wx: number;
   wy: number;
   y: number;
+  lateral?: number;
 }
 
 /**
@@ -111,13 +124,15 @@ export interface NetworkWorld {
   /** Current rainfall multiplier, read by fruiting. */
   readonly rainfall: number;
   /** Read-only material `dx`/`dy` steps from a node's own cell. */
-  cellFrom(node: PositionedNode, dx: number, dy: number): SoilCell | null;
+  cellFrom(node: PositionedNode, dx: number, dy: number, lateral?: number): SoilCell | null;
   /** Material at a node's own committed cell; writing to it records a change. */
   cellOf(node: PositionedNode): SoilCell | null;
   /** Whether a hypha may occupy a neighbouring cell. */
-  passableFrom(node: PositionedNode, dx: number, dy: number): boolean;
+  passableFrom(node: PositionedNode, dx: number, dy: number, lateral?: number): boolean;
   /** Resistance and material of a neighbouring cell. */
-  costFrom(node: PositionedNode, dx: number, dy: number): { cost: number; stratum: Stratum };
+  costFrom(node: PositionedNode, dx: number, dy: number, lateral?: number): { cost: number; stratum: Stratum };
+  /** Regional worlds can choose real neighbours in the third spatial axis. */
+  readonly spatialGrowth?: boolean;
   /** A node's own position, in simulation space. */
   nodePosition(node: PositionedNode): NodePosition;
   /** Where a root tip actually is, in simulation space. */
@@ -127,6 +142,12 @@ export interface NetworkWorld {
 }
 
 export interface World extends NetworkWorld {
+  /** Canonical regional soil slice when this transect belongs to a match. */
+  regionalSoil?: {
+    standId: number;
+    blockAt(gx: number, gy: number): 'outside' | 'bedrock' | 'stream' | 'groundwater' | null;
+    pointAt(gx: number, gy: number): Vec3 | null;
+  };
   seed: number;
   cols: number;
   rows: number;
@@ -191,6 +212,9 @@ export const belowWaterTable = (world: World, gy: number): boolean =>
 export function passableAt(world: World, gx: number, gy: number): boolean {
   if (!inBounds(gx, gy)) return false;
   const cell = world.cells[idx(gx, gy)];
+  // Floodwater closes the ground for as long as it stands, whichever soil backs it.
+  if (cell?.flooded) return false;
+  if (world.regionalSoil) return world.regionalSoil.blockAt(gx, gy) === null;
   return Boolean(cell) && cell.stratum !== 'bedrock' && !cell.stream && !belowWaterTable(world, gy);
 }
 

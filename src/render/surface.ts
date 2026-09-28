@@ -89,6 +89,31 @@ interface StandingTree {
   leafCount: number;
   home: THREE.Vector3;
   initialMaturity: number;
+  /** Seconds this view has shown the tree falling, once the storm threw it down. */
+  fallClock?: number;
+  /** True once a burned or parched crown has had its foliage removed. */
+  crownBurned?: boolean;
+}
+
+/** A tree the wildfire took: blackened bark and a few scorched leaves. */
+const CHAR_WOOD = new THREE.Color(0.035, 0.03, 0.026);
+const CHAR_LEAF = new THREE.Color(0.07, 0.04, 0.02);
+/** A tree the drought killed: grey, sun-bleached, standing bare. */
+const BLEACHED_WOOD = new THREE.Color(0.42, 0.39, 0.34);
+
+/** How long a felled tree takes to reach the ground, in seconds. */
+const FALL_SECONDS = 2.4;
+/** Resting angle of a felled tree: not quite flat, propped on its crown. */
+const FALLEN_ANGLE = 1.42;
+const leanAxis = new THREE.Vector3();
+const leanTurn = new THREE.Quaternion();
+
+/** Tilt `group` by `angle` toward regional `direction` (regional +y is scene -z). */
+function leanToward(group: THREE.Object3D, direction: number, angle: number): void {
+  if (angle === 0) return;
+  // Axis = up × downwind, so a positive turn carries the crown downwind.
+  leanAxis.set(-Math.sin(direction), 0, -Math.cos(direction));
+  group.quaternion.premultiply(leanTurn.setFromAxisAngle(leanAxis, angle));
 }
 
 /** One living stand, unfolded above the transect and folded back onto its roots. */
@@ -504,7 +529,7 @@ export class SurfaceForest {
     return best;
   }
 
-  update(dt: number, blend: number, season: SeasonId, progress: number, reduced: boolean): void {
+  update(dt: number, blend: number, season: SeasonId, progress: number, reduced: boolean, wind?: { direction: number; strength: number; storm?: number }): void {
     this.time.value += reduced ? 0 : dt;
     const t = this.time.value;
     const seasonIndex = SEASONS.findIndex(s => s.id === season);
@@ -521,21 +546,48 @@ export class SurfaceForest {
       v.group.position.set(v.home.x, FLOOR + (v.home.y - FLOOR) * blend, v.home.z * blend);
       v.group.scale.set(growth, growth, growth * (0.22 + 0.78 * blend));
       const gust = Math.sin(t * 0.48 + v.home.x * 0.055) * 0.008 + Math.sin(t * 1.1 + v.home.z) * 0.002;
-      v.group.rotation.z = reduced ? 0 : gust;
-      v.group.rotation.x = reduced ? 0 : gust * 0.5;
+      v.group.rotation.set(reduced ? 0 : gust * 0.5, 0, reduced ? 0 : gust);
+      // Only the forest view leans or topples: the folded underground view keeps
+      // its trees upright over the roots they belong to.
+      const unfold = THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
+      if (v.tree.fallen) {
+        v.fallClock = (v.fallClock ?? 0) + (reduced ? FALL_SECONDS : dt);
+        // Slow at first, then gathering speed as it goes over.
+        const f = Math.min(1, v.fallClock / FALL_SECONDS);
+        leanToward(v.group, v.tree.fallen.direction, FALLEN_ANGLE * f * f * unfold);
+      } else if (wind?.storm && !v.tree.dead) {
+        const phase = v.home.x * 0.13 + v.home.z * 0.07;
+        const buffet = reduced ? 0 : Math.sin(t * 2.3 + phase) * 0.045 + Math.sin(t * 5.1 + phase * 3) * 0.018;
+        leanToward(v.group, wind.direction, wind.storm * (0.1 + buffet) * unfold);
+      }
       const dim = 0.48 + blend * 0.52;
       if (v.model) {
         // Authored foliage takes the season's colour; bark keeps the artist's
         // and only browns as the tree's health falls.
         const leaf = foliageColour(v.tree.species, season, progress);
+        // A burned crown has lost its leaves: collapse the foliage meshes once.
+        // The batches read world matrices, so a zero scale draws nothing.
+        if ((v.tree.burned || v.tree.parched) && !v.crownBurned) {
+          v.crownBurned = true;
+          const burnt = new Set(v.model.foliage.map((tint) => tint.material));
+          v.model.object.traverse((child) => {
+            const mesh = child as THREE.Mesh;
+            if (mesh.isMesh && burnt.has(mesh.material as THREE.MeshStandardMaterial)) mesh.scale.setScalar(1e-4);
+          });
+        }
         for (const tint of v.model.foliage) {
-          tint.material.color.copy(leaf).lerp(DEAD_COLOR, 1 - health).multiplyScalar(dim);
+          if (v.tree.burned) tint.material.color.copy(CHAR_LEAF).multiplyScalar(dim);
+          else tint.material.color.copy(leaf).lerp(DEAD_COLOR, 1 - health).multiplyScalar(dim);
         }
         for (const tint of v.model.wood) {
-          tint.material.color.copy(tint.base).lerp(DEAD_COLOR, (1 - health) * 0.7).multiplyScalar(dim);
+          if (v.tree.burned) tint.material.color.copy(CHAR_WOOD).multiplyScalar(dim);
+          else if (v.tree.parched) tint.material.color.copy(tint.base).lerp(BLEACHED_WOOD, 0.75).multiplyScalar(dim);
+          else tint.material.color.copy(tint.base).lerp(DEAD_COLOR, (1 - health) * 0.7).multiplyScalar(dim);
         }
       } else {
-        v.material.color.copy(foliageColour(v.tree.species, season, progress)).lerp(DEAD_COLOR, 1 - health);
+        if (v.tree.burned) v.material.color.copy(CHAR_WOOD);
+        else if (v.tree.parched) v.material.color.copy(BLEACHED_WOOD);
+        else v.material.color.copy(foliageColour(v.tree.species, season, progress)).lerp(DEAD_COLOR, 1 - health);
         v.material.color.multiplyScalar(dim);
         v.leaves.count = Math.floor(v.leafCount * (v.tree.species === 'hemlock' ? 0.95 : density) * health);
       }
@@ -553,7 +605,10 @@ export class SurfaceForest {
       const x = Math.sin(i * 124.7) * GRID.cols * 0.49;
       const z = -(0.5 + 0.5 * Math.sin(i * 31.9)) * FOREST_DEPTH;
       const y = FLOOR + 2 + ((i * 1.37 - t * 22) % 48 + 48) % 48;
-      this.rainPositions.set([x, y, z, x - 0.65, y + 2.5, z - 0.25], i * 6);
+      const lean = wind ? .65 + wind.strength : .7;
+      const dx = Math.cos(wind?.direction ?? .37) * lean;
+      const dz = -Math.sin(wind?.direction ?? .37) * lean;
+      this.rainPositions.set([x, y, z, x - dx, y + 2.5, z - dz], i * 6);
     }
     this.rain.geometry.attributes.position.needsUpdate = true;
     this.leafDrift.visible = !reduced;

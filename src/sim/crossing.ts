@@ -1,10 +1,10 @@
 /**
  * One real crossing, and the resources that travel it (`MAP-07`, stage 3-4).
  *
- * This is a *fixture*, not a claim that the region has become volumetric. It
- * holds one horizontal `y` constant and grows a single funded colony from one
- * east-west (or north-south) neighbour into the next, across the real shared
- * edge, through the region's real soil volume.
+ * The funded fixture and the running match use this same corridor coordinator.
+ * The funded fixture holds one narrow lane for focused crossing checks. In a
+ * running match, the opening body's node addresses and XYZ stay unchanged at
+ * promotion, then its frontier may enter any passable neighbouring 3D voxel.
  *
  * What it is here to prove:
  *
@@ -25,7 +25,7 @@
  * totals), and finally activation of any stand the colony has just reached.
  * Nothing in it reads a camera, a view or a render origin.
  */
-import { GRID, SEASONS, SPECIES, type Season, type Stratum } from './content';
+import { ECON, GRID, SEASONS, SPECIES, type Season, type Stratum } from './content';
 import { STAND_SIZE, createRegion, type Region, type StandSite } from './region';
 import { hashString, mulberry32 } from './rng';
 import { SoilVolume, seasonalWaterTableOffsetCm } from './soil-volume';
@@ -35,7 +35,10 @@ import {
   drawTreeDemand,
   holdsAnyBond,
   markConnectivity,
+  makeCord,
+  nearestNode,
   orderWaypoint,
+  startFruiting,
   starveBondedTree,
   stepNetwork,
   tryBond,
@@ -76,6 +79,20 @@ export type CrossingDirection = 'east' | 'west' | 'north' | 'south';
 
 export interface CrossingOptions {
   seedText?: string;
+  colonyId?: ColonyId;
+  /** Running-match integration: use its region, colony, and persistent trees. */
+  region?: Region;
+  soil?: SoilVolume;
+  /** Keep the opening transect and promoted graph on the same soil slice. */
+  corridor?: CrossingCorridor;
+  /** Preserve the opening body's recorded XYZ positions and grow in 3D. */
+  regionalCoordinates?: boolean;
+  colony?: Network;
+  worldForStand?: (standId: StandId) => World;
+  onActivate?: (standId: StandId, fromStandId: StandId | null) => void;
+  initialTime?: number;
+  initialSeasonIndex?: number;
+  initialSeasonClock?: number;
   /** Stand the funded colony begins in. Defaults to the region's founding stand. */
   originStandId?: StandId;
   /** Which neighbour the colony grows into. Defaults to the first that works. */
@@ -155,6 +172,7 @@ export class CrossingWorldView implements NetworkWorld {
   /** Every tree of every reached stand, in activation order. */
   readonly trees: Tree[] = [];
   rainfall = 1;
+  readonly spatialGrowth: boolean;
 
   private readonly refs: TreeRef[] = [];
   private readonly reached = new Set<StandId>();
@@ -162,6 +180,7 @@ export class CrossingWorldView implements NetworkWorld {
 
   constructor(match: CrossingMatch) {
     this.match = match;
+    this.spatialGrowth = match.regionalCoordinates;
   }
 
   treeRefAt(index: number): TreeRef | null {
@@ -183,8 +202,8 @@ export class CrossingWorldView implements NetworkWorld {
     }
   }
 
-  cellFrom(node: PositionedNode, dx: number, dy: number): SoilCell | null {
-    const voxel = this.match.voxelOf(node, dx, dy);
+  cellFrom(node: PositionedNode, dx: number, dy: number, lateral = 0): SoilCell | null {
+    const voxel = this.match.voxelOf(node, dx, dy, lateral);
     if (!voxel) return null;
     return this.match.soil.readMaterialAt(voxel.x, voxel.y, voxel.z);
   }
@@ -195,20 +214,28 @@ export class CrossingWorldView implements NetworkWorld {
     return this.match.soil.materialAt(voxel.x, voxel.y, voxel.z);
   }
 
-  passableFrom(node: PositionedNode, dx: number, dy: number): boolean {
+  passableFrom(node: PositionedNode, dx: number, dy: number, lateral = 0): boolean {
     const from = this.match.voxelOf(node, 0, 0);
-    const to = this.match.voxelOf(node, dx, dy);
+    const to = this.match.voxelOf(node, dx, dy, lateral);
     if (!from || !to) return false;
+    if (this.match.regionalCoordinates) {
+      const start = standIdAt(this.match.region, from.x, from.y);
+      const end = standIdAt(this.match.region, to.x, to.y);
+      const a = start === null ? null : standFrameOf(this.match.region, start);
+      const b = end === null ? null : standFrameOf(this.match.region, end);
+      // A single node cannot skip the two orthogonal stands touching a corner.
+      if (a && b && a.sx !== b.sx && a.sy !== b.sy) return false;
+    }
     // Every voxel the step crosses is tested, so a two-column step cannot
     // tunnel through a stand corner, thin stone or the stream.
-    if (dx === 0 && dy === 0) {
+    if (dx === 0 && dy === 0 && lateral === 0) {
       return this.match.soil.passableAt(from.x, from.y, from.z);
     }
     return !this.match.soil.segment(from, to).blocked;
   }
 
-  costFrom(node: PositionedNode, dx: number, dy: number): { cost: number; stratum: Stratum } {
-    const voxel = this.match.voxelOf(node, dx, dy);
+  costFrom(node: PositionedNode, dx: number, dy: number, lateral = 0): { cost: number; stratum: Stratum } {
+    const voxel = this.match.voxelOf(node, dx, dy, lateral);
     if (!voxel) return entryCostFor(null);
     return entryCostFor(this.match.soil.readMaterialAt(voxel.x, voxel.y, voxel.z));
   }
@@ -224,6 +251,11 @@ export class CrossingWorldView implements NetworkWorld {
 
   /** A strand that has arrived in a new square is filed under that square. */
   commit(node: PositionedNode): void {
+    if (this.match.regionalCoordinates) {
+      (node as HyphaNode).spatial = this.match.nodePosition(node);
+      this.match.rebucket(node);
+      return;
+    }
     this.match.rebucket(node);
     // Arriving is also when a strand may step across the plane, giving the
     // fixture a body with some thickness instead of a single sheet.
@@ -234,8 +266,11 @@ export class CrossingWorldView implements NetworkWorld {
 export class CrossingMatch {
   readonly region: Region;
   readonly soil: SoilVolume;
+  readonly regionalCoordinates: boolean;
   readonly direction: CrossingDirection;
   readonly originStandId: StandId;
+  /** Regional x of the founding stand; node columns remain relative to it. */
+  readonly originX: number;
   readonly destinationStandId: StandId;
   readonly plane: SectionPlane;
   readonly depthCm: number;
@@ -258,18 +293,29 @@ export class CrossingMatch {
   private readonly sign: 1 | -1;
   private readonly alongIsX: boolean;
   private readonly siteById = new Map<StandId, CrossingStand>();
+  private readonly worldForStand?: (standId: StandId) => World;
+  private readonly onActivate?: (standId: StandId, fromStandId: StandId | null) => void;
 
   constructor(options: CrossingOptions = {}) {
     const seedText = options.seedText ?? 'raven-wood';
-    this.region = createRegion(seedText);
-    this.soil = new SoilVolume(this.region, hashString(`${seedText}:soil`));
+    this.region = options.region ?? createRegion(seedText);
+    this.soil = options.soil ?? new SoilVolume(this.region, hashString(`${seedText}:soil`));
+    this.regionalCoordinates = options.regionalCoordinates ?? false;
+    this.worldForStand = options.worldForStand;
+    this.onActivate = options.onActivate;
+    this.time = options.initialTime ?? 0;
+    this.seasonIndex = options.initialSeasonIndex ?? 0;
+    this.seasonClock = options.initialSeasonClock ?? 0;
     this.runUpColumns = options.runUpColumns ?? 8;
     this.reachColumns = options.reachColumns ?? 4;
     this.laneDrift = options.laneDrift ?? DEFAULT_LANE_DRIFT;
     this.laneSpread = options.laneSpread ?? DEFAULT_LANE_SPREAD;
 
-    const chosen = chooseCrossing(this.region, this.soil, options.originStandId ?? this.region.foundingStand, options.direction);
+    const chosen = options.corridor ?? chooseCrossing(this.region, this.soil, options.originStandId ?? this.region.foundingStand, options.direction);
     this.originStandId = chosen.originStandId;
+    const frame = standFrameOf(this.region, this.originStandId);
+    if (!frame) throw new Error('crossing: invalid origin stand');
+    this.originX = frame.originX;
     this.destinationStandId = chosen.destinationStandId;
     this.direction = chosen.direction;
     this.alongIsX = chosen.alongIsX;
@@ -282,11 +328,13 @@ export class CrossingMatch {
     this.seam = chosen.seam;
 
     this.view = new CrossingWorldView(this);
-    this.colonyId = `player@${seedText}`;
+    this.colonyId = options.colonyId ?? `player@${seedText}`;
     const seed = hashString(`${seedText}:crossing`);
-    const startColumn = this.columnAt(chosen.seam) - this.sign * this.runUpColumns;
+    const startColumn = this.regionalCoordinates
+      ? (this.alongIsX ? chosen.seam - this.originX - this.sign * this.runUpColumns : chosen.fixed - this.originX)
+      : this.columnAt(chosen.seam) - this.sign * this.runUpColumns;
     const kit = options.kit ?? DEFAULT_KIT;
-    this.colony = createNetwork(
+    this.colony = options.colony ?? createNetwork(
       'player',
       'the colony',
       startColumn,
@@ -295,16 +343,54 @@ export class CrossingMatch {
       kit.carbon,
       { water: kit.water, nitrogen: kit.nitrogen }
     );
+    this.colony.colonyId = this.colonyId;
     updateTotals(this.colony);
     // The colony's growth plane is the whole region, not one stand's transect.
-    this.colony.bounds = { cols: this.region.cols * STAND_SIZE, rows: GRID.rows };
-    // The funded strand belongs to the origin stand, and carries the section's
-    // fixed coordinate from the moment it exists.
-    for (const node of this.colony.nodes) {
-      node.y = this.plane.fixed;
-      node.standId = this.originStandId;
+    this.colony.bounds = this.regionalCoordinates
+      ? { minCol: -this.originX, cols: this.region.cols * STAND_SIZE - this.originX, rows: GRID.rows }
+      : { cols: (this.alongIsX ? this.region.cols : this.region.rows) * STAND_SIZE, rows: GRID.rows };
+    // The running body's local columns and recorded XYZ have existed since the
+    // founding spore. Promotion keeps every node address unchanged.
+    const offset = options.colony && frame ? (this.alongIsX ? frame.originX : frame.originY) : 0;
+    if (this.regionalCoordinates && options.colony) {
+      const projection = this.worldForStand?.(this.originStandId)?.regionalSoil;
+      if (!projection) throw new Error('crossing: running colony has no regional soil projection');
+      for (const node of this.colony.nodes) {
+        const position = node.spatial;
+        if (!position) throw new Error(`crossing: node ${node.id} has no opening XYZ position`);
+        if (Math.abs(this.originX + node.wx - position.x) > 1e-8 ||
+          Math.abs(node.lateral - position.y) > 1e-8) {
+          throw new Error(`crossing: node ${node.id} disagrees with its recorded XYZ position`);
+        }
+      }
+      for (const waypoint of this.colony.waypoints) {
+        const point = projection.pointAt(waypoint.gx, waypoint.gy);
+        if (point) waypoint.lateral = point.y;
+      }
+      const fruitPoint = projection.pointAt(this.colony.fruit.gx, this.colony.fruit.gy);
+      if (fruitPoint) this.colony.fruit.spatial = fruitPoint;
+      for (const bloom of this.colony.blooms) {
+        const point = projection.pointAt(bloom.gx, bloom.gy);
+        if (point) bloom.spatial = point;
+      }
+    } else {
+      for (const node of this.colony.nodes) {
+        node.gx += offset;
+        node.wx += offset;
+        node.targetGx += offset;
+        node.y = this.plane.fixed;
+        node.lateral = node.y;
+        node.targetLateral = node.y;
+        node.standId = this.originStandId;
+      }
+      if (offset !== 0) {
+        for (const waypoint of this.colony.waypoints) waypoint.gx += offset;
+        this.colony.fruit.gx += offset;
+        for (const bloom of this.colony.blooms) bloom.gx += offset;
+      }
     }
-    this.activate(this.originStandId, 'The colony wakes beside the shared edge.');
+    this.activate(this.originStandId, 'The colony wakes beside the shared edge.', null);
+    if (options.colony && !this.regionalCoordinates) this.importOccupiedSoil(this.worldForStand?.(this.originStandId));
   }
 
   /** The colony's own view: the world every network call is given. */
@@ -340,18 +426,20 @@ export class CrossingMatch {
   /**
    * The voxel a growth-plane cell addresses.
    *
-   * `gy` stays a depth row, exactly as it is on the flat transect; `dx` moves
-   * along the section's axis, which is what lets one graph cross a stand edge
-   * without changing any other coordinate.
+ * `gy` stays a depth row. A running colony's `gx` remains relative to its
+ * founding stand, and its lateral coordinate is regional y. The fixture uses
+ * its older two-dimensional section plane.
    */
-  voxelOf(node: PositionedNode, dx: number, dy: number): Vec3 | null {
-    return this.voxelAt(node.gx + dx, node.y, node.gy + dy);
+  voxelOf(node: PositionedNode, dx: number, dy: number, lateral = 0): Vec3 | null {
+    return this.voxelAt(node.gx + dx, node.y + lateral, node.gy + dy);
   }
 
   /** The voxel at one growth-plane cell, at an explicit across-plane position. */
   voxelAt(gx: number, lane: number, gy: number): Vec3 | null {
     if (!Number.isFinite(gy) || gy < 0 || gy >= GRID.rows) return null;
-    const point = planePoint({ along: this.plane.along, fixed: lane }, gx + 0.5);
+    const point = this.regionalCoordinates
+      ? { x: this.originX + gx + 0.5, y: lane }
+      : planePoint({ along: this.plane.along, fixed: lane }, gx + 0.5);
     if (standIdAt(this.region, point.x, point.y) === null) return null;
     const depth = rowDepthCm(gy);
     return vec3(point.x, point.y, elevationAtDepthCm(this.region, point.x, point.y, depth));
@@ -390,6 +478,14 @@ export class CrossingMatch {
   }
 
   nodePosition(node: PositionedNode): NodePosition {
+    if (this.regionalCoordinates) {
+      const point = { x: this.originX + node.wx, y: node.lateral ?? node.y };
+      return {
+        x: point.x,
+        y: point.y,
+        z: elevationAtDepthCm(this.region, point.x, point.y, node.wy * GRID.cmPerRow),
+      };
+    }
     // The node carries its own across-plane coordinate: the fixture's colony
     // drifts a little in that axis as it grows, and the drawn position, the
     // clipped section and the projection all have to see the same lane.
@@ -405,6 +501,10 @@ export class CrossingMatch {
   rootTipPosition(standId: StandId, tip: { gx: number; gy: number }): NodePosition {
     const frame = standFrameOf(this.region, standId);
     if (!frame) return { x: this.plane.fixed, y: this.plane.fixed, z: 0 };
+    if (this.regionalCoordinates) {
+      const point = this.worldForStand?.(standId)?.regionalSoil?.pointAt(tip.gx, tip.gy);
+      if (point) return point;
+    }
     const point = rootTipSectionPosition(tip, this.region, frame, this.plane);
     return { x: point.x, y: point.y, z: point.z };
   }
@@ -414,6 +514,7 @@ export class CrossingMatch {
   }
 
   standOf(node: PositionedNode): StandId | null {
+    if (this.regionalCoordinates) return standIdAt(this.region, this.originX + node.gx + 0.5, node.y);
     const point = planePoint({ along: this.plane.along, fixed: node.y }, node.gx + 0.5);
     return standIdAt(this.region, point.x, point.y);
   }
@@ -425,7 +526,8 @@ export class CrossingMatch {
     const changed = node.standId !== standId;
     node.standId = standId;
     if (changed && !this.siteById.has(standId)) {
-      this.activate(standId, `The colony reaches the ${this.region.stands[standId]?.community.replace(/-/g, ' ')}.`);
+      const parent = this.colony.nodes[(node as HyphaNode).parent];
+      this.activate(standId, `The colony reaches the ${this.region.stands[standId]?.community.replace(/-/g, ' ')}.`, parent?.standId ?? this.originStandId);
     }
   }
 
@@ -506,24 +608,39 @@ export class CrossingMatch {
       const parent = this.colony.nodes[node.parent];
       if (!parent || !parent.alive || parent.standId === node.standId) continue;
       if (parent.standId < 0 || node.standId < 0) continue;
+      const parentFrame = standFrameOf(this.region, parent.standId);
+      const childFrame = standFrameOf(this.region, node.standId);
+      let edge = this.direction;
+      let seam = this.seam;
+      if (this.regionalCoordinates && parentFrame && childFrame) {
+        const horizontal = Math.abs(childFrame.sx - parentFrame.sx);
+        const vertical = Math.abs(childFrame.sy - parentFrame.sy);
+        if (horizontal >= vertical && horizontal > 0) {
+          edge = childFrame.sx > parentFrame.sx ? 'east' : 'west';
+          seam = edge === 'east' ? parentFrame.originX + STAND_SIZE : parentFrame.originX;
+        } else if (vertical > 0) {
+          edge = childFrame.sy > parentFrame.sy ? 'south' : 'north';
+          seam = edge === 'south' ? parentFrame.originY + STAND_SIZE : parentFrame.originY;
+        }
+      }
       portals.push({
         nodeId: node.id,
         parentId: parent.id,
         standId: node.standId,
         parentStandId: parent.standId,
-        edge: this.direction,
-        seam: this.seam,
+        edge,
+        seam,
         at: this.nodePosition(node),
       });
     }
     return portals;
   }
 
-  private activate(standId: StandId, note: string): void {
+  private activate(standId: StandId, note: string, fromStandId: StandId | null): void {
     if (this.siteById.has(standId)) return;
     const site = this.region.stands[standId];
     if (!site) return;
-    const world = createStandWorld(site.seed, {
+    const world = this.worldForStand?.(standId) ?? createStandWorld(site.seed, {
       waterTableCm: site.waterTableCm,
       mix: undefined,
       stream: site.stream,
@@ -532,7 +649,27 @@ export class CrossingMatch {
     this.stands.push(stand);
     this.siteById.set(standId, stand);
     this.view.activate(site, world);
+    this.onActivate?.(standId, fromStandId);
     this.log(`${note} (${this.stands.length} stand${this.stands.length === 1 ? '' : 's'} held)`);
+  }
+
+  /** Carry already occupied material into the shared volume once on promotion. */
+  private importOccupiedSoil(world?: World): void {
+    if (!world) return;
+    const frame = standFrameOf(this.region, this.originStandId);
+    if (!frame) return;
+    for (const node of this.colony.nodes) {
+      if (node.standId !== this.originStandId) continue;
+      const localX = node.gx - (this.alongIsX ? frame.originX : frame.originY);
+      const cell = world.cells[node.gy * world.cols + localX];
+      const voxel = this.voxelOf(node, 0, 0);
+      if (!cell || !voxel) continue;
+      const shared = this.soil.materialAt(voxel.x, voxel.y, voxel.z);
+      shared.organic = cell.organic;
+      shared.nitrogen = cell.nitrogen;
+      shared.water = cell.water;
+      shared.occupancy = cell.occupancy;
+    }
   }
 
   /** Any stand the colony now stands in, activated for the next tick. */
@@ -543,7 +680,8 @@ export class CrossingMatch {
       if (standId === null) continue;
       node.standId = standId;
       if (!this.siteById.has(standId)) {
-        this.activate(standId, `The colony reaches the ${this.region.stands[standId]?.community.replace(/-/g, ' ')}.`);
+        const parent = node.parent < 0 ? null : this.colony.nodes[node.parent];
+        this.activate(standId, `The colony reaches the ${this.region.stands[standId]?.community.replace(/-/g, ' ')}.`, parent?.standId ?? this.originStandId);
       }
     }
   }
@@ -554,12 +692,94 @@ export class CrossingMatch {
 
   /** Send the frontier across the shared edge, and only just across it. */
   orderAcross(): { ok: boolean; message: string } {
-    if (this.portals().length > 0) {
+    if (this.portals().some((portal) => portal.parentStandId === this.originStandId &&
+      portal.standId === this.destinationStandId)) {
       return { ok: false, message: 'The colony already stands in both stands.' };
     }
-    const target = this.columnAt(this.seam) + this.sign * this.reachColumns;
-    orderWaypoint(this.colony, target, this.depthRow, this.view);
+    const target = this.regionalCoordinates
+      ? (this.alongIsX ? this.seam + this.sign * this.reachColumns - this.originX
+        : Math.floor(this.plane.fixed) - this.originX)
+      : this.columnAt(this.seam) + this.sign * this.reachColumns;
+    const lateral = this.regionalCoordinates
+      ? (this.alongIsX ? this.plane.fixed : this.seam + this.sign * this.reachColumns + 0.5)
+      : undefined;
+    orderWaypoint(this.colony, target, this.depthRow, this.view, lateral);
     return { ok: true, message: `Frontier directed across the seam to column ${target}.` };
+  }
+
+  /** An order from a displayed section, checked against the shared material. */
+  growAt(point: Vec3, along: 'x' | 'y', fixed: number): { ok: boolean; message: string } {
+    if (!this.regionalCoordinates && (along !== this.plane.along || Math.abs(fixed - this.plane.fixed) > this.laneSpread + 2)) {
+      return { ok: false, message: 'This section can be inspected, but growth follows the colony’s current corridor.' };
+    }
+    const gx = this.regionalCoordinates
+      ? Math.floor(point.x) - this.originX
+      : this.columnAt(along === 'x' ? point.x : point.y);
+    const gy = rowAtDepthCm((this.region.heightAt(point.x, point.y) - point.z) * GRID.cmPerRow);
+    const owner = standIdAt(this.region, point.x, point.y);
+    const lateral = this.regionalCoordinates ? point.y : this.plane.along === 'x' ? point.y : point.x;
+    const voxel = this.voxelAt(gx, this.regionalCoordinates ? lateral : fixed, gy);
+    if (owner === null || !voxel || this.soil.blockAt(voxel.x, voxel.y, voxel.z).blocked) {
+      return { ok: false, message: 'That section point is stone, open water or saturated ground.' };
+    }
+    orderWaypoint(this.colony, gx, gy, this.view, this.regionalCoordinates ? lateral : undefined);
+    return { ok: true, message: `Frontier directed to stand ${owner + 1}, −${Math.round(rowDepthCm(gy))} cm.` };
+  }
+
+  /** Select in physical XYZ, so overlapping projections stay distinct. */
+  private nearestSpatialNode(point: Vec3, reach: number, connected = false): HyphaNode | null {
+    let best: HyphaNode | null = null;
+    let distance = reach;
+    for (const node of this.colony.nodes) {
+      if (!node.alive || (connected && !node.connected)) continue;
+      const at = this.nodePosition(node);
+      const next = Math.hypot(at.x - point.x, at.y - point.y, at.z - point.z);
+      if (next < distance) {
+        best = node;
+        distance = next;
+      }
+    }
+    return best;
+  }
+
+  cordAt(point: Vec3): { ok: boolean; message: string } {
+    const gx = this.regionalCoordinates ? Math.floor(point.x) - this.originX
+      : this.columnAt(this.plane.along === 'x' ? point.x : point.y);
+    const gy = rowAtDepthCm((this.region.heightAt(point.x, point.y) - point.z) * GRID.cmPerRow);
+    const node = this.regionalCoordinates
+      ? this.nearestSpatialNode(point, 5)
+      : nearestNode(this.colony, gx, gy, 3);
+    const here = node ? this.nodePosition(node) : null;
+    if (!node || !here || Math.hypot(here.x - point.x, here.y - point.y, here.z - point.z) > 5) {
+      return { ok: false, message: 'No living strand at that point.' };
+    }
+    if (node.reinforced) return { ok: false, message: 'That strand is already a cord.' };
+    if (!makeCord(this.colony, node.id)) return { ok: false, message: 'That strand needs more carbon to become a cord.' };
+    return { ok: true, message: 'The strand thickens into a cord.' };
+  }
+
+  fruitAt(point: Vec3): { ok: boolean; message: string } {
+    const gx = this.regionalCoordinates ? Math.floor(point.x) - this.originX
+      : this.columnAt(this.plane.along === 'x' ? point.x : point.y);
+    const gy = rowAtDepthCm((this.region.heightAt(point.x, point.y) - point.z) * GRID.cmPerRow);
+    if (this.season.warmth < 0.3) return { ok: false, message: 'Too cold to fruit.' };
+    if (this.colony.surplus < ECON.fruitThreshold) {
+      return { ok: false, message: `Surplus ${this.colony.surplus.toFixed(0)} of ${ECON.fruitThreshold} needed.` };
+    }
+    const nearby = this.regionalCoordinates
+      ? this.nearestSpatialNode(point, 4, true)
+      : nearestNode(this.colony, gx, gy, 2);
+    const here = nearby ? this.nodePosition(nearby) : null;
+    if (!nearby || !nearby.connected || !here || Math.hypot(here.x - point.x, here.y - point.y, here.z - point.z) > 4) {
+      return { ok: false, message: 'Choose a supplied strand in this section.' };
+    }
+    const lane = this.regionalCoordinates ? point.y : this.plane.fixed;
+    const voxel = this.voxelAt(gx, lane, gy);
+    const node = startFruiting(this.colony, () => Boolean(voxel && this.soil.passableAt(voxel.x, voxel.y, voxel.z)), gx, gy,
+      this.regionalCoordinates && nearby ? { nodeId: nearby.id, spatial: point } : undefined);
+    return node
+      ? { ok: true, message: 'A fruiting body rises from the connected strand.' }
+      : { ok: false, message: 'Choose a supplied strand in the upper 12 cm.' };
   }
 
   /** Send the frontier toward one tree's root tip, for a remote bond. */
@@ -570,7 +790,12 @@ export class CrossingMatch {
     if (!tree || !tip) return { ok: false, message: 'No such root tip.' };
     // A root tip's `gx` is a column inside its own stand; the colony's growth
     // plane counts across the whole region, so the order has to be translated.
-    orderWaypoint(this.colony, this.alongOfTip(treeRef.standId, tip), tip.gy, this.view);
+    const point = this.rootTipPosition(treeRef.standId, tip);
+    const along = this.regionalCoordinates
+      ? Math.floor(point.x) - this.originX
+      : this.alongOfTip(treeRef.standId, tip);
+    orderWaypoint(this.colony, along, tip.gy, this.view,
+      this.regionalCoordinates ? point.y : undefined);
     return { ok: true, message: `Frontier directed to a root tip of tree ${treeRef.treeId}.` };
   }
 
@@ -670,12 +895,12 @@ export class CrossingMatch {
     }
   }
 
-  step(dt: number): void {
+  step(dt: number, advanceSoil = true, stormRainfall?: number): void {
     this.advanceClock(dt);
     const season = this.season;
-    this.view.rainfall = season.rain;
+    this.view.rainfall = stormRainfall ?? season.rain;
     // 1. The regional environment, once, for every stand at once.
-    this.soil.step(dt, {
+    if (advanceSoil) this.soil.step(dt, {
       rainfall: season.rain,
       litterfall: season.litterfall,
       waterTableOffsetCm: seasonalWaterTableOffsetCm(season.rain),
@@ -688,11 +913,15 @@ export class CrossingMatch {
         world: colony.view,
         light: season.light,
         warmth: season.warmth,
+        fruitingWeather: stormRainfall !== undefined,
         rival: null,
         time: this.time,
         log: (text) => this.log(text),
         dt,
       });
+      if (this.regionalCoordinates) for (const node of colony.net.nodes) {
+        node.spatial = this.nodePosition(node);
+      }
       this.activateReached();
     }
     this.time += dt;
@@ -704,7 +933,7 @@ export class CrossingMatch {
       for (const tree of stand.world.trees) {
         if (tree.dead) continue;
         const junction = bondedJunction(colony.net, tree);
-        const bonded = holdsAnyBond(tree);
+        const bonded = holdsAnyBond(tree, colony.net.colonyId);
         if (junction) {
           if (drawTreeDemand(tree, junction, SPECIES[tree.species], dt)) {
             this.severBond(colony, tree, 'stopped supplying');
@@ -720,6 +949,7 @@ export class CrossingMatch {
     let severed = false;
     for (const tip of tree.rootTips) {
       if (tip.bondedTo === null) continue;
+      if ((tip.bondedColonyId ?? null) !== (colony.net.colonyId ?? null)) continue;
       const node = colony.net.nodes[tip.bondedTo];
       if (node) {
         node.bondedTree = -1;
@@ -727,6 +957,7 @@ export class CrossingMatch {
         node.pulse = 1;
       }
       tip.bondedTo = null;
+      tip.bondedColonyId = null;
       severed = true;
     }
     if (severed) {
@@ -766,6 +997,9 @@ export class CrossingMatch {
         node.parent,
         node.gx,
         node.gy,
+        node.y,
+        node.lateral,
+        node.targetLateral,
         node.standId,
         node.alive ? 1 : 0,
         node.connected ? 1 : 0,
@@ -796,7 +1030,7 @@ export class CrossingMatch {
 // Choosing a corridor
 // ---------------------------------------------------------------------------
 
-interface Corridor {
+export interface CrossingCorridor {
   originStandId: StandId;
   destinationStandId: StandId;
   direction: CrossingDirection;
@@ -822,12 +1056,12 @@ const DIRECTIONS: Array<{ direction: CrossingDirection; alongIsX: boolean; sign:
  * could use across the whole run, it keeps looking, and throws rather than
  * teleporting the colony past water or stone.
  */
-function chooseCrossing(
+export function chooseCrossing(
   region: Region,
   soil: SoilVolume,
   from: StandId,
   preferred?: CrossingDirection
-): Corridor {
+): CrossingCorridor {
   const order = preferred
     ? [...DIRECTIONS.filter((entry) => entry.direction === preferred), ...DIRECTIONS.filter((entry) => entry.direction !== preferred)]
     : DIRECTIONS;

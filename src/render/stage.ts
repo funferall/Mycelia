@@ -21,7 +21,24 @@ export const MOUNT_HALF_H = GRID.rows / 2;
  * object in the game lives on this sheet, and the only light the world produces
  * on its own comes out of the network.
  */
+const FIRE_KEY = new THREE.Color('#ff9a4a');
+const FIRE_SKY = new THREE.Color('#d9774a');
+const FIRE_SMOKE = new THREE.Color('#3a2a22');
+const DROUGHT_SUN = new THREE.Color('#fff0c8');
+const DROUGHT_SKY = new THREE.Color('#d9c89a');
+const DROUGHT_DUST = new THREE.Color('#8a7a58');
+
 export class Stage {
+  stormIntensity = 0;
+  /** Current lightning flash, 0..1, from the storm view. */
+  lightning = 0;
+  /** 0..1 heat of a wildfire, from the fire view. */
+  fireGlow = 0;
+  /** 0..1 glare and dust of a drought. */
+  droughtHeat = 0;
+  private baseKey?: THREE.Color;
+  private baseSky?: THREE.Color;
+  private baseFog?: THREE.Color;
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly rig: CameraRig;
@@ -210,10 +227,25 @@ export class Stage {
     // Keep the backing below the terrain, including the lowest part of its relief.
     this.backing.scale.y = 1 - blend * 0.025;
     this.backing.position.z = -2.6 - blend * 35.65;
-    this.atmosphere.intensity = blend * 2.1;
-    this.key.intensity = 2.6 - blend * 0.8;
-    this.bloom.strength = 0.42 - blend * 0.31;
-    this.fog.density = blend * 0.001;
+    // Storm light: the forest darkens under the vortex; a strike lights both views.
+    this.atmosphere.intensity = blend * (2.1 - this.stormIntensity * 1.25) + this.lightning * 2.4;
+    this.key.intensity = (2.6 - blend * .8) * (1 - this.stormIntensity * (.18 + .4 * blend)) + this.lightning * 3.2;
+    // Fire light: an amber cast from the burning front and smoke-thickened air.
+    // Underground it arrives as a faint warm lift, the way heat reads in soil.
+    this.baseKey ??= this.key.color.clone();
+    this.baseSky ??= this.atmosphere.color.clone();
+    this.baseFog ??= this.fog.color.clone();
+    const heat = this.fireGlow;
+    // Drought light: a hard, pale sun and a dusty haze; applied before the fire's amber.
+    const glare = this.droughtHeat;
+    this.key.color.copy(this.baseKey).lerp(DROUGHT_SUN, glare * 0.6).lerp(FIRE_KEY, heat * 0.7);
+    this.atmosphere.color.copy(this.baseSky).lerp(DROUGHT_SKY, glare * 0.5).lerp(FIRE_SKY, heat * 0.6);
+    this.fog.color.copy(this.baseFog).lerp(DROUGHT_DUST, glare * 0.7).lerp(FIRE_SMOKE, heat * 0.8);
+    this.key.intensity *= 1 + glare * 0.25 * blend;
+    this.atmosphere.intensity += heat * 0.15;
+    this.key.intensity *= 1 - heat * 0.25 * blend;
+    this.bloom.strength = 0.42 - blend * 0.31 + heat * 0.06 * blend;
+    this.fog.density = blend * (.001 + this.stormIntensity * .0012 + heat * .00025 + glare * .0003);
     this.scene.fog = blend > 0.01 ? this.fog : null;
     this.renderer.setClearColor(new THREE.Color('#0b0908').lerp(new THREE.Color('#12150f'), blend).multiplyScalar(0.18));
     if (this.quality.postprocessing) this.composer.render(dt);

@@ -167,3 +167,16 @@ neighbouring tile's soil, carrying cords, water, roots and later infection with
 it. A wind-borne spore is an additional way to reach unheld ground, not the only
 route. Stand squares organise simulation and ownership; they are not meant to
 read, in the world or in the interface, as isolated boxes.
+
+
+## Network evolution
+
+The player remains one fungal network, with no Grove/Web/Colony faction split.
+Exchange, Resilience and Fruiting are compatible adaptation branches, earned
+through living bonds, network maturity, reinforced strands and reproduction.
+Learning is a deliberate, free choice once a prerequisite and milestone are
+met; it does not spend the existing genetic resource. Late-game powers require
+a completed branch and the first fruiting, plus an appropriate current target
+or condition. They amplify connected transport, paid recovery or supplied
+fruiting, preserving ecological and spatial constraints. An independent spore
+starts its own adaptation history; promotion retains the existing body's history.

@@ -19,7 +19,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-region-'));
-const modules = ['content', 'rng', 'region', 'world', 'spatial', 'network', 'sim', 'match', 'survey'];
+const modules = ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'match', 'survey'];
 for (const name of modules) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
@@ -586,9 +586,10 @@ function dump(region, seed) {
   assert.equal(region.surveyed, 2, 'a held stand has been surveyed beneath');
   assert.equal(daughter.parent, founding, 'the daughter records the stand that paid for it');
   assert.equal(daughter.hop, 1, 'the daughter is one stand from the founding stand');
-  assert.equal(daughter.connected, true);
+  assert.equal(daughter.connected, false, 'the spore daughter has no physical link to its parent');
+  assert.equal(daughter.lineageAlive, true, 'the parent lineage still lives');
   assert.equal(daughter.state, 'germinating', 'a fresh spore has no network yet');
-  assert.equal(region.contiguous, true);
+  assert.equal(region.contiguous, false, 'two independent graphs are not one connected body');
   assert.deepEqual(region.lineage, [founding, neighbour], 'the lineage runs founding to daughter');
   ok('a funded daughter appears in the survey with its parent, state and lineage');
 
@@ -597,7 +598,8 @@ function dump(region, seed) {
   home.sim.outcome = 'extinct';
   const severed = buildSurvey(m);
   assert.equal(severed.held, 2, 'the daughter is still occupied');
-  assert.equal(severed.stands[neighbour].connected, false, 'a cut lineage is not connected');
+  assert.equal(severed.stands[neighbour].connected, false, 'the daughter remains physically separate');
+  assert.equal(severed.stands[neighbour].lineageAlive, false, 'the parent lineage is now lost');
   assert.equal(severed.contiguous, false, 'a region with an isolated colony is not contiguous');
   assert.deepEqual(severed.lineage, [founding, neighbour], 'the recorded route survives the cut');
   ok('an isolated colony is reported as occupied but no longer connected to the founding stand');

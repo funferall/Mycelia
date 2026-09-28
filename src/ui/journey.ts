@@ -1,15 +1,14 @@
 import { ECON } from '../sim/content';
-import type { HyphaNode } from '../sim/network';
+import { BOND_REACH_CM, bondCandidate, type HyphaNode } from '../sim/network';
 import type { Simulation } from '../sim/sim';
 import type { Tree } from '../sim/world';
 
 /**
  * How close a living strand has to be to a root tip before a symbiosis can be
- * made. The simulation enforces the same number; it lives here so the interface
- * can tell the player the truth about what is in reach without asking the
- * simulation to re-derive it per label.
+ * made. The interface reads this rule from the simulation so its labels can
+ * predict whether a click will work.
  */
-export const BOND_REACH = 3.5;
+export const BOND_REACH = BOND_REACH_CM;
 
 /** A root label's state, in the order a player has to work through them. */
 export type RootState = 'bondable' | 'poor' | 'distant' | 'bonded';
@@ -20,7 +19,7 @@ export interface RootTarget {
   /** Grid cell the label is pinned to. */
   gx: number;
   gy: number;
-  /** Distance from the nearest living strand, in centimetres. */
+  /** Distance from the nearest free connected strand, in centimetres. */
   distance: number;
   state: RootState;
   tree: Tree;
@@ -91,19 +90,12 @@ export function deriveJourney(sim: Simulation): Journey {
     let best: RootTarget | null = null;
     for (const tip of tree.rootTips) {
       if (tip.bondedTo !== null) continue;
-      let distance = Infinity;
-      let carbon = 0;
-      for (const node of strands) {
-        const d = Math.hypot(node.wx - tip.gx - 0.5, node.wy - tip.gy - 0.5);
-        if (d < distance) {
-          distance = d;
-          carbon = node.carbon;
-        }
-      }
-      if (distance === Infinity) continue;
+      const candidate = bondCandidate(net, sim.world, tree, tip);
+      if (!candidate) continue;
+      const distance = candidate.distanceCm;
       if (best && distance >= best.distance) continue;
       const state: RootState =
-        distance > BOND_REACH ? 'distant' : carbon >= ECON.bondCharge ? 'bondable' : 'poor';
+        distance > BOND_REACH ? 'distant' : candidate.availableCarbon >= ECON.bondCharge ? 'bondable' : 'poor';
       best = { treeId: tree.id, tipId: tip.id, gx: tip.gx, gy: tip.gy, distance, state, tree };
     }
     if (best) roots.push(best);
@@ -189,12 +181,17 @@ function describe(input: DescribeInput): Pick<Journey, 'step' | 'title' | 'copy'
 
   if (input.bondedTrees === 0) {
     const nearest = roots.find((root) => root.state !== 'bonded');
+    const shortOfCarbon = nearest?.state === 'poor';
     return {
       step: 0,
-      title: 'Reach toward another life.',
-      copy: 'Click a labelled root to send your filaments toward it. Your network follows slowly; there is time to watch.',
+      title: shortOfCarbon ? 'A root is reached, but carbon is low.' : 'Reach toward another life.',
+      copy: shortOfCarbon
+        ? 'The connected network needs carbon to form a bond. It can gather from living soil while you wait or grow toward another root.'
+        : 'Click a labelled root to send your filaments toward it. Your network follows slowly; there is time to watch.',
       blocker: nearest
-        ? `${Math.round(nearest.distance)}cm of soil between your frontier and the nearest root.`
+        ? shortOfCarbon
+          ? 'A strand has reached the root, but the connected network needs more carbon. Let it gather from living soil.'
+          : `${Math.round(nearest.distance)}cm of soil between your frontier and the nearest root.`
         : 'No root is close enough to sense. Grow deeper.',
     };
   }

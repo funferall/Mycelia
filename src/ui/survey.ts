@@ -42,8 +42,10 @@ function fieldsText(stand: StandSurvey): string {
   } else {
     parts.push('not surveyed beneath');
   }
-  if (stand.parent !== null) parts.push(`from stand ${stand.parent + 1}`);
-  if (stand.occupied && !stand.connected) parts.push('lineage severed');
+  if (stand.parent !== null) parts.push(`independent spore network from stand ${stand.parent + 1}`);
+  if (stand.growthFrom !== null) parts.push(`strand from stand ${stand.growthFrom + 1}`);
+  if (stand.occupied && !stand.lineageAlive) parts.push('parent lineage lost');
+  if (stand.occupied && !stand.connected && stand.parent === null) parts.push('separate physical network');
   if (stand.spores > 0) parts.push(`${stand.spores} spores`);
   return parts.join(' · ');
 }
@@ -117,6 +119,8 @@ export class SurveySheet {
         stand.waterCm,
         stand.healthBand,
         stand.connected,
+        stand.lineageAlive,
+        stand.networkOrigin,
         stand.fruited,
         stand.spores,
         stand.deadTrees,
@@ -134,10 +138,12 @@ export class SurveySheet {
     if (survey.lineage.length > 1) {
       parts.push(`lineage ${survey.lineage.map((id) => id + 1).join(' → ')}`);
     }
-    const isolated = survey.stands.filter((stand) => stand.occupied && !stand.connected).length;
-    if (isolated > 0) parts.push(`${isolated} cut off by a severed link`);
-    else if (survey.held > 1) parts.push('every colony connected');
+    const independent = survey.stands.filter((stand) => stand.occupied && stand.parent !== null).length;
+    const lost = survey.stands.filter((stand) => stand.occupied && !stand.lineageAlive).length;
+    if (independent > 0) parts.push(`${independent} independent spore network${independent === 1 ? '' : 's'}`);
+    else if (survey.held > 1) parts.push('one connected network');
     else parts.push('no daughters yet');
+    if (lost > 0) parts.push(`${lost} parent lineage${lost === 1 ? '' : 's'} lost`);
     return parts.join(' · ');
   }
 
@@ -150,7 +156,7 @@ export class SurveySheet {
     button.setAttribute('aria-pressed', String(stand.id === chosen));
     if (stand.occupied) button.classList.add('is-held');
     if (stand.state === 'fruiting' || stand.state === 'closed') button.classList.add('is-fruiting');
-    if (stand.occupied && !stand.connected) button.classList.add('is-severed');
+    if (stand.occupied && !stand.lineageAlive) button.classList.add('is-severed');
     button.addEventListener('click', () => this.choose?.(stand.id));
     button.append(
       span('survey-id', String(stand.id + 1)),

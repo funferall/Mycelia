@@ -8,6 +8,8 @@ import {
   type Season,
 } from './content';
 import {
+  BOND_REACH_CM,
+  bondCandidate,
   bondedJunction,
   createNetwork,
   drawTreeDemand,
@@ -56,7 +58,11 @@ export class Simulation {
   readonly world: World;
   /** The colony in this stand. Replaced only when a spore founds one. */
   player: Network;
-  readonly rival: Network;
+  rival: Network;
+  rivalEnabled = true;
+  /** Explicit continuation beyond the introductory two-bloom victory. */
+  regionalContinuation = false;
+  regionalWeather: { rainfall: number; fruiting: boolean } | null = null;
   readonly seed: number;
   readonly events: SimEvent[] = [];
   readonly runStartedAt = Date.now();
@@ -158,7 +164,24 @@ export class Simulation {
     updateTotals(colony);
     this.player = colony;
     this.hasColony = true;
+    this.syncRegionalPositions();
     this.log(`A spore takes hold here with ${kit.carbon.toFixed(0)} carbon.`);
+  }
+
+  /** Keep the opening body's real XYZ positions while its flat UI stays local. */
+  syncRegionalPositions(includePlayer = true): void {
+    const projection = this.world.regionalSoil;
+    if (!projection) return;
+    for (const net of includePlayer ? [this.player, this.rival] : [this.rival]) for (const node of net.nodes) {
+      const point = projection.pointAt(node.wx - 0.5, node.wy - 0.5);
+      if (point) {
+        node.spatial = point;
+        node.standId = projection.standId;
+        node.y = point.y;
+        node.lateral = point.y;
+        node.targetLateral = point.y;
+      }
+    }
   }
 
   get season(): Season {
@@ -166,14 +189,14 @@ export class Simulation {
   }
 
   /** Advance by exactly one fixed step. */
-  step(dt: number): void {
-    if (this.outcome !== 'playing') return;
+  step(dt: number, playerManagedByRegion = false, soilManagedByRegion = false): void {
+    if (this.outcome !== 'playing' && !playerManagedByRegion && !this.regionalContinuation) return;
 
     this.time += dt;
     this.advanceSeason(dt);
 
     const season = this.season;
-    this.world.rainfall = season.rain;
+    this.world.rainfall = this.regionalWeather?.rainfall ?? season.rain;
     this.world.litterfall = season.litterfall;
     // Drought pulls the water table down; wet seasons raise it.
     // The stand's own depth is the reference; the weather moves it from there.
@@ -185,8 +208,10 @@ export class Simulation {
     // single step.
     this.moistureClock += dt;
     if (this.moistureClock >= 0.25) {
-      updateMoisture(this.world, this.moistureClock);
-      updateSoil(this.world, this.moistureClock, season.litterfall);
+      if (!soilManagedByRegion) {
+        updateMoisture(this.world, this.moistureClock);
+        updateSoil(this.world, this.moistureClock, season.litterfall);
+      }
       this.moistureClock = 0;
     }
 
@@ -194,17 +219,21 @@ export class Simulation {
       world: this.world,
       light: season.light,
       warmth: season.warmth,
+      fruitingWeather: this.regionalWeather?.fruiting ?? false,
       rival: this.rival,
       time: this.time,
       log: (text: string) => this.log(text),
       dt,
     };
-    stepNetwork(this.player, ctx);
-    stepNetwork(this.rival, ctx);
+    // A spatial colony is stepped once by RegionalMatch over the shared soil
+    // volume. This stand still advances its weather, saprotroph and trees.
+    if (!playerManagedByRegion) stepNetwork(this.player, ctx);
+    if (this.rivalEnabled) stepNetwork(this.rival, ctx);
+    this.syncRegionalPositions(!playerManagedByRegion);
 
-    this.stepTrees(dt);
-    this.stepRivalDrama(dt);
-    this.checkOutcome();
+    this.stepTrees(dt, playerManagedByRegion);
+    if (this.rivalEnabled) this.stepRivalDrama(dt);
+    if (!playerManagedByRegion) this.checkOutcome();
   }
 
   private advanceSeason(dt: number): void {
@@ -221,7 +250,7 @@ export class Simulation {
    * minerals in return; a tree that goes without long enough severs the bond,
    * which is the economy's ability to strike back at the player.
    */
-  private stepTrees(dt: number): void {
+  private stepTrees(dt: number, playerManagedByRegion = false): void {
     for (const tree of this.world.trees) {
       if (tree.dead) continue;
       const spec = SPECIES[tree.species];
@@ -235,15 +264,15 @@ export class Simulation {
       const bondNode = bondedJunction(this.player, tree);
       const bonded = holdsAnyBond(tree);
 
-      if (bondNode) {
+      if (bondNode && !playerManagedByRegion) {
         if (drawTreeDemand(tree, bondNode, spec, dt)) {
           this.severBond(tree, 'stopped supplying');
         }
-      } else if (bonded) {
+      } else if (bonded && !playerManagedByRegion) {
         if (starveBondedTree(tree, dt)) {
           this.severBond(tree, 'lost the strand that fed it');
         }
-      } else {
+      } else if (!bonded) {
         // Unbonded trees live off the soil alone. Drought hurts them, but
         // slowly: a stand must not be wiped out in the first minute by weather.
         const stress = Math.max(0, 0.2 - soilWater);
@@ -296,6 +325,7 @@ export class Simulation {
     let severed = false;
     for (const tip of tree.rootTips) {
       if (tip.bondedTo === null) continue;
+      if ((tip.bondedColonyId ?? null) !== (this.player.colonyId ?? null)) continue;
       const node = this.player.nodes[tip.bondedTo];
       if (node) {
         node.bondedTree = -1;
@@ -303,6 +333,7 @@ export class Simulation {
         node.pulse = 1;
       }
       tip.bondedTo = null;
+      tip.bondedColonyId = null;
       severed = true;
     }
     if (severed) {
@@ -346,7 +377,7 @@ export class Simulation {
   }
 
   private checkOutcome(): void {
-    if (this.player.fruited >= this.fruitGoal) {
+    if (this.player.fruited >= this.fruitGoal && !this.regionalContinuation) {
       this.outcome = 'fruited';
       this.log('Spores are away. The lineage travels.');
       return;
@@ -379,15 +410,17 @@ export class Simulation {
     if (!cell || cell.stratum === 'bedrock') {
       return { ok: false, message: 'Choose open soil inside the specimen. Stone cannot be crossed.' };
     }
-    if (cell.stream) {
+    const regionalBlock = this.world.regionalSoil?.blockAt(x, y);
+    if (regionalBlock === 'stream' || (!this.world.regionalSoil && cell.stream)) {
       return {
         ok: false,
         message: 'That is the stream itself. Grow along its damp bank; hyphae cannot cross open water.',
       };
     }
-    if (belowWaterTable(this.world, y)) {
+    if (regionalBlock === 'groundwater' || (!this.world.regionalSoil && belowWaterTable(this.world, y))) {
       return { ok: false, message: 'The soil below the water table is saturated. Reach the soft upper fringe for water; hyphae cannot grow deeper.' };
     }
+    if (regionalBlock) return { ok: false, message: 'Choose open soil inside the specimen. Stone cannot be crossed.' };
     orderWaypoint(this.player, x, y, this.world);
     return { ok: true, message: `Frontier directed to ${x} · −${y}cm` };
   }
@@ -420,16 +453,16 @@ export class Simulation {
     if (tree.dead) return { ok: false, message: 'That tree is dead. Its roots are food now.' };
     if (tip.bondedTo !== null) return { ok: false, message: 'Already bonded to that root.' };
 
-    const distance = this.nearestStrand(tip.gx, tip.gy);
-    if (!distance) return { ok: false, message: 'No living strand left in the network.' };
-    if (distance.distance > 3.5) {
+    const candidate = bondCandidate(this.player, this.world, tree, tip);
+    if (!candidate) return { ok: false, message: 'No free living strand left in the network.' };
+    if (candidate.distanceCm > BOND_REACH_CM) {
       return {
         ok: false,
-        message: `${Math.round(distance.distance)}cm short of that root. Grow closer first.`,
+        message: `${Math.round(candidate.distanceCm)}cm short of that root. Grow closer first.`,
       };
     }
-    if (distance.node.carbon < ECON.bondCharge) {
-      return { ok: false, message: 'The strand at that root is too poor to hold a bond. Let it gather.' };
+    if (candidate.availableCarbon < ECON.bondCharge) {
+      return { ok: false, message: 'The connected network lacks the carbon to bond. Let it gather from living soil.' };
     }
     if (!tryBond(this.player, this.world, treeId, tipId)) {
       return { ok: false, message: 'The junction would not take. Try a strand on the root itself.' };

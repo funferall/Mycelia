@@ -16,11 +16,16 @@ import { stripTypeScriptTypes } from 'node:module';
 
 // Compile only the headless simulation into a unique temporary directory.
 const output = mkdtempSync(join(tmpdir(), 'mycelia-sim-'));
-for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'network', 'sim', 'match']) {
+for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'match']) {
   const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
   const compiled = stripTypeScriptTypes(source);
   writeFileSync(join(output, `${name}.mjs`), compiled.replace(/from '(.+?)'/g, "from '$1.mjs'"));
 }
+writeFileSync(
+  join(output, 'journey.mjs'),
+  stripTypeScriptTypes(readFileSync(new URL('../src/ui/journey.ts', import.meta.url), 'utf8'))
+    .replace(/from '\.\.\/sim\/(.+?)'/g, "from './$1.mjs'")
+);
 const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
 const { Simulation } = await load('sim');
 const { RegionalMatch } = await load('match');
@@ -28,6 +33,7 @@ const { createNetwork, makeCord, spawnTip, startFruiting, stepNetwork } = await 
 const { createWorld } = await load('world');
 const { ECON, GRID } = await load('content');
 const { mulberry32 } = await load('rng');
+const { deriveJourney } = await load('journey');
 
 const step = (sim, seconds) => {
   for (let i = 0; i < Math.round(seconds * 60); i++) sim.step(1 / 60);
@@ -95,6 +101,44 @@ function nearestRoot(sim) {
 }
 
 const results = [];
+
+// A thin strand can reach the first oak after spending its own carbon on growth.
+// Its connected founder still holds the bond charge, so the label must offer a
+// working Bond action instead of leaving the opening stuck on "gathering".
+{
+  const sim = new Simulation('oak');
+  const match = new RegionalMatch('oak', sim);
+  const target = nearestRoot(sim);
+  assert.equal(target.tree.species, 'oak');
+  assert.equal(sim.orderGrowth(target.tip.gx, target.tip.gy), true);
+  for (let i = 0; i < 10 * 60; i++) match.step(1 / 60);
+  const nearest = sim.nearestStrand(target.tip.gx, target.tip.gy);
+  assert.ok(nearest && nearest.distance < 3.5 && nearest.node.carbon < ECON.bondCharge,
+    'the regression seed reaches an oak with a locally poor strand');
+  const label = deriveJourney(sim).roots.find((root) => root.treeId === target.tree.id);
+  assert.equal(label?.state, 'bondable', 'the label predicts a funded bond');
+  const carbonBefore = sim.player.nodes.reduce((total, node) => total + node.carbon, 0);
+  assert.equal(sim.orderBondTip(target.tree.id, target.tip.id).ok, true);
+  const carbonAfter = sim.player.nodes.reduce((total, node) => total + node.carbon, 0);
+  assert.ok(Math.abs(carbonBefore - carbonAfter - ECON.bondCharge) < 1e-8,
+    'the connected network pays exactly one bond charge');
+  assert.equal(target.tip.bondedTo, nearest.node.id, 'the closest free strand owns the junction');
+
+  const unfunded = new Simulation('oak');
+  const unfundedMatch = new RegionalMatch('oak', unfunded);
+  const sameRoot = nearestRoot(unfunded);
+  unfunded.orderGrowth(sameRoot.tip.gx, sameRoot.tip.gy);
+  for (let i = 0; i < 10 * 60; i++) unfundedMatch.step(1 / 60);
+  for (const node of unfunded.player.nodes) node.carbon = 0;
+  assert.equal(deriveJourney(unfunded).roots.find((root) => root.treeId === sameRoot.tree.id)?.state, 'poor');
+  assert.equal(unfunded.orderBondTip(sameRoot.tree.id, sameRoot.tip.id).ok, false);
+  results.push('opening oak bond draws its exact charge from connected ancestors; an unfunded label stays honest');
+}
+if (process.argv.includes('--bond-only')) {
+  for (const line of results) console.log('  ok - ' + line);
+  console.log(`PASS: ${results.length} focused check.`);
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // 1. Input bounds and the founding reserve
