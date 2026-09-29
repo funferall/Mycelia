@@ -1509,11 +1509,8 @@ function sproutGroups(net: Network, ctx: StepContext): void {
     // A group whose strands have all died has nothing left to steer.
     if (strands === 0) { if (group.id !== 0) groups.splice(i, 1); continue; }
     const target = group.waypoints[0];
-    if (!target || group.resting || tips >= GROUP_MIN_TIPS || net.evolution.age < group.sproutAt) continue;
-    group.sproutAt = net.evolution.age + 1.5;
-    // The allowance is shared, not multiplied: when it is spent, the group with
-    // the most tips gives one up so the ordered subcluster can grow.
-    if (net.tipCount >= net.tipCeiling && !retireTipFor(net, group.id)) continue;
+    if (!target || group.resting || tips >= GROUP_MIN_TIPS || net.evolution.age < group.sproutAt ||
+      net.nodes.length >= MAX_NODES) continue;
     let best: HyphaNode | null = null, bestDistance = Infinity;
     for (const node of net.nodes) {
       if (!node.alive || !node.connected || node.isTip || !member(node)) continue;
@@ -1522,6 +1519,12 @@ function sproutGroups(net: Network, ctx: StepContext): void {
       if (distance < bestDistance) { best = node; bestDistance = distance; }
     }
     if (!best) continue;
+    group.sproutAt = net.evolution.age + 1.5;
+    // Find a viable parent before borrowing a tip. Otherwise an ordered but
+    // resource-starved group can repeatedly prune a different group's frontier.
+    // The allowance is shared, not multiplied: when it is spent, the group with
+    // the most tips gives one up so the ordered subcluster can grow.
+    if (net.tipCount >= net.tipCeiling && !retireTipFor(net, group.id)) continue;
     const tip = spawnTip(net, best, Math.atan2(target.gy - best.gy, target.gx - best.gx), net.rng);
     if (!tip) continue;
     chooseTarget(net, ctx.world, tip, net.rng);

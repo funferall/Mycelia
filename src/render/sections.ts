@@ -281,22 +281,38 @@ export function browsableSections(region: Region, standIds: readonly StandId[]):
   return out;
 }
 
-/** The same section family, one step along: previous or next. */
+/**
+ * Sections on the same regional corridor, in physical order. East-west
+ * sections step north/south within one stand column; north-south sections step
+ * east/west within one stand row. Other rows/columns are separate corridors.
+ */
+function sectionCorridor(sections: readonly SectionSpec[], current: SectionSpec): SectionSpec[] {
+  return sections.filter((spec) =>
+    spec.axis === current.axis &&
+    spec.alongFrom === current.alongFrom &&
+    spec.alongTo === current.alongTo
+  ).sort((a, b) => a.plane.fixed - b.plane.fixed);
+}
+
+/** The next physical slab, including across an interior stand boundary. */
 export function stepSection(
   sections: readonly SectionSpec[],
   current: SectionSpec,
   delta: number
 ): SectionSpec {
-  const family = sections.filter((spec) => spec.standId === current.standId && spec.axis === current.axis);
+  const family = sectionCorridor(sections, current);
   const index = family.findIndex((spec) => spec.id === current.id);
   if (index < 0 || family.length === 0) return current;
   const next = Math.max(0, Math.min(family.length - 1, index + delta));
-  return family[next] ?? current;
+  const candidate = family[next];
+  // A caller may supply only some browsable stands. Never jump an unseen tile.
+  return candidate && Math.abs(candidate.plane.fixed - current.plane.fixed) <= Math.abs(delta) * SECTION_STEP + 1e-6
+    ? candidate : current;
 }
 
 /** How far along its family a section sits, for the readout. */
 export function sectionOrder(sections: readonly SectionSpec[], current: SectionSpec): { index: number; count: number } {
-  const family = sections.filter((spec) => spec.standId === current.standId && spec.axis === current.axis);
+  const family = sectionCorridor(sections, current);
   const index = family.findIndex((spec) => spec.id === current.id);
   return { index: index < 0 ? 0 : index, count: family.length };
 }
@@ -312,5 +328,5 @@ export function flipSection(
   current: SectionSpec
 ): SectionSpec {
   const anchor = sectionAnchor(region, current);
-  return sectionForPoint(region, sections, anchor, crossAxis(current.axis)) ?? current;
+  return sectionForPoint(region, sections.filter((spec) => spec.standId === current.standId), anchor, crossAxis(current.axis)) ?? current;
 }

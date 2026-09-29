@@ -790,7 +790,7 @@ export class CrossingMatch {
   // -------------------------------------------------------------------------
 
   /** Send the frontier across the shared edge, and only just across it. */
-  orderAcross(): { ok: boolean; message: string } {
+  orderAcross(group = 0): { ok: boolean; message: string } {
     if (this.portals().some((portal) => portal.parentStandId === this.originStandId &&
       portal.standId === this.destinationStandId)) {
       return { ok: false, message: 'The colony already stands in both stands.' };
@@ -802,8 +802,9 @@ export class CrossingMatch {
     const lateral = this.regionalCoordinates
       ? (this.alongIsX ? this.plane.fixed : this.seam + this.sign * this.reachColumns + 0.5)
       : undefined;
-    orderWaypoint(this.colony, target, this.depthRow, this.view, lateral);
-    return { ok: true, message: `Frontier directed across the seam to column ${target}.` };
+    const live = group && this.colony.groups?.some((g) => g.id === group) ? group : 0;
+    orderWaypoint(this.colony, target, this.depthRow, this.view, lateral, live);
+    return { ok: true, message: `${live ? `Subcluster ${live}` : 'Frontier'} directed across the seam to column ${target}.` };
   }
 
   /** An order from a displayed section, checked against the shared material. */

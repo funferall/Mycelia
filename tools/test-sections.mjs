@@ -32,7 +32,7 @@ function check(name, fn) {
 }
 
 try {
-  const simModules = ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'shared-soil', 'match', 'survey'];
+  const simModules = ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'match', 'survey'];
   for (const name of simModules) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '([^']+)'/g, (_m, spec) => `from './${spec.split('/').pop()}.mjs'`));
@@ -44,7 +44,9 @@ try {
   const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
   const sections = await load('sections');
   const { CrossingMatch } = await load('crossing');
+  const { RegionalMatch } = await load('match');
   const { STAND_SIZE, COMMUNITY_LABEL } = await load('region');
+  const { GRID } = await load('content');
   const {
     SECTION_HALF_WIDTH,
     SECTION_DEPTH_CM,
@@ -142,6 +144,61 @@ try {
     const flipped = flipSection(region, sectionsOfOrigin, middle);
     assert.equal(flipped.axis, crossAxis(middle.axis));
     assert.equal(flipped.standId, middle.standId);
+  });
+
+  check('adjacent sections continue through interior stands and stop only at the region edge', () => {
+    const all = browsableSections(region, region.stands.map((stand) => stand.id));
+    const centre = region.stands.find((stand) => stand.sx === 1 && stand.sy === 1);
+    assert.ok(centre);
+    const north = region.stands.find((stand) => stand.sx === 1 && stand.sy === 0);
+    const south = region.stands.find((stand) => stand.sx === 1 && stand.sy === 2);
+    const west = region.stands.find((stand) => stand.sx === 0 && stand.sy === 1);
+    const east = region.stands.find((stand) => stand.sx === 2 && stand.sy === 1);
+    const ew = sectionsForStand(region, centre.id).filter((spec) => spec.axis === 'east-west');
+    const ns = sectionsForStand(region, centre.id).filter((spec) => spec.axis === 'north-south');
+    for (const [edge, delta, expected] of [
+      [ew[0], -1, north], [ew.at(-1), 1, south],
+      [ns[0], -1, west], [ns.at(-1), 1, east],
+    ]) {
+      const adjacent = stepSection(all, edge, delta);
+      assert.equal(adjacent.standId, expected.id);
+      assert.equal(adjacent.axis, edge.axis);
+      assert.equal(Math.abs(adjacent.plane.fixed - edge.plane.fixed), SECTION_STEP);
+      assert.equal(stepSection(all, adjacent, -delta).id, edge.id);
+      assert.equal(flipSection(region, all, adjacent).standId, adjacent.standId);
+    }
+    assert.equal(sectionOrder(all, ew[0]).count, ew.length * region.rows);
+    const northernmost = sectionsForStand(region, north.id).find((spec) => spec.axis === 'east-west');
+    assert.equal(stepSection(all, northernmost, -1).id, northernmost.id);
+    const limited = browsableSections(region, [centre.id, south.id]);
+    assert.equal(stepSection(limited, ew[0], -1).id, ew[0].id, 'a missing neighbour cannot be skipped');
+  });
+
+  check('a promoted colony grows from one section into the next physical slab', () => {
+    const regional = new RegionalMatch('old-growth', undefined, { starts: 'best' });
+    assert.equal(regional.growAcross('north').ok, true);
+    const body = regional.spatial;
+    const root = body.nodePosition(body.colony.nodes[body.colony.rootId]);
+    const family = sectionsForStand(regional.region, body.originStandId).filter(spec => spec.axis === 'east-west');
+    const current = sectionForPoint(regional.region, family, root, 'east-west');
+    const next = stepSection(family, current, current.plane.fixed < family.at(-1).plane.fixed ? 1 : -1);
+    assert.notEqual(next.id, current.id);
+    const depth = depthCmAt(regional.region, root);
+    const candidates = [root.x + 4, root.x - 4, root.x + 8, root.x - 8].flatMap(x =>
+      [depth, 22, 26].map(d => ({ x, y: next.plane.fixed,
+        z: regional.region.heightAt(x, next.plane.fixed) - d / GRID.cmPerRow })));
+    const target = candidates.find(point => body.soil.passableAt(point.x, point.y, point.z));
+    assert.ok(target, 'adjacent slab has passable soil');
+    assert.equal(body.growAt(target, next.plane.along, next.plane.fixed).ok, true);
+    assert.equal(body.colony.waypoints[0].lateral, next.plane.fixed);
+    let arrived = false;
+    for (let i = 0; i < 30 / DT && !arrived; i++) {
+      regional.step(DT);
+      arrived = body.colony.nodes.some(node => node.alive &&
+        sectionContains(regional.region, next, body.nodePosition(node)) &&
+        Math.abs(body.nodePosition(node).y - root.y) > SECTION_HALF_WIDTH);
+    }
+    assert.ok(arrived, 'a living strand enters the adjacent section without promotion or a new colony');
   });
 
   check('a strand inside the slab keeps its own identity and coordinates', () => {

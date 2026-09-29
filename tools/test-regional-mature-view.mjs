@@ -119,9 +119,90 @@ try {
   assert.notEqual(managed.remote.standId, founded.landing.to, 'the selector opens another tile');
   assert.equal(managed.returned.standId, founded.landing.to, 'the selector returns to the daughter');
   assert.ok(managed.elapsedMs < 30000, `30s of mature simulation took ${managed.elapsedMs.toFixed(0)}ms`);
+  const adjacentGrow = await page.evaluate((id) => {
+    const game = window.mycelia.game;
+    game.awaken();
+    const body = game.match.spatialColonies.get(id);
+    const root = body.nodePosition(body.colony.nodes[body.colony.rootId]);
+    const family = game.section.sections.filter(spec => spec.standId === id && spec.axis === 'east-west');
+    const current = family.reduce((best, spec) => Math.abs(spec.plane.fixed - root.y) < Math.abs(best.plane.fixed - root.y) ? spec : best);
+    const index = family.findIndex(spec => spec.id === current.id);
+    const next = family[index < family.length - 1 ? index + 1 : index - 1];
+    game.openSection(id, next.id);
+    game.stage.rig.setView('underground', true);
+    game.frame(performance.now(), false);
+    let target = null;
+    for (const depth of [22, 26, 18, 30]) {
+      for (const x of [root.x, root.x + 4, root.x - 4, root.x + 8, root.x - 8]) {
+        const point = { x, y: next.plane.fixed, z: game.region.heightAt(x, next.plane.fixed) - depth };
+        if (body.soil.passableAt(point.x, point.y, point.z)) { target = point; break; }
+      }
+      if (target) break;
+    }
+    if (!target) return { reason: 'no passable adjacent section point' };
+    const scene = game.regionToScenePoint(target);
+    scene.x += game.sectionView.group.position.x;
+    scene.z += game.sectionView.group.position.z;
+    const camera = game.stage.rig.camera;
+    camera.updateMatrixWorld();
+    const ndc = scene.project(camera);
+    const rect = game.canvas.getBoundingClientRect();
+    const x = rect.left + (ndc.x + 1) * rect.width / 2;
+    const y = rect.top + (1 - ndc.y) * rect.height / 2;
+    const resolved = game.sectionPointAt(x, y);
+    game.ui.setActiveOrder('grow');
+    game.applyOrderAt(x, y);
+    return { section: game.section.spec.id, target, resolved,
+      note: document.querySelector('#order-note').textContent,
+      waypoint: body.colony.waypoints[0] };
+  }, founded.landing.to);
+  assert.ok(adjacentGrow.resolved, `the adjacent section is clickable: ${JSON.stringify(adjacentGrow)}`);
+  assert.match(adjacentGrow.note, /Frontier directed/, 'Grow click orders the adjacent section');
+  assert.ok(Math.abs(adjacentGrow.waypoint.lateral - adjacentGrow.resolved.y) < 1e-5,
+    'the order uses the adjacent section’s regional coordinate');
+  const acrossTileGrow = await page.evaluate((id) => {
+    const game = window.mycelia.game;
+    const body = game.match.spatialColonies.get(id);
+    const spec = game.section.spec;
+    const site = game.region.stands[id];
+    const direction = site.sx < game.region.cols - 1 ? 1 : -1;
+    const neighbour = id + direction;
+    const seam = (site.sx + (direction > 0 ? 1 : 0)) * 136;
+    let target = null;
+    for (const depth of [22, 26, 18, 30]) {
+      for (const distance of [6, 12, 20, 32]) {
+        const x = seam + direction * distance;
+        const point = { x, y: spec.plane.fixed, z: game.region.heightAt(x, spec.plane.fixed) - depth };
+        if (body.soil.passableAt(point.x, point.y, point.z)) { target = point; break; }
+      }
+      if (target) break;
+    }
+    if (!target) return { reason: 'no passable neighbour soil' };
+    const scene = game.regionToScenePoint(target);
+    scene.x += game.sectionView.group.position.x;
+    scene.z += game.sectionView.group.position.z;
+    const camera = game.stage.rig.camera;
+    camera.updateMatrixWorld();
+    const ndc = scene.project(camera);
+    const rect = game.canvas.getBoundingClientRect();
+    const x = rect.left + (ndc.x + 1) * rect.width / 2;
+    const y = rect.top + (1 - ndc.y) * rect.height / 2;
+    const resolved = game.sectionPointAt(x, y);
+    game.applyOrderAt(x, y);
+    return { target, resolved, neighbour,
+      note: document.querySelector('#order-note').textContent,
+      waypoint: body.colony.waypoints[0] };
+  }, founded.landing.to);
+  assert.ok(acrossTileGrow.resolved, `neighbouring stand soil is clickable: ${JSON.stringify(acrossTileGrow)}`);
+  assert.match(acrossTileGrow.note, new RegExp(`Frontier directed to stand ${acrossTileGrow.neighbour + 1}`),
+    'Grow click across the stand seam targets the neighbouring stand');
+  assert.ok(Math.abs(acrossTileGrow.waypoint.lateral - acrossTileGrow.resolved.y) < 1e-5,
+    'the cross-stand order keeps the same section plane');
   const returnedToParent = await page.evaluate(() => {
     const game = window.mycelia.game;
     document.querySelector('#section-return').click();
+    let now = Math.max(performance.now(), game.lastFrame);
+    for (let i = 0; i < 36 && game.stage.rig.transitioning; i++) game.frame(now += 100, false);
     const origin = game.region.foundingStand;
     const select = document.querySelector('#forest-stand');
     select.value = String(origin);
@@ -143,7 +224,7 @@ try {
   assert.equal(returnedToParent.sectionControlsHidden, true);
   assert.equal(returnedToParent.view, 'underground');
   assert.deepEqual(problems, [], 'no browser errors');
-  console.log(`PASS mature regional browser: nine-tile access, independent daughter, controls, return to parent and 30s pacing (${managed.elapsedMs.toFixed(0)}ms)`);
+  console.log(`PASS mature regional browser: nine-tile access, independent daughter, adjacent and cross-stand Grow clicks, controls, return to parent and 30s pacing (${managed.elapsedMs.toFixed(0)}ms)`);
 } finally {
   await browser?.close();
   server.stop();

@@ -94,6 +94,16 @@ export class CameraRig {
     azimuth: 0,
     elevation: 0.11,
   };
+  /** A regional underground section pans along its real horizontal axis. */
+  private sectionNavigation: { along: 'x' | 'y'; min: number; max: number; fixed: number } | null = null;
+
+  setSectionNavigation(along: 'x' | 'y', min: number, max: number, fixed: number): void {
+    this.sectionNavigation = { along, min, max, fixed };
+  }
+
+  clearSectionNavigation(): void {
+    this.sectionNavigation = null;
+  }
 
   readonly bounds: CameraBounds = {
     minDistance: 46,
@@ -111,11 +121,18 @@ export class CameraRig {
   pan(dxWorld: number, dyWorld: number): void {
     this.autoByView[this.view] = false;
     const a = this.goal.azimuth;
-    this.goal.target.x += dxWorld * Math.cos(a);
     if (this.view === 'forest') {
+      this.goal.target.x += dxWorld * Math.cos(a);
       this.goal.target.z -= dxWorld * Math.sin(a) + dyWorld * Math.cos(a);
       this.goal.target.x -= dyWorld * Math.sin(a);
-    } else this.goal.target.y += dyWorld;
+    } else if (this.sectionNavigation) {
+      if (this.sectionNavigation.along === 'x') this.goal.target.x += dxWorld * Math.cos(a);
+      else this.goal.target.z -= dxWorld * Math.sin(a);
+      this.goal.target.y += dyWorld;
+    } else {
+      this.goal.target.x += dxWorld * Math.cos(a);
+      this.goal.target.y += dyWorld;
+    }
     this.clampTarget();
   }
 
@@ -143,10 +160,13 @@ export class CameraRig {
       this.view === 'forest' ? 0.6 : 0,
       this.view === 'forest' ? 1.35 : this.bounds.maxElevation
     );
+    const centre = this.sectionNavigation
+      ? this.sectionNavigation.along === 'x' ? Math.PI : -Math.PI / 2
+      : 0;
     this.goal.azimuth = THREE.MathUtils.clamp(
       this.goal.azimuth + dAzimuth,
-      this.view === 'forest' ? -0.85 : -this.bounds.maxAzimuth,
-      this.view === 'forest' ? 0.85 : this.bounds.maxAzimuth
+      this.view === 'forest' ? -0.85 : centre - this.bounds.maxAzimuth,
+      this.view === 'forest' ? 0.85 : centre + this.bounds.maxAzimuth
     );
   }
 
@@ -243,6 +263,18 @@ export class CameraRig {
       const halfDepth = (this.mountFraming?.standDepth ?? 76) / 2 + 30;
       this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, this.forestCentre.x - halfWidth, this.forestCentre.x + halfWidth);
       this.goal.target.z = THREE.MathUtils.clamp(this.goal.target.z, this.forestCentre.z - halfDepth, this.forestCentre.z + halfDepth);
+      return;
+    }
+    if (this.sectionNavigation) {
+      const { along, min, max, fixed } = this.sectionNavigation;
+      if (along === 'x') {
+        this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, min, max);
+        this.goal.target.z = fixed;
+      } else {
+        this.goal.target.z = THREE.MathUtils.clamp(this.goal.target.z, min, max);
+        this.goal.target.x = fixed;
+      }
+      this.goal.target.y = THREE.MathUtils.clamp(this.goal.target.y, -70, 90);
       return;
     }
     this.goal.target.x = THREE.MathUtils.clamp(this.goal.target.x, -120, 120);
@@ -374,30 +406,30 @@ export class CameraRig {
    * instead of restored numerically, which is what keeps a window that changed
    * shape from returning to a framing that no longer fits it.
    */
-  restoreForestPose(pose: CameraPose): void {
-    this.setView('forest', true);
+  restoreForestPose(pose: CameraPose, instant = true): void {
+    this.setView('forest', instant);
     this.autoByView.forest = pose.autoFraming;
     if (pose.autoFraming) {
       this.applyFraming();
-      this.snap();
+      if (instant) this.snap();
       return;
     }
     this.goal.target.set(pose.sceneX, pose.sceneY, pose.sceneZ);
     this.goal.distance = pose.distance;
     this.goal.azimuth = pose.azimuth;
     this.goal.elevation = pose.elevation;
-    this.snap();
+    if (instant) this.snap();
   }
 
-  /** Snap the underground camera onto a stored section pose. */
-  restoreSectionPose(pose: CameraPose): void {
-    this.setView('underground', true);
+  /** Restore an underground section pose, with an optional timed descent. */
+  restoreSectionPose(pose: CameraPose, instant = true): void {
+    this.setView('underground', instant);
     this.autoByView.underground = false;
     this.goal.target.set(pose.sceneX, pose.sceneY, pose.sceneZ);
     this.goal.distance = pose.distance;
     this.goal.azimuth = pose.azimuth;
     this.goal.elevation = pose.elevation;
-    this.snap();
+    if (instant) this.snap();
   }
 
   private snap(): void {

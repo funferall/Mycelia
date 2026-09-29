@@ -75,7 +75,7 @@ const meanDistance = (nodes, p) => nodes.reduce((v, n) => v + Math.hypot(n.wx - 
 }
 {
   // A region picked from the interior has no tips; ordered, it sprouts its own.
-  const { sim, net, step } = grown(60);
+  const { m, sim, net, step } = grown(60);
   const interior = net.nodes.find(n => n.alive && !n.isTip && n.id !== net.rootId &&
     net.nodes.filter(m => m.alive && Math.hypot(m.gx - n.gx, m.gy - n.gy) <= 4).length >= MIN_GROUP_STRANDS &&
     !net.nodes.some(m => m.alive && m.isTip && Math.hypot(m.gx - n.gx, m.gy - n.gy) <= 4.5));
@@ -88,6 +88,15 @@ const meanDistance = (nodes, p) => nodes.reduce((v, n) => v + Math.hypot(n.wx - 
   assert(net.tipCount >= net.tipCeiling, `allowance spent (${net.tipCount}/${net.tipCeiling})`);
   const target = { gx: Math.min(130, interior.gx + 30), gy: Math.min(70, interior.gy + 25) };
   sim.growTo(target.gx, target.gy, split.id);
+  // With no viable parent, requesting a tip must not retire a colony tip.
+  const carbon = net.nodes.map((n) => n.carbon);
+  for (const n of net.nodes) n.carbon = 0;
+  net.resting = true;
+  const donorIds = tipsOf(net, 0).map((n) => n.id);
+  m.step(1 / 60);
+  assert(donorIds.every((id) => net.nodes[id].isTip), 'an unfunded group does not consume another group\'s tip');
+  net.resting = false;
+  net.nodes.forEach((n, i) => { n.carbon = carbon[i] ?? n.carbon; });
   step(6);
   const sprouted = tipsOf(net, split.id);
   assert(sprouted.length >= 1, 'the interior subcluster sprouted tips from its own strands');
@@ -129,7 +138,18 @@ const meanDistance = (nodes, p) => nodes.reduce((v, n) => v + Math.hypot(n.wx - 
   const { m, net, step } = grown(60, 'split-regional');
   const site = m.region.stands[m.region.foundingStand];
   const dir = site.sx < m.region.cols - 1 ? 'east' : 'west';
-  assert.equal(m.growAcross(dir).ok, true, 'the colony becomes a regional body');
+  const localTip = net.nodes.find((n) => n.alive && n.isTip);
+  const localSplit = m.active.sim.splitAt(localTip.gx, localTip.gy, 12);
+  assert(localSplit.ok && localSplit.id, localSplit.message);
+  const unselectedOrder = JSON.stringify(net.waypoints);
+  const crossing = m.growAcross(dir, localSplit.id);
+  assert(crossing.ok, crossing.message);
+  assert.match(crossing.message, /Subcluster/);
+  assert.equal(net.groups.find((g) => g.id === localSplit.id).waypoints.length, 1,
+    'the edge crossing belongs to the selected subcluster');
+  assert.equal(JSON.stringify(net.waypoints), unselectedOrder,
+    'promoting the network to a regional body leaves colony orders alone');
+  assert.equal(m.spatial.mergeGroup(localSplit.id), true);
   step(5);
   const body = m.spatialColonies.get(m.region.foundingStand);
   assert.equal(body.colony, net, 'the body is the same network');

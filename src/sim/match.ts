@@ -488,21 +488,21 @@ export class RegionalMatch {
   }
 
   /** Promote the selected stand's existing network into its own regional graph. */
-  growAcross(direction?: CrossingDirection): { ok: boolean; message: string } {
+  growAcross(direction?: CrossingDirection, group = 0): { ok: boolean; message: string } {
     const origin = this.activeStandId;
     const sim = this.active.sim;
     if (this.spatialOnly(this.active)) {
       const body = this.spatialForStand(origin);
       if (!body) return { ok: false, message: 'No connected colony reaches this stand.' };
       this.spatial = body;
-      return body.orderAcross();
+      return body.orderAcross(group);
     }
     if (!sim.hasColony || sim.outcome !== 'playing') {
       return { ok: false, message: 'A living local colony is needed to cross this stand edge.' };
     }
     const spatial = this.ensureSpatialColony(origin, direction);
     this.spatial = spatial;
-    return spatial.orderAcross();
+    return spatial.orderAcross(group);
   }
 
   private ensureSpatialColony(origin: number, direction?: CrossingDirection): CrossingMatch {

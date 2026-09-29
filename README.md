@@ -154,7 +154,10 @@ region is yours. If the rival does the same, you lose. **Survey the region**
 - **Pause and change speed.** Space pauses; the speed buttons run from
   1× to 4×.
 - **Sections.** In a regional colony, `[` and `]` move through cross-sections
-  of the soil, `X` turns the cut, and `G` follows a strand.
+  of the soil and continue into adjacent stands. Drag along a section to follow
+  the same cut through a stand boundary; `X` turns the cut, and `G` follows a
+  strand. Return to forest rises to the saved view, while Surface here rises
+  over the stand below.
 - **Watch the seasons.** Mushrooms only rise in warm, wet weather, which
   means spring and autumn. Summer is too dry and winter too cold, unless a
   storm or the ash after a fire changes the weather. Autumn also drops leaf

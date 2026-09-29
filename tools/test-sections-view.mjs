@@ -91,6 +91,94 @@ try {
   }, descended.after.edge));
   await capture('sections-open');
 
+  const acrossStand = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const origin = game.section.spec.standId;
+    const site = game.region.stands[origin];
+    const direction = site.sy < game.region.rows - 1 ? 1 : -1;
+    const family = game.section.sections.filter(spec => spec.standId === origin && spec.axis === 'east-west');
+    const edge = direction > 0 ? family.at(-1) : family[0];
+    game.openSection(origin, edge.id);
+    const initialSoil = game.sectionView.soil?.geometry;
+    const before = game.stage.rig.capturePose();
+    const next = game.stepSection(direction);
+    const after = game.stage.rig.capturePose();
+    const adjacent = game.section.spec;
+    const selector = document.querySelector('#section-stand')?.value;
+    const back = game.stepSection(-direction);
+    const returned = game.section.spec.id;
+    const reusedSoil = game.sectionView.soil?.geometry === initialSoil;
+    const frame = game.sectionView.frame?.geometry;
+    game.refreshSpatialViews();
+    const stableFrame = game.sectionView.frame?.geometry === frame;
+    game.openFirstSection();
+    return { next: next.ok, back: back.ok, origin, stand: adjacent.standId,
+      fixedDistance: Math.abs(adjacent.plane.fixed - edge.plane.fixed),
+      cameraDistance: Math.hypot(after.sceneX - before.sceneX, after.sceneZ - before.sceneZ),
+      zoomBefore: before.distance, zoomAfter: after.distance, selector, returned, edge: edge.id,
+      reusedSoil, stableFrame };
+  });
+  check('Next crosses an interior stand boundary and Previous returns to the same slab',
+    acrossStand.next && acrossStand.back && acrossStand.stand !== acrossStand.origin &&
+    acrossStand.returned === acrossStand.edge && acrossStand.selector === String(acrossStand.stand),
+    JSON.stringify(acrossStand));
+  check('crossing the boundary keeps the camera framing and moves one slab',
+    Math.abs(acrossStand.fixedDistance - 4) < 1e-5 &&
+    Math.abs(acrossStand.cameraDistance - 4) < 1e-5 &&
+    Math.abs(acrossStand.zoomAfter - acrossStand.zoomBefore) < 1e-5,
+    JSON.stringify(acrossStand));
+  check('backtracking reuses the soil and a routine refresh keeps the section frame',
+    acrossStand.reusedSoil && acrossStand.stableFrame, JSON.stringify(acrossStand));
+
+  const panned = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const rig = game.stage.rig;
+    const origin = game.section.spec.standId;
+    const site = game.region.stands[origin];
+    const direction = site.sx < game.region.cols - 1 ? 1 : -1;
+    const spec = game.section.sections.find(candidate => candidate.standId === origin && candidate.axis === 'east-west');
+    game.openSection(origin, spec.id);
+    const boundary = (site.sx + (direction > 0 ? 1 : 0)) * 136;
+    const scene = game.regionToScene(boundary, spec.plane.fixed);
+    const fixedZ = scene.z + game.sceneShift.z;
+    rig.restoreSectionPose({ ...rig.capturePose(), sceneX: scene.x + game.sceneShift.x - direction * 2,
+      sceneZ: fixedZ, azimuth: Math.PI, autoFraming: false });
+    rig.pan(-direction * 8, 0);
+    game.sectionPanActive = true;
+    let now = Math.max(performance.now(), game.lastFrame);
+    for (let i = 0; i < 30; i++) game.frame(now += 100, false);
+    const result = { origin, stand: game.section.spec.standId,
+      fixed: game.section.spec.plane.fixed, expectedFixed: spec.plane.fixed,
+      planeZ: fixedZ, cameraZ: rig.target.z,
+      selector: document.querySelector('#section-stand')?.value };
+    game.openFirstSection();
+    return result;
+  });
+  check('panning along a section enters the neighbouring stand without leaving its plane',
+    panned.stand !== panned.origin && panned.fixed === panned.expectedFixed &&
+    Math.abs(panned.cameraZ - panned.planeZ) < 1e-5 &&
+    panned.selector === String(panned.stand), JSON.stringify(panned));
+
+  const turnedPan = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const origin = game.section.spec.standId;
+    const spec = game.section.sections.find(candidate => candidate.standId === origin && candidate.axis === 'north-south');
+    game.openSection(origin, spec.id);
+    const rig = game.stage.rig;
+    const before = rig.capturePose();
+    rig.tiltBy(0, 0.04);
+    rig.pan(6, 0);
+    for (let i = 0; i < 30; i++) rig.update(0.1, 0.1);
+    const after = rig.capturePose();
+    game.openFirstSection();
+    return { before, after };
+  });
+  check('a turned section tilts and pans along its own axis without snapping the camera',
+    Math.abs(turnedPan.after.azimuth - turnedPan.before.azimuth - 0.04) < 1e-5 &&
+    Math.abs(turnedPan.after.sceneX - turnedPan.before.sceneX) < 1e-5 &&
+    Math.abs(turnedPan.after.sceneZ - turnedPan.before.sceneZ) > 5,
+    JSON.stringify(turnedPan));
+
   const moved = await page.evaluate(() => {
     const game = window.mycelia.game;
     const first = game.sectionReport();
@@ -217,9 +305,12 @@ try {
     const game = window.mycelia.game;
     const rig = game.stage.rig;
     const result = game.returnToForest();
-    game.frame(performance.now(), false);
+    const animated = rig.transitioning && rig.surfaceBlend < 0.5;
+    for (let i = 0; i < 36 && rig.transitioning; i++) game.frame(performance.now() + i * 100, false);
     return {
       result,
+      animated,
+      settled: !rig.transitioning && rig.surfaceBlend > 0.99,
       after: { distance: rig.distance, azimuth: rig.azimuth, elevation: rig.elevation },
       view: rig.view,
       treeAfter: document.querySelector('#forest-tree')?.value ?? '',
@@ -227,7 +318,7 @@ try {
   });
   check(
     'returning to the forest restores the same pose and view',
-    returned.result.ok && returned.view === 'forest' &&
+    returned.result.ok && returned.animated && returned.settled && returned.view === 'forest' &&
       Math.abs(returned.after.distance - opening.forestPose.distance) < 1e-6 &&
       Math.abs(returned.after.azimuth - opening.forestPose.azimuth) < 1e-6 &&
       Math.abs(returned.after.elevation - opening.forestPose.elevation) < 1e-6,
@@ -378,6 +469,30 @@ try {
     'turning the reveal off leaves the forest exactly as it was',
     !off.enabled && off.draws === 0 && off.sameTargets && off.sameTrees && off.pressed === 'false'
   );
+
+  const roundTrip = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    const rig = game.stage.rig;
+    let now = Math.max(performance.now(), game.lastFrame);
+    const opened = game.openFirstSection();
+    const descending = rig.transitioning && rig.surfaceBlend > 0.9;
+    for (let i = 0; i < 36 && rig.transitioning; i++) game.frame(now += 100, false);
+    const below = !rig.transitioning && rig.surfaceBlend < 0.01;
+    const stand = game.section.spec.standId;
+    const risen = game.surfaceHere();
+    const ascending = rig.transitioning && rig.surfaceBlend < 0.1;
+    for (let i = 0; i < 36 && rig.transitioning; i++) game.frame(now += 100, false);
+    return { opened: opened.ok, descending, below, risen: risen.ok, ascending,
+      above: !rig.transitioning && rig.surfaceBlend > 0.99 && rig.view === 'forest',
+      stand, selected: game.selectedStandId,
+      sectionVisible: game.sectionView.group.visible };
+  });
+  check('opening a section descends through the forest instead of snapping',
+    roundTrip.opened && roundTrip.descending && roundTrip.below, JSON.stringify(roundTrip));
+  check('Surface here rises over the section’s stand and hides the cutaway',
+    roundTrip.risen && roundTrip.ascending && roundTrip.above &&
+    roundTrip.selected === roundTrip.stand && !roundTrip.sectionVisible,
+    JSON.stringify(roundTrip));
 
   assert.deepEqual(problems, [], 'no browser errors or shader compiler errors');
   console.log(`PASS: ${count} checks, no browser errors, ${((performance.now() - started) / 1000).toFixed(1)}s.`);
