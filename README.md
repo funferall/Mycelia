@@ -295,14 +295,18 @@ seasonal foliage; procedural soil transects with warped horizons and a water tab
 hyphal growth that reads the soil and pays for every centimetre; mycorrhizal
 bonding with a real trade obligation a tree can sever; carbon, water, nitrogen
 and genetic-potential economies with spatial transport through the network;
-cords; a saprotroph rival; seasons with a drought that moves the water table;
+cords; a saprotroph rival; six learnable adaptations and three ecological powers;
+seasons with a drought that moves the water table and a wind-driven wildfire
+that burns crowns and shallow mycelium, then leaves ash, pioneer wildflowers
+and slowly returning grass; summoning a hurricane into the fire throws embers
+across the region before heavy rain quenches the flames;
 tree health, growth and death; fruiting and spore banking; the printed
 interface; and the depth rail. The surface view is functional but still needs
 weather, accessibility and performance work; `PROJECT_STATUS.md` records what is
 verified and what is not.
 
-Not yet built: the evolution tree, the other rival species, parasites and
-disease, wildfire and logging, biomes beyond the temperate stand, save/load, and
+Not yet built: the other rival species, parasites and
+disease, logging, biomes beyond the temperate stand, save/load, and
 multiplayer. The simulation has no idea any of them are missing — it is a
 fixed-timestep world that more systems can be added to.
 

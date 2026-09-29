@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GRID } from '../sim/content';
+import { FIRE } from '../sim/wildfire';
 import type { World } from '../sim/world';
 import { FLOOR_DROUGHT, FLOOR_FIRE } from './forest-floor';
 
@@ -45,7 +46,8 @@ const FRAGMENT = /* glsl */ `
   uniform vec2 uOrigin;
   uniform sampler2D uColumns;
   uniform vec2 fireDir; uniform float fireFront; uniform float fireBand;
-  uniform float fireScorch; uniform float fireRegrowth;
+  uniform vec2 fireSpotDir; uniform float fireSpotFront; uniform float fireSpotScorch;
+  uniform float fireScorch; uniform float fireRegrowth; uniform float fireActive;
   uniform float droughtSeverity;
   varying float vCol;
   varying float vDepth;
@@ -93,17 +95,32 @@ const FRAGMENT = /* glsl */ `
       }
     }
 
+    // Distant orange breathing along the soil ceiling; the passing front is
+    // hotter and reaches only the shallow strands the simulation can damage.
+    if (fireActive > 0.001 && d >= 0.0) {
+      // Illumination reaches wet soil too; the damaging heat below remains
+      // masked by moisture and the stream bank in the separate front term.
+      float breathing = 0.68 + 0.32 * sin(uTime * 3.1 + gx * 0.05);
+      float ceiling = (1.0 - smoothstep(0.0, 24.0, d)) * breathing;
+      over(vec3(1.0, 0.27, 0.035), fireActive * ceiling * 0.48);
+    }
     // Fire: heat under the passing front; ash on the surface behind it.
     if (fireScorch > 0.001 && d >= 0.0) {
       vec2 at = vec2(uOrigin.x + gx + 0.5, uOrigin.y);
       float behind = fireFront - dot(at, fireDir);
-      float heat = smoothstep(-2.0, 1.0, behind) * (1.0 - smoothstep(fireBand * 0.3, fireBand * 1.8, behind)) * fireScorch;
-      float reach = 20.0 * heat;
-      float flicker = 0.7 + 0.3 * uNoise(vec2(gx * 0.5, uTime * 3.0));
-      float glow = heat * (1.0 - smoothstep(reach * 0.35, reach + 1.0, d)) * flicker;
-      over(vec3(1.0, 0.42, 0.08), glow * 0.9);
-      over(vec3(1.0, 0.75, 0.3), heat * (1.0 - smoothstep(0.0, 3.0, d)) * 0.6 * flicker);
-      float ash = smoothstep(0.0, 2.0, behind) * (1.0 - smoothstep(2.0, 4.0, d)) * fireScorch;
+      float spotBehind = fireSpotFront - dot(at, fireSpotDir);
+      float dry = 1.0 - smoothstep(${FIRE.dryBelow.toFixed(2)}, ${FIRE.wetRefuge.toFixed(2)}, column.b);
+      float refuge = 1.0 - smoothstep(0.25, 0.4, bank);
+      float ordinaryHeat = smoothstep(-2.0, 1.0, behind) * (1.0 - smoothstep(fireBand * 0.3, fireBand * 1.8, behind)) * dry * refuge;
+      float emberHeat = smoothstep(-2.0, 1.0, spotBehind) * (1.0 - smoothstep(fireBand * 0.3, fireBand * 1.8, spotBehind)) * fireSpotScorch;
+      float heat = max(ordinaryHeat, emberHeat) * fireScorch;
+      float pulse = 0.78 + 0.22 * sin(uTime * 3.2 + gx * 0.11);
+      float flicker = (0.68 + 0.32 * uNoise(vec2(gx * 0.5, uTime * 3.0))) * pulse;
+      float glow = heat * (1.0 - smoothstep(${FIRE.lethalCm.toFixed(1)}, ${FIRE.singeCm.toFixed(1)}, d)) * flicker;
+      over(vec3(1.0, 0.36, 0.045), glow * 0.87);
+      over(vec3(1.0, 0.73, 0.25), heat * (1.0 - smoothstep(0.0, ${FIRE.lethalCm.toFixed(1)}, d)) * 0.62 * flicker);
+      float ash = max(smoothstep(0.0, 2.0, behind), smoothstep(0.0, 2.0, spotBehind) * fireSpotScorch)
+        * (1.0 - smoothstep(2.0, 4.0, d)) * fireScorch;
       over(mix(vec3(0.06, 0.055, 0.05), vec3(0.2, 0.19, 0.17), uNoise(vec2(gx * 1.7, d))), ash * (0.85 - 0.4 * fireRegrowth));
     }
 
@@ -147,7 +164,7 @@ export class UndergroundWeather {
   private readonly uniforms: Record<string, THREE.IUniform>;
 
   /** `origin`: regional x of column 0 and regional y of the transect line. */
-  constructor(world: World, origin: { x: number; y: number }) {
+  constructor(private readonly world: World, origin: { x: number; y: number }) {
     this.data = new Uint8Array(GRID.cols * 4);
     for (let gx = 0; gx < GRID.cols; gx++) {
       this.data[gx * 4] = Math.round(255 * (world.cells[8 * GRID.cols + gx]?.streamNear ?? 0));
@@ -160,7 +177,8 @@ export class UndergroundWeather {
       uOrigin: { value: new THREE.Vector2(origin.x, origin.y) },
       uColumns: { value: this.columns },
       fireDir: FLOOR_FIRE.dir, fireFront: FLOOR_FIRE.front, fireBand: FLOOR_FIRE.band,
-      fireScorch: FLOOR_FIRE.scorch, fireRegrowth: FLOOR_FIRE.regrowth,
+      fireSpotDir: FLOOR_FIRE.spotDir, fireSpotFront: FLOOR_FIRE.spotFront, fireSpotScorch: FLOOR_FIRE.spotScorch,
+      fireScorch: FLOOR_FIRE.scorch, fireRegrowth: FLOOR_FIRE.regrowth, fireActive: FLOOR_FIRE.active,
       droughtSeverity: FLOOR_DROUGHT.severity,
     };
     const geometry = new THREE.PlaneGeometry(GRID.cols, GRID.rows + ABOVE);
@@ -187,10 +205,13 @@ export class UndergroundWeather {
     for (let gx = 0; gx < GRID.cols; gx++) {
       const g = Math.round(255 * Math.min(1, state.floodDepth(gx) / 30));
       if (this.data[gx * 4 + 1] !== g) { this.data[gx * 4 + 1] = g; changed = true; }
+      const wet = Math.round(255 * Math.min(1, this.world.cells[6 * GRID.cols + gx]?.water ?? 0));
+      if (this.data[gx * 4 + 2] !== wet) { this.data[gx * 4 + 2] = wet; changed = true; }
     }
     if (changed) this.columns.needsUpdate = true;
     this.mesh.visible = state.rain > 0.001 || state.flood > 0.001
-      || (u.fireScorch!.value as number) > 0.001 || (u.droughtSeverity!.value as number) > 0.001;
+      || (u.fireScorch!.value as number) > 0.001 || (u.fireActive!.value as number) > 0.001
+      || (u.droughtSeverity!.value as number) > 0.001;
   }
 
   report(): { visible: boolean; floodedColumns: number } {

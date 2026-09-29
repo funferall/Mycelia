@@ -14,6 +14,7 @@ const { FIRE } = await load('wildfire');
 const { GRID } = await load('content');
 const { markConnectivity, updateTotals } = await load('network');
 const { adaptationState } = await load('evolution');
+const { elevationAtDepthCm, standFrameOf } = await load('spatial');
 
 /** A late-game colony with the capstone, ecology frozen so every effect is the fire's. */
 function fixture(seed = 'ember-test') {
@@ -33,6 +34,92 @@ function fixture(seed = 'ember-test') {
 const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
 
 {
+  // Wind supplies the front's travel speed. Sampling on absolute beats makes
+  // a long caller step and many gameplay ticks agree.
+  const run = (windDirection, step) => {
+    const { m, id } = fixture('ember-wind-speed');
+    m.region.windAt = () => ({ direction: windDirection, strength: 1 });
+    m.kindleFire(id, 0);
+    m.step(FIRE.warning);
+    for (let t = 0; t < 20 - 1e-8; t += step) m.step(Math.min(step, 20 - t));
+    return { front: m.fire.frontAt(m.time), burned: m.fire.burnedTrees.map(t => `${t.stand}:${t.tree}`) };
+  };
+  const tail = run(0, 20);
+  const tailFine = run(0, 0.25);
+  const head = run(Math.PI, 20);
+  assert(tail.front > head.front + 20, `tailwind advances farther (${tail.front.toFixed(1)} > ${head.front.toFixed(1)})`);
+  assert(Math.abs(tail.front - tailFine.front) < 1e-8, 'wind integration is stable across step sizes');
+  assert.deepEqual(tail.burned, tailFine.burned, 'tree outcomes do not depend on caller step size');
+  console.log(`PASS wind-driven fire growth: tailwind front ${tail.front.toFixed(1)}, headwind ${head.front.toFixed(1)}, identical coarse/fine outcomes`);
+}
+
+{
+  // The player can summon a hurricane into a running fire. Its brief ember
+  // sweep reaches every stand, then sustained rain quenches the flames.
+  const run = () => {
+    const { m, id, net } = fixture('ember-hurricane');
+    net.evolution.learned.push('storm-crown');
+    net.nodes[0].bondedTree = 0; net.nodes[1].bondedTree = 1;
+    for (const stand of m.stands) {
+      for (const c of stand.sim.world.cells) c.water = 0.9;
+      for (const tree of stand.sim.world.trees) if (!tree.dead) tree.hydration = 1;
+    }
+    m.stepWindfalls = () => {}; m.flood.step = () => {};
+    m.kindleFire(id, 0);
+    m.step(FIRE.warning + 1);
+    assert.equal(m.fire.phase, 'burning');
+    assert.equal(m.stormStatus(id), 'Ready to summon');
+    assert.equal(m.summonStorm(id, Math.PI / 2), 'Storm announced');
+    m.step(60);
+    assert.equal(m.storm.phase, 'active');
+    m.step(1);
+    const tree = m.stands.flatMap(s => s.sim.world.trees).find(t => !t.dead);
+    assert.equal(m.fire.treeOdds(m.stands.find(s => s.sim.world.trees.includes(tree)).sim.world, tree, NaN, true).burn, 0.5);
+    const quenchAt = m.fire.state.endsAt;
+    assert.equal(quenchAt, m.storm.activeAt + FIRE.hurricaneQuench, 'heavy rain sets a short fire window');
+    m.step(FIRE.hurricaneSweep - 1);
+    assert.equal(m.fire.phase, 'burning', 'fire burns during the initial ember burst');
+    m.step(quenchAt - m.time + 1);
+    return { trees: m.fire.burnedTrees.map(t => `${t.stand}:${t.tree}`), scars: m.fire.scarredStands.size,
+      wet: m.fire.livingTreesBurned, phase: m.fire.phase, storm: m.storm.phase };
+  };
+  const a = run();
+  const b = run();
+  assert.equal(a.scars, 9, 'windborne embers reach all nine stands');
+  assert(a.wet > 15 && a.wet < 60, `watered trees face a real 50% lottery (${a.wet})`);
+  assert.equal(a.phase, 'aftermath');
+  assert.equal(a.storm, 'active', 'heavy rain quenches the fire while hurricane winds still blow');
+  assert.deepEqual(a, b, 'hurricane fire replays deterministically');
+  console.log(`PASS hurricane in a fire: ${a.wet} watered trees burned, all ${a.scars} stands reached, then rain quenched flames before the storm ended`);
+}
+
+{
+  // When the storm arrives early, a single long match step must still split
+  // at the rain quench instead of burning through to the old 70-second end.
+  const run = (step) => {
+    const { m, id, net } = fixture('ember-early-rain');
+    net.evolution.learned.push('storm-crown');
+    net.nodes[0].bondedTree = 0; net.nodes[1].bondedTree = 1;
+    m.stepWindfalls = () => {}; m.flood.step = () => {};
+    m.kindleFire(id, 0);
+    assert.equal(m.summonStorm(id, Math.PI / 2), 'Storm announced');
+    const until = 60 + FIRE.hurricaneQuench + 1;
+    for (let t = 0; t < until - 1e-8; t += step) m.step(Math.min(step, until - t));
+    return { phase: m.fire.phase, burnEnd: m.fire.state.endsAt,
+      trees: m.fire.burnedTrees.map(t => `${t.stand}:${t.tree}`).sort(),
+      latestTorch: Math.max(...m.fire.burnedTrees.map(t => t.at)), scars: m.fire.scarredStands.size };
+  };
+  const coarse = run(79), fine = run(0.25);
+  assert.equal(coarse.burnEnd, 60 + FIRE.hurricaneQuench);
+  assert.equal(coarse.phase, 'aftermath');
+  assert.equal(coarse.scars, 9);
+  assert.deepEqual({ ...coarse, latestTorch: 0 }, { ...fine, latestTorch: 0 },
+    'large and small caller steps quench at the same time with the same tree outcomes');
+  assert(coarse.latestTorch <= coarse.burnEnd && fine.latestTorch <= fine.burnEnd, 'no torching after the rain quench');
+  console.log('PASS early hurricane: coarse and fine steps both quench at 18 seconds with the same burn footprint');
+}
+
+{
   const { m, id, net } = fixture();
   net.evolution.learned = ['living-sheath', 'cord-memory'];
   assert.notEqual(adaptationState(net, 'ember-crown'), 'Learned');
@@ -46,7 +133,7 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   m.storm.phase = 'idle';
   assert.equal(m.kindleFire(id, 0), 'Fire kindled');
   assert(Math.abs(before - net.carbon - FIRE.cost.carbon) < 1e-6, 'the kindler pays');
-  assert.match(m.stormStatus(id), /wildfire/, 'no storm while a fire runs');
+  assert.doesNotMatch(m.stormStatus(id), /wildfire/, 'a hurricane may be summoned during a fire');
   m.step(FIRE.warning - 0.01);
   assert.equal(m.fire.phase, 'warning');
   assert.equal(m.fire.burnedTrees.length, 0, 'nothing burns in the warning');
@@ -59,7 +146,7 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   assert.match(m.fireStatus(id), /recovering/);
   m.step(FIRE.cooldown);
   assert.equal(m.fireStatus(id), 'Ready to kindle');
-  console.log('PASS capstone gating, atomic cost, storm exclusion, warning/burn/aftermath/cooldown boundaries');
+  console.log('PASS capstone gating, atomic cost, storm overlap, warning/burn/aftermath/cooldown boundaries');
 }
 {
   // The front runs the chosen way: with fire toward +x, western stands burn first.
@@ -82,7 +169,7 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   for (let gy = 0; gy < 12; gy++) cell(from.sim.world, wet.gx, gy).water = 0.9;
   m.kindleFire(id, 0);
   m.step(FIRE.warning + FIRE.burn + 1);
-  assert(dry.dead && dry.burned, 'a dry tree burns');
+  assert(m.fire.livingTreesBurned > 0, 'dry crowns in the region burn');
   assert(!wet.dead && !wet.burned, 'a tree on wet ground is spared');
   console.log(`PASS dry crowns burn, wet refuges are spared (${m.fire.livingTreesBurned} living trees burned region-wide)`);
 }
@@ -93,15 +180,28 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   const root0 = net.nodes[net.rootId];
   for (let i = 0; i < 5; i++) {
     const id2 = net.nodes.length;
-    net.nodes.push({ ...root0, id: id2, parent: root0.id, children: [], gx: root0.gx + 4 + i * 3, wx: root0.gx + 4 + i * 3, bondedTree: -1, bondedRootTip: -1 });
+    net.nodes.push({ ...root0, spatial: root0.spatial ? { ...root0.spatial } : undefined,
+      id: id2, parent: root0.id, children: [], gx: root0.gx + 4 + i * 3, wx: root0.gx + 4 + i * 3, bondedTree: -1, bondedRootTip: -1 });
     root0.children.push(id2);
   }
   markConnectivity(net);
   const pool = net.nodes.slice(-5);
   assert(pool.length >= 5, 'the founder has enough strands to test');
   const [shallow, singe, deep, cord, soaked] = pool;
-  const place = (n, gy, wet = 0) => { n.gy = gy; n.isTip = true; n.reinforced = false; n.thickness = 0.2; n.health = 1; n.carbon = 10; cell(from.sim.world, n.gx, gy).water = wet; };
+  const frame = standFrameOf(m.region, id);
+  const place = (n, gy, wet = 0) => {
+    n.gy = gy; n.isTip = true; n.reinforced = false; n.thickness = 0.2; n.health = 1; n.carbon = 10;
+    if (n.spatial) {
+      n.spatial.x = frame.originX + n.gx;
+      n.spatial.y = frame.originY + GRID.cols / 2;
+      n.spatial.z = elevationAtDepthCm(m.region, n.spatial.x, n.spatial.y, gy * GRID.cmPerRow);
+    }
+    cell(from.sim.world, n.gx, gy).water = wet;
+  };
   place(shallow, 2); place(singe, 10); place(deep, 40); place(cord, 2); place(soaked, 2, 0.9);
+  // A section can project a genuinely deep XYZ node into a shallow-looking row.
+  // Fire must judge its absolute depth, not that presentation row.
+  if (deep.spatial) deep.gy = 2;
   cord.reinforced = true;
   const root = net.nodes[net.rootId];
   net.fruit.active = true; net.fruit.nodeId = deep.id; net.fruit.store = 50; net.fruit.progress = 0.5;
@@ -123,11 +223,35 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   console.log(`PASS underground: shallow strands burn, 10 cm singes, deep/cord/wet/root survive, body burns, ash (${JSON.stringify(m.fire.losses.player)})`);
 }
 {
+  // Heat continues through the visible band, so a newly grown surface tip
+  // cannot safely follow the leading edge while flames still occupy the soil.
+  const { m, id, net, from } = fixture('ember-hot-band');
+  m.kindleFire(id, 0);
+  m.step(FIRE.warning + FIRE.burn * 0.5);
+  const root = net.nodes[net.rootId];
+  const x = m.fire.frontAt(m.time) - FIRE.band * 0.5;
+  const y = root.spatial.y;
+  const gx = root.gx + 5;
+  const tip = { ...root, spatial: { ...root.spatial, x, y, z: elevationAtDepthCm(m.region, x, y, 2) },
+    id: net.nodes.length, parent: root.id, children: [], gx, gy: 2, wx: gx, wy: 2.5,
+    alive: true, isTip: true, reinforced: false, thickness: 0.1, health: 1, carbon: 10, water: 0, nitrogen: 0 };
+  net.nodes.push(tip);
+  root.children.push(tip.id);
+  cell(from.sim.world, gx, 2).water = 0;
+  markConnectivity(net);
+  m.step(0.5);
+  assert.equal(tip.alive, false, 'a new shallow tip in the hot band burns after the leading edge passed');
+  console.log('PASS lingering front heat burns a newly grown shallow tip inside the band');
+}
+{
   // The rival burns by the same rules; the aftermath is a fruiting flush on burned ground.
   const { m, id, from } = fixture();
   from.rivalPresent = true;
   const rival = from.sim.rival;
-  for (const n of rival.nodes) { n.gy = 2; n.isTip = true; n.thickness = 0.1; n.reinforced = false; }
+  for (const n of rival.nodes) {
+    n.gy = 2; n.isTip = true; n.thickness = 0.1; n.reinforced = false;
+    if (n.spatial) n.spatial.z = elevationAtDepthCm(m.region, n.spatial.x, n.spatial.y, 2 * GRID.cmPerRow);
+  }
   const alive = rival.nodes.filter(n => n.alive).length;
   m.kindleFire(id, 0);
   m.step(FIRE.warning + FIRE.burn + 0.5);
@@ -150,6 +274,27 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   };
   assert.equal(run(), run());
   console.log('PASS deterministic replay');
+}
+{
+  const run = (extraTip) => {
+    const { m, id, net } = fixture('ember-tree-rolls');
+    for (const s of m.stands) for (const t of s.sim.world.trees) if (!t.dead) t.hydration = 0.3;
+    if (extraTip) {
+      const root = net.nodes[net.rootId];
+      const gx = root.gx + 3;
+      net.nodes.push({ ...root, spatial: root.spatial ? { ...root.spatial, x: root.spatial.x + 3,
+        z: elevationAtDepthCm(m.region, root.spatial.x + 3, root.spatial.y, 2) } : undefined,
+      id: net.nodes.length, parent: root.id, children: [], gx, gy: 2, wx: gx, wy: 2.5,
+      isTip: true, reinforced: false, thickness: 0.1 });
+      root.children.push(net.nodes.length - 1);
+      markConnectivity(net);
+    }
+    m.kindleFire(id, 0);
+    m.step(FIRE.warning + FIRE.burn + 1);
+    return m.fire.burnedTrees.map(t => `${t.stand}:${t.tree}`);
+  };
+  assert.deepEqual(run(true), run(false), 'one extra shallow strand cannot reroll a tree elsewhere');
+  console.log('PASS tree ignition rolls do not change when another strand enters the fire');
 }
 
 // ---------------------------------------------------------------------------
@@ -202,13 +347,17 @@ const { FLAMMABILITY } = await load('wildfire');
   // Bonds survive a scorch and end with a torch.
   const { m, id, from } = fixture('ember-bonds');
   const trees = from.sim.world.trees.filter(t => !t.dead);
-  for (const t of trees) { t.rootTips[0].bondedTo = 0; t.rootTips[0].bondedColonyId = null; t.hydration = 0.55; }
+  for (const [i, t] of trees.entries()) {
+    t.rootTips[0].bondedTo = 0; t.rootTips[0].bondedColonyId = null;
+    t.hydration = i === 0 ? 1 : 0;
+  }
   m.kindleFire(id, 0);
   m.step(FIRE.warning + FIRE.burn + 1);
   for (const t of trees) {
     if (t.burned) assert.equal(t.rootTips[0].bondedTo, null, 'a torched tree gives up its bond');
     else assert.equal(t.rootTips[0].bondedTo, 0, 'a scorched or spared tree keeps its bond');
   }
+  assert(trees.some(t => t.burned) && trees.some(t => !t.burned), 'the bond fixture includes torched and surviving trees');
   console.log(`PASS bonds: ${trees.filter(t => t.burned).length} torched trees let go, ${trees.filter(t => !t.burned).length} survivors keep theirs`);
 }
 {

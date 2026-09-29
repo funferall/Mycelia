@@ -232,7 +232,7 @@ export class Game {
   private readonly floodView: FloodView;
   /** Render-only: the silt stain left after a flood, fading over a minute. */
   private floodSilt = 0;
-  /** Render-only: how long burned ground stays charred after the fire's own record clears. */
+  /** Render-only: char and green return remain visible after the fire clears. */
   private scorchFade = 0;
   /** Windfalls already struck by presentation lightning. */
   private windfallsSeen = 0;
@@ -2376,29 +2376,53 @@ export class Game {
     const onGround = phase === 'burning' || phase === 'aftermath';
     const direction = fire.state.direction;
     FLOOR_FIRE.dir.value.set(Math.cos(direction), Math.sin(direction));
+    const hurricane = fire.hurricaneFront;
+    FLOOR_FIRE.spotDir.value.set(Math.cos(hurricane?.direction ?? direction), Math.sin(hurricane?.direction ?? direction));
+    FLOOR_FIRE.spotFront.value = hurricane?.front ?? -1e6;
+    FLOOR_FIRE.spotScorch.value = hurricane ? 1 : 0;
     FLOOR_FIRE.band.value = FIRE.band;
     FLOOR_FIRE.time.value += this.ambientMotion ? dt : 0;
+    const recoveryAge = this.match.time - fire.state.endsAt;
+    const recovering = fire.state.sequence > 0 && recoveryAge >= 0 && recoveryAge < 480;
     if (onGround) {
       FLOOR_FIRE.front.value = fire.frontAt(this.match.time);
       this.scorchFade = 1;
+    } else if (recovering) {
+      FLOOR_FIRE.front.value = fire.state.end;
+      this.scorchFade = 1 - THREE.MathUtils.smoothstep(recoveryAge, 80, 480);
     } else if (phase === 'idle') {
-      // Presentation only: the char fades out over twenty seconds.
-      this.scorchFade = Math.max(0, this.scorchFade - dt / 20);
+      this.scorchFade = 0;
     } else {
       this.scorchFade = 0;
     }
     FLOOR_FIRE.scorch.value = this.scorchFade;
-    FLOOR_FIRE.regrowth.value = phase === 'aftermath'
-      ? Math.min(1, (this.match.time - fire.state.endsAt) / FIRE.aftermath)
-      : phase === 'idle' ? 1 : 0;
+    FLOOR_FIRE.active.value = phase === 'burning' ? 1 : phase === 'warning' ? fire.intensity * 0.3 : 0;
+    FLOOR_FIRE.regrowth.value = recovering ? THREE.MathUtils.smoothstep(recoveryAge, 20, 420) : 0;
+    const recoveryStage = recovering ? recoveryAge < 60 ? 2 : recoveryAge < 110 ? 3 : recoveryAge < 240 ? 4 : 5 : 0;
+    this.dressing.setFireRecovery(recoveryStage, fire.scarredStands, fire.state.sequence);
     // The scenery's instances sit in the dressing group; find its regional origin.
     const origin = this.sceneToRegion(this.dressing.group.position.x, this.dressing.group.position.z);
     DRESSING_FIRE_MAP.value.set(origin.x, origin.y);
+    const torches = fire.burnedTrees.filter(record => {
+      const age = this.match.time - record.at;
+      return age >= 0 && age < 12;
+    }).slice(-24).map(record => {
+      const surface = this.surfaces[record.stand];
+      const tree = this.match.stands[record.stand]?.sim.world.trees.find(candidate => candidate.id === record.tree);
+      const point = surface?.surfacePosition(record.tree);
+      if (!tree || !point || !surface) return null;
+      surface.group.updateWorldMatrix(true, false);
+      surface.group.localToWorld(point);
+      return { x: point.x, y: point.y, z: point.z, height: tree.height * (0.7 + tree.maturity * 0.5), age: this.match.time - record.at };
+    }).filter((torch): torch is NonNullable<typeof torch> => torch !== null);
     this.fireView.update(dt, {
       phase, direction, front: fire.frontAt(this.match.time), start: fire.state.start,
-      band: FIRE.band, intensity: fire.intensity,
+      band: FIRE.band, intensity: fire.intensity, spot: hurricane, torches,
     }, !this.ambientMotion, blend);
-    this.stage.fireGlow = this.fireView.glow;
+    // A slow, irregular orange breath reaches the underground view too.
+    const pulse = this.ambientMotion ? 0.78 + 0.15 * Math.sin(FLOOR_FIRE.time.value * 3.1)
+      + 0.07 * Math.sin(FLOOR_FIRE.time.value * 5.3 + 1.7) : 0.85;
+    this.stage.fireGlow = this.fireView.glow * pulse;
   }
 
   /**

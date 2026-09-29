@@ -1,18 +1,19 @@
 import { GRID } from './content';
-import { STAND_SIZE, type Region } from './region';
+import { STAND_SIZE, type Region, type WindState } from './region';
 import { burnNode, markConnectivity, payColonyFund, updateTotals, type Network } from './network';
 import { ASH_FRUIT_SPEED, charRemains, treeHydration, type NetworkWorld, type Tree, type World } from './world';
 import { hashString, mulberry32 } from './rng';
-import { standFrameOf, treeSpatialPosition } from './spatial';
+import { depthCmAt, standFrameOf, treeSpatialPosition } from './spatial';
 import type { CrossingMatch } from './crossing';
 import type { StandState } from './match';
 
 /**
  * Wildfire: the second region-scale ecological power (`TECH-06`).
  *
- * One straight fire front sweeps the region in the direction its kindler
- * chose. Everything is judged exactly once, at the moment the front reaches it,
- * from the fire's own seed: where anyone is looking never changes what burns.
+ * A wind-driven fire front sweeps the region in the direction its kindler
+ * chose. A hurricane adds a fast downwind ember sweep, then rain quenches both
+ * fronts. Exposures use the fire's own seed: where anyone is looking never
+ * changes what burns.
  *
  * - Water is fire armour (wildfire v2, W1). Each tree meets the front with a
  *   fire intensity (dry ground, fuel from dead wood and litter, and weaker
@@ -22,7 +23,8 @@ import type { StandState } from './match';
  *   paper bark catches, oak's thick bark resists. It is torched (dies as a
  *   charred snag, or falls as a charred log), scorched (a ground fire: it
  *   loses health but keeps its bonds), or spared. Stream banks and soaked
- *   soil remain refuges.
+ *   soil remain refuges in ordinary wind. Hurricane embers can burn even
+ *   well-watered crowns.
  * - Underground, heat only reaches the top of the soil. Shallow tips and thin
  *   strands die; thick or reinforced cords and every colony's root are singed
  *   and survive; anything deeper is untouched.
@@ -43,7 +45,7 @@ export const FIRE = {
   lethalCm: 6,
   /** Strands shallower than this are singed: health and half their carbon. */
   singeCm: 16,
-  /** Soil at least this wet does not carry the fire (stream banks, soaked ground). */
+  /** Ordinary fire stops at this wetness; hurricane embers can cross it. */
   wetRefuge: 0.62,
   /** Soil this dry or drier gives the fire everything; between the two, odds scale. */
   dryBelow: 0.35,
@@ -55,6 +57,10 @@ export const FIRE = {
   breakReach: 20,
   /** A torched tree's chance never reaches certainty. */
   maxBurn: 0.97,
+  /** Windborne embers run ahead of the rain; sustained rain then quenches flames. */
+  hurricaneSweep: 12,
+  hurricaneQuench: 18,
+  hurricaneWetBurn: 0.5,
 } as const;
 
 /**
@@ -71,7 +77,7 @@ export interface TreeFireOdds {
   scorch: number;
   intensity: number;
   hydration: number;
-  /** True on stream banks and soaked soil: nothing happens there. */
+  /** True on stream banks and soaked soil; only ordinary fire spares them. */
   refuge: boolean;
 }
 
@@ -96,6 +102,8 @@ export interface FireState {
   /** Front position, as a projection on the direction, at ignition and at the end. */
   start: number;
   end: number;
+  /** Actual leading edge, advanced by the wind rather than elapsed time alone. */
+  front: number;
 }
 
 export interface FireLosses {
@@ -112,7 +120,10 @@ export interface FireHost {
   readonly region: Region;
   readonly stands: StandState[];
   readonly spatialColonies: Map<number, CrossingMatch>;
+  readonly storm: { phase: string; direction: number; activeAt: number; endsAt: number };
 }
+
+interface EmberSweep { direction: number; start: number; end: number; front: number; startedAt: number }
 
 /** A living network and the world its nodes live in; `local` when it is a stand's own transect graph. */
 export interface RegionNetwork {
@@ -154,7 +165,7 @@ export function regionNetworks(host: FireHost): RegionNetwork[] {
 export class Wildfire {
   readonly state: FireState = {
     phase: 'idle', direction: 0, initiator: null, sequence: 0,
-    announcedAt: 0, igniteAt: 0, endsAt: 0, clearAt: 0, readyAt: 0, start: 0, end: 0,
+    announcedAt: 0, igniteAt: 0, endsAt: 0, clearAt: 0, readyAt: 0, start: 0, end: 0, front: 0,
   };
   readonly burnedTrees: BurnedTree[] = [];
   /** Living trees the front scorched but did not kill, and those it left untouched. */
@@ -162,7 +173,16 @@ export class Wildfire {
   treesSpared = 0;
   /** Recently crossed living trees, for the firebreak: projection and hydration. */
   private recentTrees: Array<{ p: number; hydration: number }> = [];
+  /** A strand meets this fire's heat once, including one grown into its hot band. */
+  private judgedNodes = new WeakSet<Network['nodes'][number]>();
+  private hurricaneJudgedNodes = new WeakSet<Network['nodes'][number]>();
+  private judgedTrees = new WeakSet<Tree>();
+  private hurricaneJudgedTrees = new WeakSet<Tree>();
+  private ashedCells = new Set<string>();
+  private emberSweep: EmberSweep | null = null;
   readonly burnedStands = new Set<number>();
+  /** Burn footprint retained after the ash flush, for visible recovery. */
+  readonly scarredStands = new Set<number>();
   readonly losses: Record<'player' | 'rival', FireLosses> = {
     player: { strands: 0, singed: 0, bodies: 0 },
     rival: { strands: 0, singed: 0, bodies: 0 },
@@ -196,19 +216,22 @@ export class Wildfire {
     return this.state.phase === 'idle' ? Math.max(0, this.state.readyAt - this.host.time) : 0;
   }
 
-  /** Where the leading edge is at time t, as a projection on the direction. */
+  /** Current leading edge; t before ignition still lies outside the region. */
   frontAt(t: number): number {
     const s = this.state;
-    const k = Math.max(0, Math.min(1, (t - s.igniteAt) / FIRE.burn));
-    return s.start + (s.end - s.start) * k;
+    return t < s.igniteAt ? s.start : s.front;
+  }
+
+  get hurricaneFront(): { direction: number; front: number; start: number } | null {
+    return this.emberSweep;
   }
 
   /** 0..1: smoke on the horizon through the warning, full while burning, ash after. */
   get intensity(): number {
     const s = this.state;
     if (s.phase === 'warning') return 0.1 + 0.3 * (1 - this.remaining / FIRE.warning);
-    if (s.phase === 'burning') return 1;
-    if (s.phase === 'aftermath') return Math.max(0, 1 - (this.host.time - s.endsAt) / 20);
+    if (s.phase === 'burning') return this.emberSweep ? 1.3 : 1;
+    if (s.phase === 'aftermath') return Math.max(0, 1 - (this.host.time - s.endsAt) / 60);
     return 0;
   }
 
@@ -216,13 +239,23 @@ export class Wildfire {
     return x * Math.cos(direction) + y * Math.sin(direction);
   }
 
-  /** Stands in burn order for a given direction: seconds after ignition the front reaches each centre. */
+  /** Approximate arrival at stand centres under the wind currently forecast. */
   schedule(direction: number): Array<{ stand: number; at: number }> {
     const [start, end] = this.extent(direction);
-    return this.host.region.stands.map((site) => ({
-      stand: site.id,
-      at: ((this.project(site.centreX, site.centreY, direction) - start) / (end - start)) * FIRE.burn,
-    }));
+    const ignition = this.phase === 'idle' ? this.host.time + FIRE.warning : this.state.igniteAt;
+    const centres = this.host.region.stands.map(site => ({ stand: site.id, p: this.project(site.centreX, site.centreY, direction), at: NaN }));
+    let front = start;
+    for (let second = 0; second < FIRE.burn * 3 && front < end; second++) {
+      const time = ignition + second;
+      const storm = this.host.storm;
+      const wind = time >= storm.activeAt && time < storm.endsAt && (storm.phase === 'warning' || storm.phase === 'active')
+        ? { direction: storm.direction, strength: 2.6 } : this.host.region.windAt(time + 0.5);
+      const speed = Math.max(0.65, Math.min(2.4, 1 + 0.48 * wind.strength * Math.cos(wind.direction - direction)));
+      const next = Math.min(end, front + (end - start) / FIRE.burn * speed);
+      for (const centre of centres) if (Number.isNaN(centre.at) && centre.p <= next) centre.at = second + (centre.p - front) / (next - front);
+      front = next;
+    }
+    return centres.map(({ stand, at }) => ({ stand, at: Number.isNaN(at) ? FIRE.burn * 3 : at }));
   }
 
   status(from: number, stormPhase: string): string {
@@ -262,10 +295,17 @@ export class Wildfire {
       announcedAt: t, igniteAt: t + FIRE.warning, endsAt: t + FIRE.warning + FIRE.burn,
       clearAt: t + FIRE.warning + FIRE.burn + FIRE.aftermath,
       readyAt: t + FIRE.warning + FIRE.burn + FIRE.aftermath + FIRE.cooldown,
-      start, end,
+      start, end, front: start,
     } satisfies Partial<FireState>);
     this.burnedStands.clear();
+    this.scarredStands.clear();
     this.recentTrees = [];
+    this.judgedNodes = new WeakSet();
+    this.hurricaneJudgedNodes = new WeakSet();
+    this.judgedTrees = new WeakSet();
+    this.hurricaneJudgedTrees = new WeakSet();
+    this.ashedCells.clear();
+    this.emberSweep = null;
     // The watch reports this fire's trees.
     this.livingTreesBurned = 0;
     this.treesScorched = 0;
@@ -288,9 +328,23 @@ export class Wildfire {
       this.rng = mulberry32(hashString(`${this.seedText}:wildfire:${s.sequence}`));
       this.broadcast('The fire is running. Crowns, shallow strands and fruiting bodies in its path will burn.');
     }
+    // Match.step asks for the next boundary immediately after advance().
+    // Install the quench boundary as soon as the storm arrives, before a
+    // long caller step could burn through the rain and judge extra trees.
+    if (s.phase === 'burning' && this.host.storm.phase === 'active' && !this.emberSweep) this.startHurricane(t);
     if (s.phase === 'burning' && t >= s.endsAt - 1e-8) {
-      s.phase = 'aftermath';
-      this.broadcast('The fire has passed. Ash feeds the burned ground: it will fruit in any weather while it lasts.');
+      if (this.emberSweep) {
+        s.phase = 'aftermath';
+        this.broadcast('The hurricane rain has quenched the flames. Smoke hangs over the ash and the burned ground can fruit.');
+      } else if (s.front < s.end - 1e-7) {
+        // Headwinds can outlast the forecast; never teleport the front to the far edge.
+        s.endsAt = t + 1;
+        s.clearAt = s.endsAt + FIRE.aftermath;
+        s.readyAt = s.clearAt + FIRE.cooldown;
+      } else {
+        s.phase = 'aftermath';
+        this.broadcast('The fire has passed. Ash feeds the burned ground: it will fruit in any weather while it lasts.');
+      }
     }
     if (s.phase === 'aftermath' && t >= s.clearAt - 1e-8) {
       s.phase = 'idle';
@@ -306,11 +360,50 @@ export class Wildfire {
   /** Judge everything the front reached between t0 and t1. */
   burn(t0: number, t1: number): void {
     if (this.state.phase !== 'burning') return;
-    const a = this.frontAt(t0);
-    const b = this.frontAt(t1);
-    if (b <= a) return;
+    if (this.host.storm.phase === 'active' && !this.emberSweep) this.startHurricane(t0);
+    // Sample the seeded weather on absolute one-second beats. A long fixture
+    // step and sixty short gameplay steps then integrate the same wind.
+    for (let from = t0; from < t1 - 1e-9;) {
+      const to = Math.min(t1, Math.floor(from + 1e-8) + 1);
+      const wind: WindState = this.host.storm.phase === 'active'
+        ? { direction: this.host.storm.direction, strength: 2.6 }
+        : this.host.region.windAt(Math.floor(from) + 0.5);
+      const alignment = Math.cos(wind.direction - this.state.direction);
+      const speed = Math.max(0.65, Math.min(2.4, 1 + 0.48 * wind.strength * alignment));
+      const a = this.state.front;
+      const b = Math.min(this.state.end, a + (this.state.end - this.state.start) / FIRE.burn * speed * (to - from));
+      if (b > a) this.burnSpan(a, b, from, to, this.state.direction, !!this.emberSweep);
+      this.state.front = b;
+      const sweep = this.emberSweep;
+      if (sweep) {
+        const start = sweep.front;
+        const finish = Math.min(sweep.end, start + (sweep.end - sweep.start) / FIRE.hurricaneSweep * (to - from));
+        if (finish > start) this.burnSpan(start, finish, from, to, sweep.direction, true);
+        sweep.front = finish;
+      }
+      from = to;
+    }
+    // The view takes the newest torches from the end of this list. Two fronts
+    // can encounter trees in either order within one caller step.
+    this.burnedTrees.sort((u, v) => (u.at - v.at) || (u.stand - v.stand) || (u.tree - v.tree));
+  }
+
+  private startHurricane(at: number): void {
+    const direction = this.host.storm.direction;
+    const [start, end] = this.extent(direction);
+    this.emberSweep = { direction, start, end, front: start, startedAt: at };
+    const s = this.state;
+    // The gust disperses embers quickly; the storm's continuing rain then
+    // extinguishes the open fire even if the original front has not finished.
+    s.endsAt = at + FIRE.hurricaneQuench;
+    s.clearAt = s.endsAt + FIRE.aftermath;
+    s.readyAt = s.clearAt + FIRE.cooldown;
+    this.broadcast('Hurricane winds carry burning embers across the whole forest. Even watered crowns are in danger.');
+  }
+
+  private burnSpan(a: number, b: number, t0: number, t1: number, direction: number, hurricane: boolean): void {
     const crossed = (x: number, y: number) => {
-      const p = this.project(x, y);
+      const p = this.project(x, y, direction);
       return p > a && p <= b;
     };
     const { region } = this.host;
@@ -324,23 +417,31 @@ export class Wildfire {
       for (let gx = 0; gx < GRID.cols; gx++) {
         if (!crossed(frame.originX + gx, midY)) continue;
         this.burnedStands.add(stand.site.id);
+        this.scarredStands.add(stand.site.id);
         for (let gy = 0; gy < FIRE.ashRows; gy++) {
           const cell = world.cells[gy * GRID.cols + gx];
-          if (!cell || cell.stream || cell.water >= FIRE.wetRefuge) continue;
+          if (!cell || cell.stream || (!hurricane && cell.water >= FIRE.wetRefuge)) continue;
+          const key = `${stand.site.id}:${gx}:${gy}`;
+          if (this.ashedCells.has(key)) continue;
+          this.ashedCells.add(key);
           cell.organic *= 0.35;
           cell.nitrogen = Math.min(1, cell.nitrogen + 0.3 * (1 - gy / FIRE.ashRows));
         }
       }
       for (const tree of world.trees) {
-        if (tree.burned) continue;
+        if (tree.burned || this.hurricaneJudgedTrees.has(tree) || (!hurricane && this.judgedTrees.has(tree))) continue;
         const at = treeSpatialPosition(tree, region, frame);
-        if (crossed(at.x, at.y)) reached.push({ stand, tree, p: this.project(at.x, at.y) });
+        if (crossed(at.x, at.y)) reached.push({ stand, tree, p: this.project(at.x, at.y, direction) });
       }
     }
     // Judged in the order the front meets them, so a green belt behind it
     // really does weaken what comes next. Ties break by stand and tree id.
     reached.sort((u, v) => (u.p - v.p) || (u.stand.site.id - v.stand.site.id) || (u.tree.id - v.tree.id));
-    for (const { stand, tree, p } of reached) this.burnTree(stand, tree, this.reachedAt(p), p);
+    for (const { stand, tree, p } of reached) {
+      this.judgedTrees.add(tree);
+      if (hurricane) this.hurricaneJudgedTrees.add(tree);
+      this.burnTree(stand, tree, t0 + (p - a) / (b - a) * (t1 - t0), p, hurricane);
+    }
     for (const target of this.burnables()) {
       const { net, local } = target;
       const frame = local ? standFrameOf(region, local.site.id) : null;
@@ -349,8 +450,15 @@ export class Wildfire {
         if (!node.alive) continue;
         const x = node.spatial ? node.spatial.x : frame ? frame.originX + node.gx : NaN;
         const y = node.spatial ? node.spatial.y : frame ? frame.originY + STAND_SIZE / 2 : NaN;
-        if (!crossed(x, y)) continue;
-        changed = this.burnNode(target, node) || changed;
+        const p = this.project(x, y, direction);
+        // A new tip can grow into the hot ground just behind a front that has
+        // already crossed it. Heat lingers inside the flame band until it moves
+        // on; established strands are judged once per fire, not every tick.
+        if ((!crossed(x, y) && !(p <= b && p >= b - FIRE.band)) ||
+          (hurricane ? this.hurricaneJudgedNodes.has(node) : this.judgedNodes.has(node) || this.hurricaneJudgedNodes.has(node))) continue;
+        if (hurricane) this.hurricaneJudgedNodes.add(node);
+        else this.judgedNodes.add(node);
+        changed = this.burnNode(target, node, hurricane) || changed;
       }
       if (changed) {
         markConnectivity(net);
@@ -360,23 +468,21 @@ export class Wildfire {
     }
   }
 
-  /** When the leading edge reached projection p: exact, whatever the step size. */
-  private reachedAt(p: number): number {
-    const s = this.state;
-    return s.igniteAt + ((p - s.start) / (s.end - s.start)) * FIRE.burn;
-  }
-
   /**
    * One tree's odds when the front reaches it (no roll), from the fire's own
    * state: intensity (dry ground, dead wood and litter as fuel, weakened just
    * past well-watered trees), the tree's hydration and its species. Also the
    * basis of the warning's risk overlay.
    */
-  treeOdds(world: World, tree: Tree, p = Number.NaN): TreeFireOdds {
+  treeOdds(world: World, tree: Tree, p = Number.NaN, hurricane = false): TreeFireOdds {
     const cell = world.cells[6 * GRID.cols + tree.gx];
     const wet = cell ? Math.min(1, cell.water + cell.streamNear * 0.5) : 0;
     const refuge = wet >= FIRE.wetRefuge || (cell?.streamNear ?? 0) > 0.35;
     const hydration = treeHydration(world, tree);
+    if (hurricane) return {
+      burn: hydration >= 0.7 || refuge ? FIRE.hurricaneWetBurn : FIRE.maxBurn,
+      scorch: 0.9, intensity: 1.8, hydration, refuge,
+    };
     // Dry ground carries the fire: 0.55 when damp, 1.2 when parched.
     const dryness = 0.55 + 0.65 * (1 - dampness(wet));
     // Fuel: dead wood near the tree, and litter and organic matter in the topsoil.
@@ -403,7 +509,7 @@ export class Wildfire {
     return { burn, scorch, intensity, hydration, refuge };
   }
 
-  private burnTree(stand: StandState, tree: Tree, at: number, p: number): void {
+  private burnTree(stand: StandState, tree: Tree, at: number, p: number, hurricane: boolean): void {
     const world = stand.sim.world;
     const cell = world.cells[6 * GRID.cols + tree.gx];
     const wet = cell ? Math.min(1, cell.water + cell.streamNear * 0.5) : 0;
@@ -411,12 +517,15 @@ export class Wildfire {
     let remains: 'snag' | 'log' = tree.fallen ? 'log' : 'snag';
     if (tree.dead) {
       // Standing snags and fallen logs are fuel: they always go unless soaked.
-      if (wet >= FIRE.wetRefuge) return;
+      if (!hurricane && wet >= FIRE.wetRefuge) return;
     } else {
-      const odds = this.treeOdds(world, tree, p);
-      this.recentTrees.push({ p, hydration: odds.refuge ? 1 : odds.hydration });
+      const odds = this.treeOdds(world, tree, p, hurricane);
+      if (!hurricane) this.recentTrees.push({ p, hydration: odds.refuge ? 1 : odds.hydration });
       if (this.recentTrees.length > 64) this.recentTrees.shift();
-      const roll = this.rng();
+      // A tree's lottery is independent of how many strands anybody grew:
+      // adding a new tip in the hot band must not reroll later crowns.
+      const treeRolls = mulberry32(hashString(`${this.seedText}:wildfire:${this.state.sequence}:tree:${stand.site.id}:${tree.id}`));
+      const roll = treeRolls();
       if (roll >= odds.burn) {
         if (roll < odds.burn + (1 - odds.burn) * odds.scorch) {
           // A ground fire: scarred bark and lost health, but the tree lives
@@ -431,9 +540,9 @@ export class Wildfire {
       }
       // Torched. A fierce fire through a dry tree brings it down.
       const fell = Math.max(0, Math.min(0.75, (odds.intensity - 0.8) * 1.5 * (1 - odds.hydration)));
-      if (this.rng() < fell) {
+      if (treeRolls() < fell) {
         remains = 'log';
-        tree.fallen = { direction: this.state.direction, at };
+        tree.fallen = { direction: hurricane ? this.host.storm.direction : this.state.direction, at };
       }
     }
     const living = !tree.dead;
@@ -462,15 +571,20 @@ export class Wildfire {
     this.burnedTrees.push({ at, stand: stand.site.id, tree: tree.id });
     if (living) this.livingTreesBurned++;
     this.burnedStands.add(stand.site.id);
+    this.scarredStands.add(stand.site.id);
   }
 
   /** Returns true when the node died. */
-  private burnNode(target: Burnable, node: Network['nodes'][number]): boolean {
+  private burnNode(target: Burnable, node: Network['nodes'][number], hurricane: boolean): boolean {
     const { net, world, rival } = target;
     const tally = this.losses[rival ? 'rival' : 'player'];
     const cell = world.cellOf(node);
     const wet = cell ? Math.min(1, cell.water + cell.streamNear * 0.5) : 0;
-    const depthCm = node.gy * GRID.cmPerRow;
+    // Spatial graphs own absolute XYZ. Their section row is only a projection,
+    // so use the actual distance below the local terrain for heat exposure.
+    const depthCm = node.spatial
+      ? depthCmAt(this.host.region, node.spatial.x, node.spatial.y, node.spatial.z)
+      : node.gy * GRID.cmPerRow;
     const roll = this.rng();
     if (net.fruit.active && net.fruit.nodeId === node.id) {
       net.fruit.active = false;
@@ -478,9 +592,9 @@ export class Wildfire {
       net.fruit.store = 0;
       tally.bodies++;
     }
-    if (depthCm >= FIRE.singeCm || wet >= FIRE.wetRefuge) return false;
+    if (depthCm >= FIRE.singeCm || (!hurricane && wet >= FIRE.wetRefuge)) return false;
     const cord = node.reinforced || node.thickness >= 0.45 || node.id === net.rootId;
-    if (depthCm < FIRE.lethalCm && !cord && roll >= dampness(wet) * 0.8) {
+    if (depthCm < FIRE.lethalCm && !cord && (hurricane || roll >= dampness(wet) * 0.8)) {
       burnNode(net, world, node);
       tally.strands++;
       return true;

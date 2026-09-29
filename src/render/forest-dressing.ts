@@ -28,12 +28,14 @@
  * terrain is opaque over it, and nothing invented is left beneath the specimen.
  */
 import * as THREE from 'three';
+import { mulberry32 } from '../sim/rng';
 import { foliageColour } from './seasons';
 import { GRID, type SeasonId } from '../sim/content';
 import type { AssetId, AssetLibrary, BatchPart } from './assets';
 import { projectedHeightFraction, selectLodTier } from './lod';
 import {
   layoutForestDressing,
+  distanceToCourse,
   type DecorationKind,
   type DressingBand,
   type DressingRegion,
@@ -80,6 +82,7 @@ const FLOOR = GRID.rows / 2;
 const TILE = GRID.cols;
 const UP = new THREE.Vector3(0, 1, 0);
 const WHITE = new THREE.Color('#ffffff');
+const FRESH_GROWTH = new THREE.Color('#73964b');
 /** Background trees open coarse; a close camera earns them detail. */
 const START_TIER = 2;
 /**
@@ -130,6 +133,8 @@ export class ForestDressing {
   private focusStand: number | null = null;
   private decorations: ForestDecoration[] = [];
   private drawn: ForestDecoration[] = [];
+  private fireDecorations: ForestDecoration[] = [];
+  private fireKey = '';
   private tiers = new Map<string, number>();
   private built = false;
   private planted = 0;
@@ -186,7 +191,8 @@ export class ForestDressing {
       stands: this.focusStand === null ? this.input.stands : [this.focusStand],
     });
     const wanted = new Set(this.kinds);
-    this.drawn = this.decorations.filter((decoration) => wanted.has(decoration.kind));
+    this.drawn = [...this.decorations.filter((decoration) => wanted.has(decoration.kind)),
+      ...this.fireDecorations.filter((decoration) => this.focusStand === null || decoration.standId === this.focusStand)];
     this.tiers = new Map();
     for (const decoration of this.drawn) this.tiers.set(decoration.id, START_TIER);
     this.built = this.decorations.length > 0;
@@ -195,6 +201,50 @@ export class ForestDressing {
 
   setVisible(visible: boolean): void {
     this.shown = visible;
+  }
+
+  /** Ash, coals, pioneer flowers, then grass occupy real burned clearings. */
+  setFireRecovery(stage: number, burned: ReadonlySet<number>, sequence: number): void {
+    const key = stage === 0 ? 'none' : `${sequence}:${stage}:${[...burned].sort((a, b) => a - b).join(',')}`;
+    if (key === this.fireKey) return;
+    this.fireKey = key;
+    this.fireDecorations = [];
+    if (stage > 0) {
+      for (const stand of this.input.region.stands) {
+        if (!burned.has(stand.id)) continue;
+        const rng = mulberry32((this.input.region.seed ^ (sequence * 0x45d9f3b) ^ (stand.id * 0x27d4eb2d)) >>> 0);
+        const canopy = this.decorations.filter((d) => d.kind === 'canopy' && d.standId === stand.id);
+        let planted = 0;
+        let centreX = 0, centreY = 0;
+        for (let attempt = 0; attempt < 400 && planted < (stage === 2 ? 6 : 60); attempt++) {
+          let x = stand.sx * TILE + 7 + rng() * (TILE - 14);
+          let y = stand.sy * TILE + 7 + rng() * (TILE - 14);
+          if (stage >= 3 && planted >= 6) {
+            if (planted % 6 === 0) { centreX = x; centreY = y; }
+            else { x = centreX + (rng() - 0.5) * 5; y = centreY + (rng() - 0.5) * 5; }
+          }
+          if (x < stand.sx * TILE + 4 || x >= (stand.sx + 1) * TILE - 4 || y < stand.sy * TILE + 4 || y >= (stand.sy + 1) * TILE - 4) continue;
+          if (distanceToCourse(this.input.course, x, y) < 10) continue;
+          if (canopy.some((tree) => Math.hypot(tree.x - x, tree.y - y) < 6.5)) continue;
+          if (this.input.playable.some((tree) => Math.hypot(tree.x - x, tree.y - y) < 6)) continue;
+          let asset: ForestDecoration['asset'];
+          let height: number;
+          let kind: DecorationKind;
+          if (planted < 4) { asset = 'understory.ash-bed'; height = 0.09; kind = 'deadwood'; }
+          else if (planted < 6) { asset = stage === 2 ? 'prop.ember-bed' : planted === 4 ? 'prop.charred-log-a' : 'prop.charred-log-b'; height = asset === 'prop.ember-bed' ? 0.27 : 0.85; kind = 'deadwood'; }
+          else if (stage === 3) { asset = 'understory.fireweed-sprout'; height = 0.2 + rng() * 0.18; kind = 'grass'; }
+          else if (stage === 4) { asset = planted % 5 === 0 ? 'understory.goldenrod' : 'understory.fireweed'; height = 0.7 + rng() * 0.55; kind = 'grass'; }
+          else { asset = planted % 4 === 0 ? 'understory.fireweed' : planted % 7 === 0 ? 'understory.goldenrod' : 'understory.grass'; height = asset === 'understory.grass' ? 0.45 + rng() * 0.35 : 0.8 + rng() * 0.45; kind = 'grass'; }
+          this.fireDecorations.push({
+            id: `fire:${sequence}:${stand.id}:${planted}`, standId: stand.id, kind, asset,
+            x, y, z: this.input.region.heightAt(x, y), height, yaw: rng() * Math.PI * 2,
+            phase: rng(), community: stand.community, cell: `fire:${attempt}`,
+          });
+          planted++;
+        }
+      }
+    }
+    this.build(this.band);
   }
 
   /** Show one stand's dressing on its own, or null for the whole region. */
@@ -415,6 +465,7 @@ export class ForestDressing {
       mesh.userData.asset = batch.asset;
       mesh.userData.tier = batch.tier;
       const shades: number[] = [];
+      const recovery: boolean[] = [];
       for (const decoration of batch.decorations) {
         const world = this.worldPosition(decoration);
         position.set(world.x, world.y, world.z);
@@ -431,13 +482,16 @@ export class ForestDressing {
         mesh.setMatrixAt(mesh.count, matrix);
         const shade = 0.9 + decoration.phase * 0.2;
         shades.push(shade);
+        const fresh = decoration.id.startsWith('fire:');
+        recovery.push(fresh);
         colour.copy(
-          batch.category === 'foliage' ? this.foliageColour(batch.asset) : WHITE
+          batch.category === 'foliage' ? fresh ? FRESH_GROWTH : this.foliageColour(batch.asset) : WHITE
         ).multiplyScalar(shade);
         mesh.setColorAt(mesh.count, colour);
         mesh.count++;
       }
       mesh.userData.shades = shades;
+      mesh.userData.recovery = recovery;
       mesh.visible = this.shown;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -517,9 +571,10 @@ export class ForestDressing {
       if (mesh.userData.category !== 'foliage' || mesh.count === 0) continue;
       const asset = mesh.userData.asset as AssetId;
       const shades = (mesh.userData.shades as number[] | undefined) ?? [];
+      const recovery = (mesh.userData.recovery as boolean[] | undefined) ?? [];
       for (let i = 0; i < mesh.count; i++) {
         const shade = shades[i] ?? 1;
-        mesh.setColorAt(i, this.foliageColour(asset).multiplyScalar(shade));
+        mesh.setColorAt(i, (recovery[i] ? FRESH_GROWTH : this.foliageColour(asset)).clone().multiplyScalar(shade));
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
@@ -671,9 +726,16 @@ const FIRE_VERTEX_GLSL = /* glsl */ `
    vec2 fireReg = vec2(instanceMatrix[3].x + fireMap.x, fireMap.y - instanceMatrix[3].z);
    float fireSeed = fract(sin(dot(fireReg, vec2(12.9898, 78.233))) * 43758.5453);
    float fireBehind = fireFront - dot(fireReg, fireDir) + (fireSeed - .5) * 10.0;
+   float spotBehind = fireSpotFront - dot(fireReg, fireSpotDir) + (fireSeed - .5) * 14.0;
    float fireTaken = step(0.3, fireSeed);
-   vBurn = smoothstep(0.0, fireBand * .6, fireBehind) * fireTaken * fireScorch;
-   vFlame = smoothstep(-2.0, 2.0, fireBehind) * (1.0 - smoothstep(fireBand * .5, fireBand * 1.3, fireBehind)) * fireTaken * fireScorch;
+   float spotTaken = step(0.03, fireSeed) * fireSpotScorch;
+   vBurn = max(smoothstep(0.0, fireBand * .6, fireBehind) * fireTaken,
+     smoothstep(0.0, fireBand * .6, spotBehind) * spotTaken) * fireScorch;
+   vFlame = max(smoothstep(-2.0, 2.0, fireBehind) * (1.0 - smoothstep(fireBand * .5, fireBand * 1.3, fireBehind)) * fireTaken,
+     smoothstep(-2.0, 2.0, spotBehind) * (1.0 - smoothstep(fireBand * .5, fireBand * 1.3, spotBehind)) * spotTaken) * fireScorch;
+   // Low ground cover returns gradually after the heat. Tall burned crowns do not.
+   float groundCover = 1.0 - smoothstep(2.0, 4.0, length(instanceMatrix[1].xyz));
+   vBurn *= 1.0 - groundCover * fireRegrowth;
  }
  #endif
 `;
@@ -735,10 +797,11 @@ function attachWind(material: THREE.MeshStandardMaterial, time: { value: number 
     shader.uniforms.stormStrength = storm.strength;
     Object.assign(shader.uniforms, {
       fireDir: FLOOR_FIRE.dir, fireFront: FLOOR_FIRE.front, fireBand: FLOOR_FIRE.band,
+      fireSpotDir: FLOOR_FIRE.spotDir, fireSpotFront: FLOOR_FIRE.spotFront, fireSpotScorch: FLOOR_FIRE.spotScorch,
       fireScorch: FLOOR_FIRE.scorch, fireRegrowth: FLOOR_FIRE.regrowth, fireTime: FLOOR_FIRE.time,
       fireMap: DRESSING_FIRE_MAP, droughtSeverity: FLOOR_DROUGHT.severity,
     });
-    const fireUniforms = 'uniform vec2 fireDir;\nuniform float fireFront;\nuniform float fireBand;\nuniform float fireScorch;\nuniform float fireRegrowth;\nuniform float fireTime;\nuniform float droughtSeverity;\nvarying float vWilt;\n';
+    const fireUniforms = 'uniform vec2 fireDir;\nuniform float fireFront;\nuniform float fireBand;\nuniform vec2 fireSpotDir;\nuniform float fireSpotFront;\nuniform float fireSpotScorch;\nuniform float fireScorch;\nuniform float fireRegrowth;\nuniform float fireTime;\nuniform float droughtSeverity;\nvarying float vWilt;\n';
     shader.vertexShader = `uniform float windTime;\nuniform vec2 stormDir;\nuniform float stormStrength;\nuniform vec2 fireMap;\n${fireUniforms}varying float vBurn;\nvarying float vFlame;\nvarying vec3 vFireLocal;\n${shader.vertexShader}`;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',

@@ -38,7 +38,7 @@ export class StormUI {
       <p class="storm-map-key">Outline: your colony · amber: possible landing · grey: occupied</p>
       <p class="storm-forecast"></p>
       <p class="storm-cost">60s to prepare · 45s of strong wind · 180s recovery.<br>Summoning spends 80 carbon, 12 water and 6 nitrogen.</p>
-      <p class="storm-rules">Each fresh bloom can fund up to three daughters. Each costs 46 carbon, 6 water and 3 nitrogen from its parent. Warning blooms wait for arrival; keep their strands alive and supplied. The warm rain permits fruiting through frost. Rivals can use it too. Its rain floods the stream: ground within about eighteen paces of the water goes under, closing to growth; thin surface strands wash away, others drown, and oak drowns where birch stands. Hold high ground or reinforce your cords. The water leaves silt behind.</p>
+      <p class="storm-rules">Each fresh bloom can fund up to three daughters. Each costs 46 carbon, 6 water and 3 nitrogen from its parent. Warning blooms wait for arrival; keep their strands alive and supplied. The warm rain permits fruiting through frost. Rivals can use it too. Its rain floods the stream: ground within about eighteen paces of the water goes under, closing to growth; thin surface strands wash away, others drown, and oak drowns where birch stands. Hold high ground or reinforce your cords. The water leaves silt behind. If summoned during a wildfire, hurricane winds carry embers across every stand, then heavy rain quenches the flames.</p>
       <button type="button" class="storm-invoke">Summon storm</button><p class="storm-reason"></p>`;
     panel.querySelector('.earned-powers')!.after(this.controls);
     this.bearing = this.controls.querySelector('select')!;

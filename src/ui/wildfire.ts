@@ -30,7 +30,7 @@ export class FireUI {
     panel.querySelector('.living-heading')!.after(this.watch);
     this.controls.className = 'forest-disclosure fire-controls';
     this.controls.innerHTML = `<summary><img class="power-summary-icon" src="${techIcon('ember-crown')}" alt="" />Kindle wildfire</summary>
-      <p class="fire-intro">One front across the whole region. Go deep before it arrives.</p>
+      <p class="fire-intro">Wind speeds or slows the front. A hurricane throws embers across the forest before its rain quenches the flames. Go deep before it arrives.</p>
       <label for="fire-bearing">Fire runs toward</label>
       <select id="fire-bearing">
         <option value="0">East →</option><option value="45">Northeast ↗</option>
@@ -39,9 +39,9 @@ export class FireUI {
         <option value="270">South ↓</option><option value="315">Southeast ↘</option>
       </select>
       <svg class="fire-map" role="img" aria-label="Wildfire arrival forecast"></svg>
-      <p class="fire-map-key">Seconds after ignition the front reaches each tile · outline: your colonies</p>
-      <p class="fire-cost">${FIRE.warning}s to prepare · ${FIRE.burn}s burning · ${FIRE.aftermath}s ash flush · ${FIRE.cooldown}s before another.<br>Kindling spends ${FIRE.cost.carbon} carbon and ${FIRE.cost.nitrogen} nitrogen.</p>
-      <p class="fire-rules">Crowns, strands shallower than ${FIRE.lethalCm} cm and fruiting bodies burn, for every colony, yours too. Reinforced cords and your root are singed but live; strands below ${FIRE.singeCm} cm and wet ground are untouched. Burned ground turns to ash and fruits in any weather until it settles.</p>
+      <p class="fire-map-key">Approximate seconds after ignition at each tile centre, using forecast wind · outline: your colonies</p>
+      <p class="fire-cost">${FIRE.warning}s to prepare · around ${FIRE.burn}s burning, longer in headwinds · ${FIRE.aftermath}s ash flush · ${FIRE.cooldown}s before another. A hurricane spreads embers for ${FIRE.hurricaneSweep}s, then its rain quenches fire after ${FIRE.hurricaneQuench}s.<br>Kindling spends ${FIRE.cost.carbon} carbon and ${FIRE.cost.nitrogen} nitrogen.</p>
+      <p class="fire-rules">Crowns, strands shallower than ${FIRE.lethalCm} cm and fruiting bodies burn, for every colony, yours too. Reinforced cords and your root are singed but live; strands below ${FIRE.singeCm} cm and wet ground are untouched in ordinary fire. A hurricane carries embers over firebreaks: even watered trees have a 50% chance to burn. Burned ground turns to ash and fruits in any weather until it settles.</p>
       <button type="button" class="fire-invoke">Kindle wildfire</button><p class="fire-reason"></p>`;
     (panel.querySelector('.storm-controls') ?? panel.querySelector('.earned-powers'))!.after(this.controls);
     this.bearing = this.controls.querySelector('select')!;
@@ -82,7 +82,7 @@ export class FireUI {
     const direction = active ? fire.state.direction : this.direction;
     const toward = this.toward(direction);
     const seconds = Math.ceil(fire.remaining);
-    const label = phase === 'warning' ? `Fire kindles in ${seconds}s` : phase === 'burning' ? `Fire running · ${seconds}s` : `Ash settling · ${seconds}s`;
+    const label = phase === 'warning' ? `Fire kindles in ${seconds}s` : phase === 'burning' ? `${fire.hurricaneFront ? 'Firestorm' : 'Fire running'} · ${seconds}s` : `Ash settling · ${seconds}s`;
     this.watch.querySelector('strong')!.textContent = label;
     const lost = fire.losses.player;
     this.watch.querySelector('div p')!.textContent = phase === 'warning'
@@ -96,17 +96,18 @@ export class FireUI {
     const status = match.fireStatus(match.activeStandId);
     this.invoke.disabled = status !== 'Ready to kindle';
     this.reason.textContent = status;
-    const key = `${direction}:${match.colonizedStands}:${phase}`;
+    const key = `${direction}:${match.colonizedStands}:${phase}:${Math.floor(match.time / 5)}`;
     if (key === this.mapKey) return;
     this.mapKey = key;
     const { cols, rows, stands } = match.region;
     const schedule = new Map(fire.schedule(direction).map((s) => [s.stand, s.at]));
+    const latest = Math.max(FIRE.burn, ...schedule.values());
     this.map.setAttribute('viewBox', `0 0 ${cols * 48} ${rows * 48}`);
     this.map.setAttribute('aria-label', `Fire toward ${toward}. ${stands.map((s) => `tile ${s.id + 1} at ${Math.round(schedule.get(s.id) ?? 0)} seconds`).join(', ')}.`);
     this.map.innerHTML = stands.map((s) => {
       const at = schedule.get(s.id) ?? 0;
       // Earlier tiles glow hotter; the map is a forecast of the front, not of losses.
-      const heat = 1 - at / FIRE.burn;
+      const heat = 1 - at / latest;
       const mine = match.stands[s.id]!.sim.hasColony;
       return `<rect x="${s.sx * 48 + 4}" y="${(rows - 1 - s.sy) * 48 + 4}" width="40" height="40" rx="3" class="fire-tile${mine ? ' fire-mine' : ''}" style="--heat:${heat.toFixed(2)}"/>` +
         `<text x="${s.sx * 48 + 24}" y="${(rows - 1 - s.sy) * 48 + 29}" text-anchor="middle">${Math.round(at)}s</text>`;

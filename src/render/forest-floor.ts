@@ -10,9 +10,14 @@ import type { SeasonId } from '../sim/content';
 export const FLOOR_FIRE = {
   dir: { value: new THREE.Vector2(1, 0) },
   front: { value: -1e6 },
+  spotDir: { value: new THREE.Vector2(1, 0) },
+  spotFront: { value: -1e6 },
+  spotScorch: { value: 0 },
   band: { value: 24 },
   /** 0 idle, 1 while the burn is on the ground; eases out long after the fire. */
   scorch: { value: 0 },
+  /** Active front light reaching the underground view, separate from char. */
+  active: { value: 0 },
   /** 0..1 through the aftermath: char to ash and new growth. */
   regrowth: { value: 0 },
   time: { value: 0 },
@@ -54,6 +59,7 @@ export function makeForestFloorMaterial() {
     Object.assign(shader.uniforms, {
       floorLitter: litter, floorMoss: moss, floorRain: wetness,
       fireDir: FLOOR_FIRE.dir, fireFront: FLOOR_FIRE.front, fireBand: FLOOR_FIRE.band,
+      fireSpotDir: FLOOR_FIRE.spotDir, fireSpotFront: FLOOR_FIRE.spotFront, fireSpotScorch: FLOOR_FIRE.spotScorch,
       fireScorch: FLOOR_FIRE.scorch, fireRegrowth: FLOOR_FIRE.regrowth, fireTime: FLOOR_FIRE.time,
       droughtSeverity: FLOOR_DROUGHT.severity,
       floodLevel: FLOOR_FLOOD.level, floodReach: FLOOR_FLOOD.reach, floodSilt: FLOOR_FLOOD.silt,
@@ -64,6 +70,7 @@ export function makeForestFloorMaterial() {
     shader.fragmentShader = `
       uniform vec3 floorLitter; uniform vec3 floorMoss; uniform float floorRain;
       uniform vec2 fireDir; uniform float fireFront; uniform float fireBand;
+      uniform vec2 fireSpotDir; uniform float fireSpotFront; uniform float fireSpotScorch;
       uniform float fireScorch; uniform float fireRegrowth; uniform float fireTime;
       uniform float droughtSeverity;
       uniform float floodLevel; uniform float floodReach; uniform float floodSilt;
@@ -126,7 +133,10 @@ export function makeForestFloorMaterial() {
         // Distance behind the leading edge, with a ragged, noisy edge. Wet
         // ground (the stream banks) never takes the burn, as in the simulation.
         float behind = fireFront - dot(vGround, fireDir) + (floorNoise(vGround * .09) - .5) * 9.0;
-        float burnt = smoothstep(-1.5, 2.5, behind) * (1.0 - smoothstep(.45, .7, vHabitat.z)) * fireScorch;
+        float spotBehind = fireSpotFront - dot(vGround, fireSpotDir) + (floorNoise(vGround * .11 + 8.0) - .5) * 13.0;
+        float ordinaryBurn = smoothstep(-1.5, 2.5, behind) * (1.0 - smoothstep(.45, .7, vHabitat.z));
+        float emberBurn = smoothstep(-2.0, 3.0, spotBehind) * fireSpotScorch;
+        float burnt = max(ordinaryBurn, emberBurn) * fireScorch;
         float mottling = floorNoise(vGround * .45);
         vec3 charColor = mix(vec3(.018, .016, .014), vec3(.075, .07, .064), mottling * .6);
         vec3 ash = mix(vec3(.2, .19, .18), vec3(.11, .105, .1), mottling);
@@ -135,7 +145,8 @@ export function makeForestFloorMaterial() {
         diffuseColor.rgb = mix(diffuseColor.rgb, burned, burnt);
         // Embers: brightest in the flaming band, a few still smouldering behind it.
         // A narrow line of fire at the edge, then patchy embers, not a lit sheet.
-        float band = smoothstep(0.0, 2.0, behind) * (1.0 - smoothstep(fireBand * .15, fireBand * .7, behind));
+        float band = max(smoothstep(0.0, 2.0, behind) * (1.0 - smoothstep(fireBand * .15, fireBand * .7, behind)),
+          smoothstep(0.0, 2.0, spotBehind) * (1.0 - smoothstep(fireBand * .15, fireBand * .7, spotBehind)) * fireSpotScorch);
         float flicker = floorNoise(vGround * .8 + vec2(fireTime * 1.7, -fireTime * 1.1));
         float patches = smoothstep(.45, .8, floorNoise(vGround * .6 + vec2(0.0, fireTime * .3)));
         float smoulder = step(.82, floorNoise(vGround * 1.3)) * smoothstep(fireBand * 4.0, fireBand, behind) * (1.0 - fireRegrowth);
@@ -171,7 +182,7 @@ export function makeForestFloorMaterial() {
     shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += fireGlowColor;');
     shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(clamp(1.0 - vHabitat.z * .2 - floorRain * .08, .7, 1.0), .15, floodWet);');
   };
-  material.customProgramCacheKey = () => 'regional-forest-floor-v4-fire-drought-flood';
+  material.customProgramCacheKey = () => 'regional-forest-floor-v5-fire-wind-spot';
   const ids: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
   const leaves = ['#716047', '#756044', '#90603a', '#716451'];
   const greens = ['#617044', '#535f38', '#59593a', '#5c5d4c'];

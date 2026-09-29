@@ -379,6 +379,50 @@ def fireweed():
     return mesh.object()
 
 
+def fireweed_sprout():
+    """Fireweed's narrow leaves push through the ash before flower spikes form."""
+    rng = random.Random(432)
+    mesh = Mesh('fireweed-sprout', [material('fireweed-sprout-stem', (.22, .22, .11)),
+                                    material('fireweed-sprout-foliage', (.31, .43, .17), True)])
+    for s in range(14):
+        a = s * TAU / 14 + rng.uniform(-.2, .2)
+        base = radial(a, rng.uniform(.03, .36), 0)
+        h = rng.uniform(.18, .43)
+        top = base + radial(a, .035, h)
+        mesh.tube([base, top], [.008, .003], 0, sides=3)
+        for k in range(3):
+            centre = base.lerp(top, .25 + k * .21)
+            direction = radial(a + k * 2.4, .13 * (1 - k * .14), .025)
+            width = radial(a + k * 2.4 + math.pi / 2, .018, 0)
+            mesh.face([centre, centre + direction * .55 + width, centre + direction, centre + direction * .55 - width], 1)
+    return mesh.object()
+
+
+def goldenrod():
+    """Late clearing colour: loose branching sprays of small golden flower heads."""
+    rng = random.Random(433)
+    mesh = Mesh('goldenrod', [material('goldenrod-stem', (.26, .25, .1)),
+                              material('goldenrod-foliage', (.24, .35, .13), True),
+                              material('goldenrod-flower', (.84, .59, .1), True)])
+    for s in range(9):
+        a = s * TAU / 9 + rng.uniform(-.3, .3)
+        base = radial(a, rng.uniform(.05, .38), 0)
+        h = rng.uniform(.75, 1.35)
+        top = base + radial(a, .1, h)
+        mesh.tube([base, base.lerp(top, .55), top], [.011, .007, .003], 0, sides=3)
+        for k in range(5):
+            centre = base.lerp(top, .16 + k * .12)
+            direction = radial(a + k * 2.4, .16, .035)
+            width = radial(a + k * 2.4 + math.pi / 2, .025, 0)
+            mesh.face([centre, centre + direction * .55 + width, centre + direction, centre + direction * .55 - width], 1)
+        for k in range(10):
+            t = .66 + k * .032
+            centre = base.lerp(top, t) + radial(a + k * 2.2, .07 * (1 - k / 13), 0)
+            arm = radial(a + k * 2.2, .085, .025)
+            mesh.face([centre - arm * .45, centre + radial(a + k * 2.2 + math.pi / 2, .023, 0), centre + arm], 2)
+    return mesh.object()
+
+
 def ash_bed():
     rng = random.Random(441)
     mesh = Mesh('ash-bed', [material('ashbed-ash', ASH), material('ashbed-char', CHAR), material('ashbed-ash-dark', ASH_DARK)])
@@ -412,6 +456,8 @@ FLOOR = {
     'prop.charred-stump': ('props/charred-stump', charred_stump),
     'prop.ember-bed': ('props/ember-bed', ember_bed),
     'understory.fireweed': ('understory/fireweed', fireweed),
+    'understory.fireweed-sprout': ('understory/fireweed-sprout', fireweed_sprout),
+    'understory.goldenrod': ('understory/goldenrod', goldenrod),
     'understory.ash-bed': ('understory/ash-bed', ash_bed),
 }
 

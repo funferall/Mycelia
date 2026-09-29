@@ -23,6 +23,10 @@ export interface FireVisual {
   start: number;
   band: number;
   intensity: number;
+  /** A hurricane carries a second ember front across the entire region. */
+  spot?: { direction: number; front: number; start: number } | null;
+  /** Trees actually torched by the simulation in the last few seconds. */
+  torches?: ReadonlyArray<{ x: number; y: number; z: number; height: number; age: number }>;
 }
 
 type ToScene = (x: number, y: number) => THREE.Vector3;
@@ -78,17 +82,20 @@ const FLAME_FRAGMENT = /* glsl */ `
   varying float vLife;
   ${NOISE}
   void main() {
-    // Tongues: a teardrop narrowed by rising noise, hottest at the root.
+    // Several rising tongues share a broad orange base and a narrow hot core.
     vec2 p = vec2(vUv.x - 0.5, vUv.y);
-    float rise = fNoise(vec2(p.x * 5.0 + vSeed * 17.0, p.y * 3.0 - uTime * 2.6 - vSeed * 5.0));
-    float lick = fNoise(vec2(p.x * 11.0 - vSeed * 7.0, p.y * 6.0 - uTime * 4.1));
-    float width = (0.46 - p.y * 0.4) * (0.65 + 0.55 * rise);
-    float body = smoothstep(width, width * 0.35, abs(p.x + (lick - 0.5) * 0.18 * p.y));
-    float top = 1.0 - smoothstep(0.35 + 0.5 * rise, 1.0, p.y);
-    float heat = body * top * smoothstep(0.0, 0.08, p.y);
-    vec3 col = mix(vec3(0.75, 0.12, 0.02), vec3(1.0, 0.55, 0.12), smoothstep(0.1, 0.5, heat));
-    col = mix(col, vec3(1.0, 0.92, 0.65), smoothstep(0.65, 0.95, heat));
-    gl_FragColor = vec4(col, heat * 0.6 * uAlpha * vLife);
+    float flow = fNoise(vec2(p.x * 4.5 + vSeed * 19.0, p.y * 3.5 - uTime * 2.2));
+    float detail = fNoise(vec2(p.x * 12.0 - vSeed * 9.0, p.y * 8.0 - uTime * 4.6));
+    float wavering = (flow - 0.5) * 0.22 * p.y + (detail - 0.5) * 0.06;
+    float width = (0.47 - 0.38 * p.y) * (0.75 + 0.45 * flow);
+    float edge = abs(p.x - wavering);
+    float body = 1.0 - smoothstep(width * 0.62, width, edge);
+    float tip = 1.0 - smoothstep(0.58 + 0.34 * flow, 0.98, p.y);
+    float flame = body * tip * smoothstep(0.0, 0.04, p.y);
+    float core = (1.0 - smoothstep(width * 0.12, width * 0.52, edge)) * (1.0 - smoothstep(0.08, 0.6, p.y));
+    vec3 col = mix(vec3(0.68, 0.075, 0.018), vec3(1.0, 0.35, 0.045), clamp(flame * 1.3, 0.0, 1.0));
+    col = mix(col, vec3(1.0, 0.9, 0.52), core * 0.9);
+    gl_FragColor = vec4(col, flame * (0.38 + 0.32 * core) * uAlpha * vLife);
   }
 `;
 
@@ -101,16 +108,20 @@ const SMOKE_FRAGMENT = /* glsl */ `
   ${NOISE}
   void main() {
     vec2 p = vUv - vec2(0.5, 0.45);
-    float billow = fNoise(p * 3.5 + vec2(vSeed * 13.0, -uTime * 0.25)) * 0.6 + fNoise(p * 7.0 - vSeed * 4.0) * 0.4;
-    float disc = 1.0 - smoothstep(0.22, 0.5, length(p) + (billow - 0.5) * 0.25);
-    // Lit from below near the flames: warm at the base of young puffs.
-    vec3 col = mix(vec3(0.07, 0.062, 0.058), vec3(0.22, 0.2, 0.19), billow);
-    col += vec3(0.3, 0.1, 0.02) * (1.0 - smoothstep(0.0, 0.3, vLife)) * (1.0 - vUv.y);
-    gl_FragColor = vec4(col, disc * billow * uAlpha * sin(3.14159 * clamp(vLife, 0.0, 1.0)));
+    float large = fNoise(p * 3.4 + vec2(vSeed * 13.0, -uTime * 0.22));
+    float small = fNoise(p * 8.0 + vec2(-vSeed * 6.0, -uTime * 0.37));
+    float billow = large * 0.7 + small * 0.3;
+    float shape = length(p * vec2(0.95, 1.1)) + (billow - 0.5) * 0.28;
+    float cloud = 1.0 - smoothstep(0.23, 0.49, shape);
+    float light = (1.0 - smoothstep(0.05, 0.55, vLife)) * (1.0 - vUv.y);
+    vec3 col = mix(vec3(0.075, 0.078, 0.076), vec3(0.19, 0.19, 0.18), billow);
+    col += vec3(0.28, 0.085, 0.015) * light;
+    float fade = smoothstep(0.0, 0.16, vLife) * (1.0 - smoothstep(0.72, 1.0, vLife));
+    gl_FragColor = vec4(col, cloud * (0.34 + 0.3 * billow) * uAlpha * fade);
   }
 `;
 
-interface Puff { x: number; y: number; z: number; age: number; life: number; seed: number }
+interface Puff { x: number; y: number; z: number; age: number; life: number; seed: number; windX: number; windY: number }
 
 export class FireView {
   readonly group = new THREE.Group();
@@ -118,6 +129,7 @@ export class FireView {
   private readonly smoke: THREE.InstancedMesh;
   private readonly embers: THREE.Points;
   private readonly flameSeeds: Array<{ along: number; depth: number; size: number; phase: number }> = [];
+  private readonly flameLife: THREE.InstancedBufferAttribute;
   private readonly puffs: Puff[] = [];
   private readonly sparks: Puff[] = [];
   private readonly flameUniforms = { uTime: { value: 0 }, uAlpha: { value: 0 } };
@@ -149,7 +161,8 @@ export class FireView {
       this.flameSeeds.push({ along: (i + this.rand()) / flameCount, depth: Math.pow(this.rand(), 1.6), size: 0.6 + this.rand() * 0.8, phase: this.rand() * 6.28 });
     }
     flameGeometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(flameSeed, 1));
-    flameGeometry.setAttribute('aLife', new THREE.InstancedBufferAttribute(flameLife, 1));
+    this.flameLife = new THREE.InstancedBufferAttribute(flameLife, 1).setUsage(THREE.DynamicDrawUsage);
+    flameGeometry.setAttribute('aLife', this.flameLife);
     this.flames = new THREE.InstancedMesh(flameGeometry, new THREE.ShaderMaterial({
       uniforms: this.flameUniforms, vertexShader: BILLBOARD_VERTEX, fragmentShader: FLAME_FRAGMENT,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -160,7 +173,7 @@ export class FireView {
     const smokeSeed = new Float32Array(smokeCount);
     for (let i = 0; i < smokeCount; i++) {
       smokeSeed[i] = this.rand();
-      this.puffs.push({ x: 0, y: 0, z: 0, age: this.rand() * 10, life: 8 + this.rand() * 5, seed: smokeSeed[i]! });
+      this.puffs.push({ x: 0, y: 0, z: 0, age: 99, life: 8 + this.rand() * 5, seed: smokeSeed[i]!, windX: 1, windY: 0 });
     }
     smokeGeometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(smokeSeed, 1));
     smokeGeometry.setAttribute('aLife', new THREE.InstancedBufferAttribute(new Float32Array(smokeCount), 1).setUsage(THREE.DynamicDrawUsage));
@@ -172,7 +185,7 @@ export class FireView {
     const emberCount = EMBERS[q];
     this.emberPositions = new Float32Array(emberCount * 3);
     this.emberColors = new Float32Array(emberCount * 3);
-    for (let i = 0; i < emberCount; i++) this.sparks.push({ x: 0, y: 0, z: 0, age: this.rand() * 3, life: 1.5 + this.rand() * 2.5, seed: this.rand() });
+    for (let i = 0; i < emberCount; i++) this.sparks.push({ x: 0, y: 0, z: 0, age: this.rand() * 3, life: 1.5 + this.rand() * 2.5, seed: this.rand(), windX: 1, windY: 0 });
     const emberGeometry = new THREE.BufferGeometry();
     emberGeometry.setAttribute('position', new THREE.BufferAttribute(this.emberPositions, 3).setUsage(THREE.DynamicDrawUsage));
     emberGeometry.setAttribute('color', new THREE.BufferAttribute(this.emberColors, 3).setUsage(THREE.DynamicDrawUsage));
@@ -220,46 +233,67 @@ export class FireView {
     const qMin = Math.min(...q);
     const qMax = Math.max(...q);
     const at = (p: number, across: number) => ({ x: c * p - s * across, y: s * p + c * across });
+    const spot = state.spot;
+    const sc = Math.cos(spot?.direction ?? state.direction), ss = Math.sin(spot?.direction ?? state.direction);
+    const spotQ = [[0, 0], [this.width, 0], [0, this.depth], [this.width, this.depth]].map(([x, y]) => -x! * ss + y! * sc);
+    const spotMin = Math.min(...spotQ), spotMax = Math.max(...spotQ);
+    const spotAt = (p: number, across: number) => ({ x: sc * p - ss * across, y: ss * p + sc * across });
     const inside = (x: number, y: number) => x >= 0 && y >= 0 && x <= this.width && y <= this.depth;
 
     // Flames: a band of tongues behind the leading edge, clipped to the region.
     if (this.flames.visible) {
+      const torches = state.torches ?? [];
       for (let i = 0; i < this.flameSeeds.length; i++) {
         const f = this.flameSeeds[i]!;
-        const r = at(state.front - f.depth * state.band * 0.9, qMin + f.along * (qMax - qMin));
         const flicker = 0.75 + 0.25 * Math.sin(this.time * 7 + f.phase) + 0.12 * Math.sin(this.time * 13.7 + f.phase * 2);
-        const h = inside(r.x, r.y) ? (6 + 10 * (1 - f.depth)) * f.size * flicker : 0;
-        this.position.copy(this.toScene(r.x, r.y));
-        this.matrix.compose(this.position, this.identity, this.scale.set(h * 0.55, h, 1));
+        const torch = torches[i];
+        let h: number;
+        if (torch) {
+          this.position.set(torch.x, torch.y, torch.z);
+          h = torch.height * (0.55 + f.size * 0.4) * flicker;
+          this.flameLife.setX(i, Math.max(0, 1 - torch.age / 12));
+        } else {
+          const second = spot && i >= this.flameSeeds.length / 2;
+          const r = second
+            ? spotAt(spot.front - f.depth * state.band * 0.9, spotMin + f.along * (spotMax - spotMin))
+            : at(state.front - f.depth * state.band * 0.9, qMin + f.along * (qMax - qMin));
+          this.position.copy(this.toScene(r.x, r.y));
+          h = inside(r.x, r.y) ? (3 + 7 * (1 - f.depth)) * f.size * flicker * state.intensity : 0;
+          this.flameLife.setX(i, 1);
+        }
+        this.matrix.compose(this.position, this.identity, this.scale.set(h * 0.48, h, 1));
         this.flames.setMatrixAt(i, this.matrix);
       }
+      this.flameLife.needsUpdate = true;
       this.flames.instanceMatrix.needsUpdate = true;
     }
 
     // Smoke: from the flaming band while burning; a column on the horizon in the
     // warning; thin wisps off the smouldering char through the aftermath.
-    const wind = { x: c, y: s };
     const life = this.smoke.geometry.getAttribute('aLife') as THREE.InstancedBufferAttribute;
     for (let i = 0; i < this.puffs.length; i++) {
       const puff = this.puffs[i]!;
       puff.age += step;
       if (puff.age >= puff.life) {
         puff.age = 0;
-        const across = qMin + this.rand() * (qMax - qMin);
+        const second = spot && state.phase === 'burning' && this.rand() < 0.5;
+        const across = second ? spotMin + this.rand() * (spotMax - spotMin) : qMin + this.rand() * (qMax - qMin);
         const p = state.phase === 'warning'
           ? state.start - 6 - this.rand() * 18
-          : state.phase === 'burning' ? state.front - this.rand() * state.band
+          : state.phase === 'burning' ? (second ? spot!.front : state.front) - this.rand() * state.band
             : state.front - this.rand() * (state.front - state.start);
-        const r = state.phase === 'warning' ? at(p, (qMin + qMax) / 2 + (this.rand() - 0.5) * (qMax - qMin) * 0.7) : at(p, across);
+        const r = state.phase === 'warning' ? at(p, (qMin + qMax) / 2 + (this.rand() - 0.5) * (qMax - qMin) * 0.7)
+          : second ? spotAt(p, across) : at(p, across);
         const ground = this.toScene(r.x, r.y);
         puff.x = ground.x; puff.y = ground.y + 2; puff.z = ground.z;
+        puff.windX = second ? sc : c; puff.windY = second ? ss : s;
         puff.life = (state.phase === 'aftermath' ? 5 : 8) + this.rand() * 5;
       }
       const k = puff.age / puff.life;
       const rise = state.phase === 'aftermath' ? 2.5 : 6;
       const drift = 3 + 4 * k;
-      const ox = wind.x * drift * puff.age;
-      const oz = -wind.y * drift * puff.age;
+      const ox = puff.windX * drift * puff.age;
+      const oz = -puff.windY * drift * puff.age;
       const size = (state.phase === 'aftermath' ? 5 : 12) + k * (state.phase === 'aftermath' ? 12 : 50);
       this.position.set(puff.x + ox, puff.y + rise * puff.age, puff.z + oz);
       this.matrix.compose(this.position, this.identity, this.scale.set(size, size, 1));
@@ -276,17 +310,21 @@ export class FireView {
         e.age += step;
         if (e.age >= e.life) {
           e.age = 0;
-          const r = at(state.front - this.rand() * state.band, qMin + this.rand() * (qMax - qMin));
+          const second = spot && this.rand() < 0.5;
+          const r = second
+            ? spotAt(spot.front - this.rand() * state.band, spotMin + this.rand() * (spotMax - spotMin))
+            : at(state.front - this.rand() * state.band, qMin + this.rand() * (qMax - qMin));
           if (!inside(r.x, r.y)) { e.life = 0.3; continue; }
           const ground = this.toScene(r.x, r.y);
           e.x = ground.x; e.y = ground.y + 1 + this.rand() * 3; e.z = ground.z;
+          e.windX = second ? sc : c; e.windY = second ? ss : s;
           e.life = 1.5 + this.rand() * 2.5;
         }
         const k = e.age / e.life;
         const swirl = Math.sin(this.time * 3 + e.seed * 20) * 1.5;
-        this.emberPositions[i * 3] = e.x + wind.x * 6 * e.age + -wind.y * swirl;
+        this.emberPositions[i * 3] = e.x + e.windX * 6 * e.age + -e.windY * swirl;
         this.emberPositions[i * 3 + 1] = e.y + (5 + 4 * e.seed) * e.age;
-        this.emberPositions[i * 3 + 2] = e.z - wind.y * 6 * e.age + -wind.x * swirl;
+        this.emberPositions[i * 3 + 2] = e.z - e.windY * 6 * e.age + -e.windX * swirl;
         const glow = (1 - k) * (0.6 + 0.4 * Math.sin(this.time * 20 + e.seed * 50));
         this.emberColors.set([glow, glow * 0.42, glow * 0.08], i * 3);
       }

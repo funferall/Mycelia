@@ -976,7 +976,6 @@ export class RegionalMatch {
 
   stormStatus(from: number): string {
     if (this.storm.phase !== 'idle') return `${this.storm.phase === 'warning' ? 'Storm approaching' : this.storm.phase === 'active' ? 'Storm active' : 'Recovering'} · ${Math.ceil(this.stormRemaining)}s`;
-    if (this.fire.phase === 'warning' || this.fire.phase === 'burning') return 'A wildfire is running; the storm must wait for it to pass.';
     if (this.drought.phase === 'warning' || this.drought.phase === 'active') return 'A drought holds the region; no storm can form until it breaks.';
     const stand = this.stands[from];
     if (!stand?.sim.hasColony || this.spatialOnly(stand)) return 'Choose an established colony.';
@@ -1007,7 +1006,9 @@ export class RegionalMatch {
       sequence: this.storm.sequence + 1,
     });
     this.flood.reset();
-    this.broadcast('Storm announced. Raise fruiting bodies before the wind arrives in 60 seconds. Rivals share this wind. Its rain will flood the stream: move off low ground by the water.');
+    this.broadcast(this.fire.phase === 'warning' || this.fire.phase === 'burning'
+      ? 'Storm announced over the wildfire. The hurricane will carry embers across the forest; move off flooded ground and prepare for fire.'
+      : 'Storm announced. Raise fruiting bodies before the wind arrives in 60 seconds. Rivals share this wind. Its rain will flood the stream: move off low ground by the water.');
     return 'Storm announced';
   }
 

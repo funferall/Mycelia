@@ -105,6 +105,20 @@ try {
   });
   await page.screenshot({ path: 'design/shots/fire-front.png', timeout: 60000 });
 
+  await page.locator('#view-underground').click();
+  await frames(28);
+  const underground = await page.evaluate(() => ({
+    blend: window.mycelia.game.stage.rig.surfaceBlend,
+    glow: window.mycelia.game.stage.fireGlow,
+    heat: window.mycelia.game.undergroundWeather?.report().visible,
+    active: window.mycelia.game.undergroundWeather?.uniforms.fireActive.value,
+  }));
+  assert(underground.blend < 0.05 && underground.glow > 0.5 && underground.heat && underground.active > 0.9,
+    'fire heat and orange light reach the underground view');
+  await page.screenshot({ path: 'design/shots/fire-underground.png', timeout: 60000 });
+  await page.locator('#view-forest').click();
+  await frames(28);
+
   const after = await page.evaluate(() => {
     const g = window.mycelia.game;
     const m = g.match;
@@ -126,17 +140,110 @@ try {
   assert.equal(after.report.flames, false, 'no flames once the front has passed');
   await page.screenshot({ path: 'design/shots/fire-aftermath.png', timeout: 60000 });
 
+  const recovery = async (seconds) => page.evaluate((seconds) => {
+    const g = window.mycelia.game;
+    g.match.step(seconds);
+    for (let i = 0; i < 5; i++) g.frame(g.lastFrame + 100, false);
+    g.frame(g.lastFrame + 16, true);
+    return {
+      phase: g.match.fire.phase,
+      assets: g.dressing.group.children.filter(o => o.userData.asset && o.visible).map(o => o.userData.asset),
+      scars: g.match.fire.scarredStands.size,
+      dressing: g.dressing.report(),
+      fireDraws: g.dressing.group.children.filter(o => o.visible &&
+        /charred-|ember-bed|ash-bed|fireweed|goldenrod/.test(String(o.userData.asset ?? ''))).length,
+    };
+  }, seconds);
+  const shoots = await recovery(12);
+  assert(shoots.assets.includes('understory.fireweed-sprout'), 'first shoots appear in burned clearings');
+  const flowers = await recovery(70);
+  assert.equal(flowers.phase, 'idle', 'pioneer flowers continue after the ash flush');
+  assert(flowers.assets.includes('understory.fireweed') && flowers.assets.includes('understory.goldenrod'), 'authored wildflowers grow after the fire');
+  assert(flowers.fireDraws <= 10, `pioneer flowers stay batched (${flowers.fireDraws} fire dressing draws)`);
+  await page.evaluate(() => {
+    const g = window.mycelia.game;
+    const flower = g.dressing.fireDecorations.find(d => d.asset === 'understory.fireweed');
+    const at = g.regionToScenePoint({ x: flower.x, y: flower.y, z: flower.z });
+    g.stage.rig.snapForest(at.x, at.z, 26);
+    g.frame(g.lastFrame + 16, true);
+  });
+  await page.screenshot({ path: 'design/shots/fire-pioneers.png', timeout: 60000 });
+  const grass = await recovery(120);
+  assert(grass.assets.includes('understory.grass'), 'grass returns later than the first flowers');
+  assert(grass.scars > 0, 'the burned footprint persists after the power ends');
+  await page.screenshot({ path: 'design/shots/fire-grass-return.png', timeout: 60000 });
+
   const settled = await page.evaluate(() => {
     const g = window.mycelia.game;
-    g.match.step(g.match.fire.remaining + 0.1);
+    g.match.step(240);
     for (let i = 0; i < 60; i++) g.frame(g.lastFrame + 100, false);
-    return { phase: g.match.fire.phase, hidden: document.querySelector('.fire-watch').hidden, flushed: g.match.stands.filter((s) => s.sim.regionalWeather?.fruiting).length };
+    return { phase: g.match.fire.phase, hidden: document.querySelector('.fire-watch').hidden,
+      flushed: g.match.stands.filter((s) => s.sim.regionalWeather?.fruiting).length,
+      recoveryAssets: g.dressing.group.children.filter(o => o.userData.asset && o.visible && String(o.userData.asset).includes('fireweed')).length };
   });
   assert.equal(settled.phase, 'idle');
   assert.equal(settled.hidden, true);
   assert.equal(settled.flushed, 0);
+  assert.equal(settled.recoveryAssets, 0, 'temporary pioneer dressing gives way to the ordinary forest');
+
+  // A second scene exercises the windborne ember front in the real shaders.
+  await page.goto(`${server.url}/?start=best&seed=ember-hurricane-view&qa=fast`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
+  await page.evaluate(() => {
+    const g = window.mycelia.game;
+    g.stop();
+    const net = g.match.active.sim.player;
+    net.evolution.learned = ['living-sheath', 'cord-memory', 'ember-crown', 'storm-crown'];
+    net.evolution.age = 300;
+    net.nodes[0].bondedTree = 0; net.nodes[1].bondedTree = 1;
+    for (const n of net.nodes) { n.carbon = 300; n.water = 100; n.nitrogen = 50; }
+    for (const stand of g.match.stands) {
+      for (const c of stand.sim.world.cells) c.water = 0.9;
+      for (const t of stand.sim.world.trees) if (!t.dead) t.hydration = 1;
+    }
+    document.querySelector('#view-forest').click();
+  });
+  await frames(30);
+  await page.locator('.fire-controls summary').click();
+  await page.locator('.fire-invoke').click();
+  await page.evaluate(() => window.mycelia.game.match.step(46));
+  await page.locator('.storm-controls summary').click();
+  assert.equal(await page.locator('.storm-reason').textContent(), 'Ready to summon');
+  await page.locator('.storm-invoke').click();
+  const hurricane = await page.evaluate(() => {
+    const g = window.mycelia.game;
+    g.match.step(70);
+    for (let i = 0; i < 30; i++) g.frame(g.lastFrame + 100, false);
+    g.frame(g.lastFrame + 16, true);
+    return {
+      phase: g.match.fire.phase,
+      spot: g.match.fire.hurricaneFront,
+      fire: g.renderReport().fire,
+      storm: g.match.storm.phase,
+      torched: g.match.fire.livingTreesBurned,
+      glow: g.stage.fireGlow,
+    };
+  });
+  assert.equal(hurricane.phase, 'burning');
+  assert.ok(hurricane.spot && hurricane.spot.front > hurricane.spot.start, 'windborne ember front is moving');
+  assert.equal(hurricane.storm, 'active');
+  assert.equal(hurricane.fire.draws, 3, 'both fronts share the existing fire draws');
+  assert.ok(hurricane.torched > 0 && hurricane.glow > 0.5, 'watered trees burn under a bright hurricane fire');
+  await page.screenshot({ path: 'design/shots/fire-hurricane.png', timeout: 60000 });
+  const quenched = await page.evaluate(() => {
+    const g = window.mycelia.game;
+    g.match.step(10);
+    for (let i = 0; i < 20; i++) g.frame(g.lastFrame + 100, false);
+    g.frame(g.lastFrame + 16, true);
+    return { fire: g.match.fire.phase, storm: g.match.storm.phase, view: g.renderReport().fire };
+  });
+  assert.equal(quenched.fire, 'aftermath', 'heavy rain quenches fire shortly after ember spread');
+  assert.equal(quenched.storm, 'active', 'the storm is still raining when the flames go out');
+  assert.equal(quenched.view.flames, false, 'open flames are gone after quenching');
+  assert.ok(quenched.view.smoke > 0, 'smoke remains over the ash');
+  await page.screenshot({ path: 'design/shots/fire-hurricane-quenched.png', timeout: 60000 });
   assert.deepEqual(problems, [], 'no browser errors (shaders compiled)');
-  console.log(`PASS wildfire browser: picker (9 tiles), kindled via button, warning smoke, front mid-region with ${burning.burned} trees burned, 3 fire draws, glow ${burning.glow.toFixed(2)}, aftermath flush on ${after.flushed} stands, ${after.living} living trees burned, player ${JSON.stringify(after.losses.player)}, rival ${JSON.stringify(after.losses.rival)}. Synthetic late-game fixture, fast QA.`);
+  console.log(`PASS wildfire browser: picker (9 tiles), warning smoke, front with ${burning.burned} trees burned, 3 fire draws, underground pulse, ${after.flushed} ash-flush stands, shoots then flowers (${flowers.fireDraws} fire dressing draws) then grass after the power clears, ${after.living} living trees burned; hurricane ember front, ${hurricane.torched} watered trees torched, rain quenches before storm ends. Synthetic late-game fixtures, fast QA.`);
 } finally {
   await browser?.close();
   server.stop();

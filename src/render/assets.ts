@@ -75,6 +75,8 @@ export type AssetId =
   | 'prop.charred-stump'
   | 'prop.ember-bed'
   | 'understory.fireweed'
+  | 'understory.fireweed-sprout'
+  | 'understory.goldenrod'
   | 'understory.ash-bed'
   /**
    * Reproductive bodies. The ids match `forest-manifest.json` exactly, so the
@@ -155,6 +157,8 @@ export const ASSETS: readonly AssetSpec[] = [
   { id: 'prop.charred-stump', file: 'props/charred-stump.glb', use: 'charred stump' },
   { id: 'prop.ember-bed', file: 'props/ember-bed.glb', use: 'smouldering coals on ash' },
   { id: 'understory.fireweed', file: 'understory/fireweed.glb', use: 'fireweed on burned ground' },
+  { id: 'understory.fireweed-sprout', file: 'understory/fireweed-sprout.glb', use: 'first fireweed shoots in ash' },
+  { id: 'understory.goldenrod', file: 'understory/goldenrod.glb', use: 'later goldenrod flowers in a fire clearing' },
   { id: 'understory.ash-bed', file: 'understory/ash-bed.glb', use: 'ash bed' },
   { id: 'fungus.spore-body', file: 'fungi/spore-body.glb', use: 'erupting primordium' },
   { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'a rising fruiting body' },

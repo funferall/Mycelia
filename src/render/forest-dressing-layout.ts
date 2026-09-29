@@ -88,7 +88,14 @@ export type DecorationAsset =
   | 'understory.hobblebush'
   | 'understory.trillium'
   | 'understory.litter-autumn'
-  | 'understory.litter-summer';
+  | 'understory.litter-summer'
+  | 'prop.charred-log-a'
+  | 'prop.charred-log-b'
+  | 'prop.ember-bed'
+  | 'understory.ash-bed'
+  | 'understory.fireweed-sprout'
+  | 'understory.fireweed'
+  | 'understory.goldenrod';
 
 /**
  * Forms of each canopy species, with each form's height against the species'

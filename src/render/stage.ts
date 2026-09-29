@@ -251,8 +251,7 @@ export class Stage {
     // Storm light: the forest darkens under the vortex; a strike lights both views.
     this.atmosphere.intensity = blend * (2.1 - this.stormIntensity * 1.25) + this.lightning * 2.4;
     this.key.intensity = (2.6 - blend * .8) * (1 - this.stormIntensity * (.18 + .4 * blend)) + this.lightning * 3.2;
-    // Fire light: an amber cast from the burning front and smoke-thickened air.
-    // Underground it arrives as a faint warm lift, the way heat reads in soil.
+    // Fire light: a pulsing amber cast leaks into the soil while the front runs.
     this.baseKey ??= this.key.color.clone();
     this.baseSky ??= this.atmosphere.color.clone();
     this.baseFog ??= this.fog.color.clone();
@@ -263,9 +262,10 @@ export class Stage {
     this.atmosphere.color.copy(this.baseSky).lerp(DROUGHT_SKY, glare * 0.5).lerp(FIRE_SKY, heat * 0.6);
     this.fog.color.copy(this.baseFog).lerp(DROUGHT_DUST, glare * 0.7).lerp(FIRE_SMOKE, heat * 0.8);
     this.key.intensity *= 1 + glare * 0.25 * blend;
-    this.atmosphere.intensity += heat * 0.15;
+    this.atmosphere.intensity += heat * (0.15 + (1 - blend) * 0.42);
+    this.key.intensity += heat * (1 - blend) * 0.32;
     this.key.intensity *= 1 - heat * 0.25 * blend;
-    this.bloom.strength = 0.42 - blend * 0.31 + heat * 0.06 * blend;
+    this.bloom.strength = 0.42 - blend * 0.31 + heat * (0.06 * blend + 0.12 * (1 - blend));
     this.fog.density = blend * (.001 + this.stormIntensity * .0012 + heat * .00025 + glare * .0003);
     this.scene.fog = blend > 0.01 ? this.fog : null;
     this.renderer.setClearColor(new THREE.Color('#0b0908').lerp(new THREE.Color('#12150f'), blend).multiplyScalar(0.18));

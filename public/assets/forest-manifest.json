@@ -1130,6 +1130,32 @@
       ]
     },
     {
+      "id": "understory.fireweed-sprout",
+      "generator": "tools/make-fire-assets.py",
+      "height": 0.4098,
+      "lods": [
+        {
+          "file": "understory/fireweed-sprout.glb",
+          "triangles": 196,
+          "maxTriangles": 2000,
+          "bytes": 9216
+        }
+      ]
+    },
+    {
+      "id": "understory.goldenrod",
+      "generator": "tools/make-fire-assets.py",
+      "height": 1.3174,
+      "lods": [
+        {
+          "file": "understory/goldenrod.glb",
+          "triangles": 306,
+          "maxTriangles": 2000,
+          "bytes": 17324
+        }
+      ]
+    },
+    {
       "id": "understory.ash-bed",
       "generator": "tools/make-fire-assets.py",
       "height": 0.06,
