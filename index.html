@@ -62,7 +62,6 @@
           rather than sitting there doing nothing.
         -->
         <button type="button" id="forest-reveal" class="journal-action" aria-pressed="false" hidden>Network</button>
-        <button type="button" id="forest-cross" class="journal-action">Grow through a stand edge</button>
         <label for="forest-stand">Survey a stand</label>
         <select id="forest-stand" aria-describedby="stand-status"></select>
         <p id="stand-status" role="status"></p>
@@ -172,6 +171,10 @@
           </li>
         </ul>
         <p class="orders-note" id="order-note" role="status">Awaken the spore when you are ready.</p>
+        <!-- Offered when the frontier grows into another stand; the view never moves on its own. -->
+        <button type="button" id="follow-frontier" class="journal-action follow-frontier" hidden></button>
+        <!-- A mature fruiting body holds its spores until released, or until a gust takes them. -->
+        <button type="button" id="release-spores" class="journal-action release-spores" hidden></button>
       </section>
 
       <!-- The catalogue record. Every number in the game lives here. -->

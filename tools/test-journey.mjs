@@ -261,35 +261,36 @@ for (const bloom of [1, 2]) {
   }
 }
 
-// 5. The match closes on the sheet, and the sheet offers the next one.
+// 5. Two blooms no longer end a regional match: the region decides it. The
+//    spores wait on the stalk, the sheet offers to release them, and a release
+//    founds a colony elsewhere while the match keeps running.
 {
-  const closed = await until('the two-bloom match to close', () => window.mycelia.game.sim.outcome === 'fruited', 600);
   const ended = await matchState();
-  check('two blooms win the match through the interface alone', closed && ended.fruited === 2 && ended.spores >= 480, JSON.stringify({ fruited: ended.fruited, spores: ended.spores, time: ended.time }));
-  const announced = await page.evaluate(() => {
-    const outcome = document.querySelector('#outcome');
-    return { hidden: outcome.hidden, title: document.querySelector('#outcome-title').textContent.trim(), packet: document.querySelector('#packet-count').textContent.trim() };
-  });
   check(
-    'the sheet announces the fruiting',
-    !announced.hidden && /Fruiting recorded/.test(announced.title),
-    JSON.stringify(announced)
+    'two blooms fruit through the interface alone, and the match keeps going',
+    ended.fruited >= 2 && ended.outcome === 'playing',
+    JSON.stringify({ fruited: ended.fruited, outcome: ended.outcome, time: ended.time })
   );
-  check('the spore packet counts what was banked', Number(announced.packet) >= 480, `${announced.packet} spores`);
-
-  const restart = await page.evaluate(() => {
-    const button = [...document.querySelectorAll('#outcome button')].find((entry) => /new sheet/i.test(entry.textContent ?? ''));
-    return button?.textContent?.trim() ?? null;
-  });
-  check('the outcome offers a new sheet', Boolean(restart), `"${restart}"`);
-  if (restart) {
-    await page.evaluate(() => {
-      [...document.querySelectorAll('#outcome button')].find((entry) => /new sheet/i.test(entry.textContent ?? ''))?.click();
-    });
-    await page.waitForFunction(() => window.mycelia?.game?.sim?.time < 30, null, { timeout: 120000 });
-    const fresh = await matchState();
-    check('and the new sheet is a fresh match', fresh.outcome === 'playing' && fresh.fruited === 0, JSON.stringify({ outcome: fresh.outcome, time: fresh.time }));
+  const offered = await until('the release action to be offered', () => {
+    const button = document.querySelector('#release-spores');
+    return Boolean(button && !button.hidden) || window.mycelia.game.match.colonization.length > 0;
+  }, 60);
+  const before = await page.evaluate(() => ({
+    colonies: window.mycelia.game.match.colonization.length,
+    notes: document.querySelector('#notes')?.textContent ?? '',
+  }));
+  check('the sheet offers to release the waiting spores (unless a gust took them first)', offered, JSON.stringify(before));
+  check('the notes report the regional hold instead of a bloom count', /Stands held|Holding/.test(before.notes), before.notes);
+  if (before.colonies === 0) {
+    await page.evaluate(() => document.querySelector('#release-spores')?.click());
   }
+  const released = await until('a spore colony to be founded', () => window.mycelia.game.match.colonization.length > 0, 60);
+  const after = await page.evaluate(() => ({
+    colonies: window.mycelia.game.match.colonization.length,
+    flights: window.mycelia.game.sporeFlights?.active ?? 0,
+    note: document.querySelector('#order-note')?.textContent ?? '',
+  }));
+  check('releasing sends spores on the wind to found a colony', released && after.colonies >= 1, JSON.stringify(after));
 }
 
 await context.close();

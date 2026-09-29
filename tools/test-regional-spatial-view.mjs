@@ -1,4 +1,8 @@
-/** Browser smoke for promoting a played colony into the shared spatial view. */
+/**
+ * Browser smoke for promoting a played colony into the shared spatial view.
+ * The crossing is placed the way a player places it: a grow order in the
+ * neighbouring stand's soil past the end of the underground transect.
+ */
 import assert from 'node:assert/strict';
 import { collectProblems, formatRenderReport, launchBrowser, parseQaPreset, withQaPreset } from './browser.mjs';
 import { startPreview } from './preview.mjs';
@@ -36,7 +40,37 @@ try {
     return false;
   });
   assert.equal(prepared, true, 'the ordinary opening can fund a root bond');
-  await page.evaluate(() => document.querySelector('#forest-cross').click());
+  const edgeClick = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    game.awaken();
+    game.descend();
+    for (let i = 0; i < 120 && game.stage.rig.transitioning; i++) game.frame(performance.now() + i * 50, false);
+    game.frame(performance.now(), false);
+    const sim = game.match.active.sim;
+    const founder = sim.player.nodes[sim.player.rootId];
+    // Twelve columns past whichever end has a neighbouring stand, at the founder's depth.
+    const { GRID } = { GRID: { cols: 136, rows: 112 } };
+    const site = game.region.stands[game.match.activeStandId];
+    const east = site.sx < game.region.cols - 1;
+    const column = east ? GRID.cols + 12 : -12;
+    const scene = new game.stage.rig.camera.position.constructor(
+      column - GRID.cols / 2, GRID.rows / 2 - (founder.gy + 0.5), 0);
+    const camera = game.stage.rig.camera;
+    camera.updateMatrixWorld();
+    const ndc = scene.project(camera);
+    const rect = game.canvas.getBoundingClientRect();
+    const clientX = rect.left + (ndc.x + 1) * rect.width / 2;
+    const clientY = rect.top + (1 - ndc.y) * rect.height / 2;
+    const grid = game.gridAt(clientX, clientY);
+    const strips = game.soil.group.getObjectByName('edge-soil-sheet') !== undefined;
+    game.ui.setActiveOrder('grow');
+    game.applyOrderAt(clientX, clientY);
+    return { grid, east, strips, note: document.querySelector('#order-note').textContent, crossButton: document.querySelector('#forest-cross') !== null };
+  });
+  assert.equal(edgeClick.crossButton, false, 'there is no separate crossing button');
+  assert.equal(edgeClick.strips, true, 'the neighbouring soil is drawn past the transect');
+  assert.ok(edgeClick.grid && (edgeClick.east ? edgeClick.grid.gx >= 136 : edgeClick.grid.gx < 0), `the click lands past the transect's end (${JSON.stringify(edgeClick.grid)})`);
+  assert.match(edgeClick.note, /Frontier directed/, `the edge click orders a crossing: ${edgeClick.note}`);
   const opened = await page.evaluate(() => {
     const game = window.mycelia.game;
     game.frame(performance.now(), false);
@@ -113,6 +147,18 @@ try {
   assert.equal(crossed.growth, 1);
   assert.equal(crossed.colonization, 0);
   assert.ok(crossed.strand.section && crossed.strand.projected);
+  const followed = await page.evaluate(() => {
+    const game = window.mycelia.game;
+    game.frame(performance.now(), false);
+    const button = document.querySelector('#follow-frontier');
+    const offered = !button.hidden && /entered/.test(button.textContent);
+    game.openSection(game.match.spatial.originStandId);
+    button.click();
+    return { offered, stand: game.section?.spec.standId, destination: game.match.spatial.destinationStandId, hidden: button.hidden };
+  });
+  assert.equal(followed.offered, true, 'the frontier crossing offers a Follow prompt');
+  assert.equal(followed.stand, followed.destination, 'Follow opens the stand the frontier entered');
+  assert.equal(followed.hidden, true, 'the prompt goes once taken');
   await page.evaluate(() => document.querySelector('#section-return').click());
   const returned = await page.evaluate(() => {
     const game = window.mycelia.game;
@@ -159,7 +205,7 @@ try {
   assert.equal(picked.section.open, true);
   assert.equal(picked.section.edge, picked.pick.key);
   assert.deepEqual(problems, [], 'no page errors');
-  console.log('PASS regional spatial browser: adopted body, natural seam, section follow, forest return, reveal pick');
+  console.log('PASS regional spatial browser: edge click crosses, neighbour soil drawn, adopted body, natural seam, Follow prompt, section follow, forest return, reveal pick');
 } finally {
   await browser?.close();
   server.stop();

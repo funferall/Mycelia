@@ -606,7 +606,9 @@ try {
     root.nitrogen = 8;
     updateTotals(parent);
     parent.fruited++;
-    for (let i = 0; i < 120 && region.colonization.length === 0; i++) region.step(DT);
+    // A mature body holds its spores until released (or a gust takes them).
+    region.step(DT);
+    assert.equal(region.releaseSpores(origin).ok, true, 'the player releases the waiting spores');
     assert.equal(region.colonization.length, 1, 'one paid spore landed');
     const to = region.colonization[0].to;
     const daughter = region.stands[to].sim.player;

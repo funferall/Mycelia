@@ -46,6 +46,11 @@ export class EvolutionUI {
       panel.querySelector('.primary-intents')!.append(button);
     }
     panel.append(document.querySelector('#order-note')!);
+    // The regional prompts sit under the note: Follow the frontier, Release spores.
+    for (const selector of ['#follow-frontier', '#release-spores']) {
+      const prompt = document.querySelector<HTMLElement>(selector);
+      if (prompt) panel.append(prompt);
+    }
     this.openButton.type = 'button';
     this.openButton.className = 'evolution-open';
     this.openButton.textContent = 'Unfold the tech tree';

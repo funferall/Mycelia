@@ -6,7 +6,7 @@ import { CrossingMatch, chooseCrossing, type CrossingCorridor, type CrossingDire
 import { SoilVolume, seasonalWaterTableOffsetCm } from './soil-volume';
 import { hashString, mulberry32 } from './rng';
 import { bindStandToSharedSoil } from './shared-soil';
-import { elevationAtDepthCm, standFrameOf } from './spatial';
+import { elevationAtDepthCm, standFrameOf, standIdAt } from './spatial';
 import { Wildfire } from './wildfire';
 import { Drought } from './drought';
 import { Flood } from './flood';
@@ -44,6 +44,13 @@ export interface StandState {
   sim: Simulation;
   /** Blooms already released as spores, so each one is credited once. */
   released: number;
+  /** The bloom whose unaffordable release was last announced, so it is said once. */
+  sporeNotice?: number;
+  /**
+   * Set when this stand's own colony fused into another of the player's
+   * colonies: the stand whose regional body now carries its strands.
+   */
+  fusedInto?: number;
   /** Every spore that has landed here, oldest first. */
   arrivals: Array<{ at: number; from: number; spores: number }>;
 }
@@ -59,6 +66,37 @@ export interface Colonization {
   cost: { carbon: number; water: number; nitrogen: number };
 }
 
+/**
+ * The regional victory (`CORE-05`, decided 28 September): hold this many
+ * stands at once, then keep at least that many until the season turns. A
+ * stand is held by whoever dominates it: strictly more bonded trees there.
+ */
+export const HOLD_TILES = 5;
+
+/** Where each side stands against the regional victory. */
+export interface RegionHold {
+  /** Stands this side dominates right now. */
+  tiles: number;
+  /** Season index when the current hold began, or null when not holding. */
+  since: number | null;
+  /** Simulation time the current hold began. */
+  sinceTime: number | null;
+}
+
+export type RegionalVictory = 'playing' | 'won' | 'lost';
+
+/** Two of the player's colonies met and became one network. */
+export interface Fusion {
+  at: number;
+  /** Origin stand of the surviving (older) colony. */
+  into: number;
+  /** Origin stand of the colony that joined it. */
+  from: number;
+  /** Stand where the strands touched. */
+  stand: number;
+  nodes: number;
+}
+
 /** A physical arrival of the same body, distinct from a spore-founded colony. */
 export interface GrowthCrossing {
   at: number;
@@ -70,6 +108,17 @@ export interface GrowthCrossing {
 const SPORE_BEAT = 1;
 /** Wind at or above this is a storm, and spores ride it to a further stand. */
 const STORM_STRENGTH = 1.1;
+
+/**
+ * A mature fruiting body holds its spores until the player releases them or a
+ * gust takes them (`MAP-10`). A gust is a short swell in a seeded wind signal:
+ * at this threshold one comes about every 77 seconds on average and lasts a
+ * few seconds, so waiting for the right wind is a real choice, not a stall.
+ */
+export const SPORE_GUST = 0.65;
+
+/** What happened to one bloom's spores when the wind was offered them. */
+export type SporeRelease = 'released' | 'unaffordable' | 'nowhere' | 'lost';
 
 export const STORM = {
   warning: 60, duration: 45, recovery: 180, reach: 4.25, daughtersPerBloom: 3,
@@ -111,12 +160,31 @@ export class RegionalMatch {
   readonly flood: Flood;
   /** Seeded per storm, so a replay throws down the same trees. */
   private windRng: () => number = () => 1;
-  regionalPlay = false;
+  /**
+   * Regional play is the game: there is no two-bloom win, and every colony
+   * keeps growing and fruiting until the regional victory or extinction.
+   */
+  regionalPlay = true;
+  readonly hold: { player: RegionHold; rival: RegionHold } = {
+    player: { tiles: 0, since: null, sinceTime: null },
+    rival: { tiles: 0, since: null, sinceTime: null },
+  };
+  victory: RegionalVictory = 'playing';
+  private holdClock = 0;
   readonly region: Region;
   readonly stands: StandState[];
   readonly colonization: Colonization[] = [];
   readonly growthCrossings: GrowthCrossing[] = [];
+  readonly fusions: Fusion[] = [];
+  private fusionClock = 0;
   readonly soil: SoilVolume;
+  /**
+   * What each side has learned (`TECH-01`). Adaptations belong to the player,
+   * not to one colony: every colony's `evolution.learned` is this same array,
+   * so learning in one teaches all of them, including daughters founded later.
+   * Ages, active powers and cooldowns stay per colony.
+   */
+  readonly lineage: { readonly player: string[]; readonly rival: string[] } = { player: [], rival: [] };
   /** A spore daughter has its own graph and stores, even when it shares soil. */
   readonly spatialColonies = new Map<number, CrossingMatch>();
   /** The promoted founding body, if the player has directed it through a seam. */
@@ -158,6 +226,97 @@ export class RegionalMatch {
     this.fire = new Wildfire(this, seedText, (text) => this.broadcast(text));
     this.drought = new Drought(this, (text) => this.broadcast(text));
     this.flood = new Flood(this, () => this.storm);
+    for (const stand of this.stands) {
+      this.shareLineage(stand);
+      // No stand stops at two blooms: the region decides the match.
+      stand.sim.regionalContinuation = true;
+    }
+  }
+
+  /**
+   * Bonded trees per stand for each side. A bond belongs to the player unless
+   * the root tip records a rival colony. The rival is a saprotroph and does
+   * not bond trees today, so its count is zero until it gains a measure of
+   * its own (an open question in the regional plan).
+   */
+  standDominance(): Array<{ standId: number; player: number; rival: number; holder: 'player' | 'rival' | null }> {
+    return this.stands.map((stand) => {
+      let player = 0;
+      let rival = 0;
+      for (const tree of stand.sim.world.trees) {
+        if (tree.dead) continue;
+        let mine = false;
+        let theirs = false;
+        for (const tip of tree.rootTips) {
+          if (tip.bondedTo === null) continue;
+          if (tip.bondedColonyId?.startsWith('rival')) theirs = true;
+          else mine = true;
+        }
+        if (mine) player++;
+        if (theirs) rival++;
+      }
+      const holder = player > rival ? 'player' : rival > player ? 'rival' : null;
+      return { standId: stand.site.id, player, rival, holder };
+    });
+  }
+
+  /** Track each side's hold on the region, once a second, and decide the match. */
+  private stepVictory(dt: number): void {
+    if (this.victory !== 'playing') return;
+    this.holdClock += dt;
+    if (this.holdClock < 1) return;
+    this.holdClock = 0;
+    const dominance = this.standDominance();
+    for (const side of ['player', 'rival'] as const) {
+      const hold = this.hold[side];
+      hold.tiles = dominance.filter((entry) => entry.holder === side).length;
+      if (hold.tiles >= HOLD_TILES) {
+        if (hold.since === null) {
+          hold.since = this.seasonIndex;
+          hold.sinceTime = this.time;
+          this.broadcast(side === 'player'
+            ? `You hold ${hold.tiles} stands. Keep at least ${HOLD_TILES} until the season turns to take the region.`
+            : `The rival holds ${hold.tiles} stands. Break its hold before the season turns.`);
+        } else if (this.seasonIndex > hold.since) {
+          this.victory = side === 'player' ? 'won' : 'lost';
+          this.broadcast(side === 'player'
+            ? `The region is yours: ${hold.tiles} stands held through the turn of the season.`
+            : 'The rival held the region through the turn of the season.');
+          return;
+        }
+      } else if (hold.since !== null) {
+        hold.since = null;
+        hold.sinceTime = null;
+        this.broadcast(side === 'player'
+          ? `Your hold on the region broke: ${hold.tiles} of ${HOLD_TILES} stands.`
+          : `The rival's hold broke: ${hold.tiles} of ${HOLD_TILES} stands.`);
+      }
+    }
+  }
+
+  /** Short status line for the instrument: stands held and the hold's progress. */
+  holdStatus(): string {
+    const hold = this.hold.player;
+    if (this.victory === 'won') return `Region taken: ${hold.tiles} stands held.`;
+    if (this.victory === 'lost') return 'The rival took the region.';
+    if (hold.since === null) return `Stands held ${hold.tiles} of ${HOLD_TILES}.`;
+    const season = SEASONS[this.seasonIndex % SEASONS.length]!;
+    const left = Math.max(0, Math.ceil(season.seconds - this.seasonClock));
+    return `Holding ${hold.tiles} stands: keep ${HOLD_TILES} for ${left}s, until the season turns.`;
+  }
+
+  /**
+   * Point a stand's colonies at the shared lineage. Anything a network had
+   * already learned on its own joins the lineage first, so nothing is lost.
+   */
+  private shareLineage(stand: StandState): void {
+    for (const owner of ['player', 'rival'] as const) {
+      const shared = this.lineage[owner];
+      const net = stand.sim[owner];
+      if (net.evolution.learned === shared) continue;
+      for (const id of net.evolution.learned) if (!shared.includes(id)) shared.push(id);
+      net.evolution.learned = shared;
+    }
   }
 
   /** Call the drought from a colony. It has no direction: water decides. */
@@ -281,7 +440,7 @@ export class RegionalMatch {
   }
 
   get outcome(): MatchOutcome {
-    if (this.fruited >= 2 && !this.regionalPlay) return 'fruited';
+    // No two-bloom win in a regional match: see `victory` and `stepVictory`.
     const colonies = this.stands.filter((stand) => stand.sim.hasColony);
     return colonies.length > 0 && colonies.every((stand) =>
       this.spatialOnly(stand) ||
@@ -292,9 +451,23 @@ export class RegionalMatch {
   }
 
   private spatialOnly(stand: StandState): boolean {
+    // A colony that fused into another is carried by that body now.
+    if (stand.fusedInto !== undefined) return true;
     return stand.site.id !== this.region.foundingStand &&
       !this.spatialColonies.has(stand.site.id) && stand.arrivals.length === 0 &&
       [...this.spatialColonies.values()].some((colony) => colony.stand(stand.site.id) !== null);
+  }
+
+  /**
+   * Where a stand's flat underground transect lies in the region: it always
+   * reads west to east along the plane y = `fixedY`, and its local column c is
+   * regional x = `originX` + c. Null before the stand has shared soil.
+   */
+  transectPlane(standId: number): { originX: number; fixedY: number } | null {
+    const corridor = this.corridors.get(standId);
+    const frame = standFrameOf(this.region, standId);
+    if (!corridor || !frame || !corridor.alongIsX) return null;
+    return { originX: frame.originX, fixedY: corridor.fixed };
   }
 
   /** Promote the selected stand's existing network into its own regional graph. */
@@ -446,6 +619,8 @@ export class RegionalMatch {
     this.drought.step(dt);
     this.flood.step(dt);
     this.stepSpores(dt);
+    this.stepFusion(dt);
+    this.stepVictory(dt);
     this.advanceStorm();
     this.fire.advance();
     this.drought.advance();
@@ -519,34 +694,205 @@ export class RegionalMatch {
    * to a neighbouring stand. Adjacent stands are always in reach; only a storm
    * carries a spore past them.
    */
-  private stepSpores(dt: number): void {
+  private stepSpores(dt: number, force = false): void {
     this.sporeClock += dt;
     if (this.sporeClock < SPORE_BEAT) return;
     this.sporeClock = 0;
+    // Mature bodies wait on the wind. A storm's own path (its warning hold and
+    // its arrival) still takes everything, exactly as before.
+    const gust = force || this.storm.phase === 'warning' || this.gusting();
 
     for (const stand of this.stands) {
       for (const owner of ['player', 'rival'] as const) {
         if (owner === 'player' ? !stand.sim.hasColony || this.spatialOnly(stand) : !stand.rivalPresent) continue;
+        if (!gust) continue;
         const key = owner === 'player' ? 'released' : 'rivalReleased';
         while (stand[key] < stand.sim[owner].fruited) {
-          const bloomIndex = stand[key]++;
-          if (this.storm.phase === 'warning') this.heldSpores.push({ from: stand.site.id, owner, bloomIndex });
-          else this.release(stand, owner, bloomIndex);
+          const bloomIndex = stand[key];
+          if (this.storm.phase === 'warning') {
+            stand[key]++;
+            this.heldSpores.push({ from: stand.site.id, owner, bloomIndex });
+            continue;
+          }
+          const outcome = this.release(stand, owner, bloomIndex);
+          // A gust cannot lift spores the colony cannot pay to send: they stay
+          // on the stalk for a richer moment. A forced release (the storm's own
+          // flush) spends them as it always has.
+          if (outcome === 'unaffordable' && !force) {
+            if (owner === 'player' && stand.sporeNotice !== bloomIndex) {
+              stand.sporeNotice = bloomIndex;
+              stand.sim.events.unshift({ at: this.time, text: `A gust passed, but the colony is too poor to send spores: ${this.sporeCostText()}` });
+            }
+            break;
+          }
+          stand[key]++;
+          if (owner === 'player' && outcome === 'released') {
+            stand.sim.events.unshift({ at: this.time, text: 'A gust lifted the spores off the fruiting body.' });
+          }
         }
       }
     }
   }
 
-  private release(from: StandState, owner: Owner = 'player', bloomIndex = 0): void {
+  /**
+   * Fuse any two of the player's colonies whose living strands touch
+   * (26-neighbour voxels in the shared soil). Checked once a second, in
+   * stable stand order; the older colony survives and the younger joins it.
+   */
+  private stepFusion(dt: number): void {
+    this.fusionClock += dt;
+    if (this.fusionClock < 1) return;
+    this.fusionClock = 0;
+    const bodies = this.playerBodies();
+    if (bodies.length < 2) return;
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const older = bodies[i]!;
+        const younger = bodies[j]!;
+        const contact = this.contactBetween(older.positions, younger.positions, younger.standId);
+        if (!contact) continue;
+        this.fuse(older, younger, contact.a, contact.b, contact.stand);
+        return; // One fusion per check: the body list has changed.
+      }
+    }
+  }
+
+  /**
+   * The player's living colonies, oldest first: the founding colony, then
+   * daughters in the order their spores landed. A colony that has not been
+   * given its regional body yet is included by its recorded positions.
+   */
+  private playerBodies(): Array<{ standId: number; positions: Array<{ id: number; position: { x: number; y: number; z: number } }> }> {
+    const order = (standId: number) => {
+      if (standId === this.region.foundingStand) return -1;
+      return this.require(standId).arrivals[0]?.at ?? Infinity;
+    };
+    const out: Array<{ standId: number; positions: Array<{ id: number; position: { x: number; y: number; z: number } }> }> = [];
+    for (const stand of this.stands) {
+      if (!stand.sim.hasColony || stand.fusedInto !== undefined) continue;
+      const body = this.spatialColonies.get(stand.site.id);
+      if (body) {
+        if (body.colony.extinct) continue;
+        out.push({ standId: stand.site.id, positions: body.livingPositions() });
+      } else if (!this.spatialOnly(stand) && !stand.sim.player.extinct) {
+        const positions: Array<{ id: number; position: { x: number; y: number; z: number } }> = [];
+        for (const node of stand.sim.player.nodes) if (node.alive && node.spatial) positions.push({ id: node.id, position: node.spatial });
+        out.push({ standId: stand.site.id, positions });
+      }
+    }
+    out.sort((p, q) => (order(p.standId) - order(q.standId)) || (p.standId - q.standId));
+    return out;
+  }
+
+  /** The first pair of living nodes in neighbouring voxels, scanning in id order. */
+  private contactBetween(
+    a: Array<{ id: number; position: { x: number; y: number; z: number } }>,
+    b: Array<{ id: number; position: { x: number; y: number; z: number } }>,
+    younger: number
+  ): { a: number; b: number; stand: number } | null {
+    const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
+    const voxels = new Map<string, number>();
+    for (const entry of a) {
+      const k = key(Math.floor(entry.position.x), Math.floor(entry.position.y), Math.floor(entry.position.z));
+      if (!voxels.has(k)) voxels.set(k, entry.id);
+    }
+    for (const entry of b) {
+      const x = Math.floor(entry.position.x), y = Math.floor(entry.position.y), z = Math.floor(entry.position.z);
+      for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const hit = voxels.get(key(x + dx, y + dy, z + dz));
+        if (hit === undefined) continue;
+        return { a: hit, b: entry.id, stand: standIdAt(this.region, entry.position.x, entry.position.y) ?? younger };
+      }
+    }
+    return null;
+  }
+
+  private fuse(
+    older: { standId: number },
+    younger: { standId: number },
+    mine: number,
+    theirs: number,
+    stand: number
+  ): void {
+    const into = this.ensureSpatialColony(older.standId);
+    const from = this.ensureSpatialColony(younger.standId);
+    const result = into.absorb(from, mine, theirs);
+    if (result.nodes === 0) return;
+    this.spatialColonies.delete(younger.standId);
+    if (this.spatial === from) this.spatial = into;
+    const joined = this.require(younger.standId);
+    const survivor = this.require(older.standId);
+    joined.fusedInto = older.standId;
+    // Spores already on the stalk travel with the network that now carries them.
+    survivor.released += joined.released;
+    this.fusions.push({ at: this.time, into: older.standId, from: younger.standId, stand, nodes: result.nodes });
+    this.broadcast(`Two of your colonies met in stand ${stand + 1} and fused into one network (${result.nodes} strands joined).`);
+  }
+
+  /** The seeded gust signal, 0..1-ish; a gust is `gustAt(t) >= SPORE_GUST`. */
+  gustAt(time = this.time): number {
+    const seed = this.region.seed >>> 0;
+    const phase = (shift: number) => (((seed >>> shift) & 1023) / 1023) * Math.PI * 2;
+    return (Math.sin(time * 0.21 + phase(0)) + Math.sin(time * 0.29 + phase(10)) + Math.sin(time * 0.13 + phase(20))) / 3;
+  }
+
+  /** True while a gust (or a storm-strength wind) would lift waiting spores. */
+  gusting(time = this.time): boolean {
+    return this.storm.phase === 'active' || this.wind.strength >= STORM_STRENGTH || this.gustAt(time) >= SPORE_GUST;
+  }
+
+  /** Blooms whose spores are still on the stalk in this stand. */
+  sporesReady(standId: number, owner: Owner = 'player'): number {
+    const stand = this.stands[standId];
+    if (!stand) return 0;
+    if (owner === 'player' && (!stand.sim.hasColony || this.spatialOnly(stand))) return 0;
+    return Math.max(0, stand.sim[owner].fruited - (owner === 'player' ? stand.released : stand.rivalReleased));
+  }
+
+  private sporeCostText(): string {
+    const c = ECON.colonyFund;
+    return `a spore needs ${c.carbon} carbon, ${c.water} water and ${c.nitrogen} nitrogen in connected strands.`;
+  }
+
+  /**
+   * The player's order: release the oldest waiting bloom's spores now, on
+   * whatever wind is blowing. The wind still decides where they land.
+   */
+  releaseSpores(standId: number): { ok: boolean; message: string } {
+    const stand = this.stands[standId];
+    if (!stand || !stand.sim.hasColony || this.spatialOnly(stand)) {
+      return { ok: false, message: 'No colony of yours holds spores here.' };
+    }
+    if (stand.released >= stand.sim.player.fruited) {
+      return { ok: false, message: 'No fruiting body is holding spores. Fruit first.' };
+    }
+    if (this.storm.phase === 'warning') {
+      return { ok: false, message: 'The storm is gathering: these spores will ride it when it arrives.' };
+    }
+    const bloomIndex = stand.released;
+    const outcome = this.release(stand, 'player', bloomIndex);
+    if (outcome === 'unaffordable') return { ok: false, message: `Too poor to release: ${this.sporeCostText()}` };
+    stand.released++;
+    if (outcome === 'released') {
+      const landed = this.colonization[this.colonization.length - 1];
+      const site = landed ? this.region.stands[landed.to] : null;
+      return { ok: true, message: site ? `Spores released on the wind. They are carried toward stand ${site.id + 1}.` : 'Spores released on the wind.' };
+    }
+    if (outcome === 'nowhere') return { ok: true, message: 'Spores released, but the wind carried them where nothing of yours could take hold.' };
+    return { ok: true, message: 'The body was lost before it could release; its spores are gone.' };
+  }
+
+  private release(from: StandState, owner: Owner = 'player', bloomIndex = 0): SporeRelease {
     const parent = from.sim[owner];
     markConnectivity(parent);
-    if (parent.extinct || !parent.nodes[parent.rootId]?.alive) return;
+    if (parent.extinct || !parent.nodes[parent.rootId]?.alive) return 'lost';
     const bloom = parent.blooms[bloomIndex];
     // A held body needs a surviving supplied strand at release. No resurrection,
     // refund, or replay if the site has been severed during the countdown.
-    if (this.storm.phase === 'active' && bloom && !parent.nodes.some(n => n.alive && n.connected && n.water >= ECON.fruitWaterDraw && n.nitrogen >= ECON.fruitNitrogenDraw && (bloom.spatial && n.spatial ? Math.hypot(n.spatial.x-bloom.spatial.x,n.spatial.y-bloom.spatial.y,n.spatial.z-bloom.spatial.z) : Math.hypot(n.gx-bloom.gx,n.gy-bloom.gy)) <= 3)) return;
+    if (this.storm.phase === 'active' && bloom && !parent.nodes.some(n => n.alive && n.connected && n.water >= ECON.fruitWaterDraw && n.nitrogen >= ECON.fruitNitrogenDraw && (bloom.spatial && n.spatial ? Math.hypot(n.spatial.x-bloom.spatial.x,n.spatial.y-bloom.spatial.y,n.spatial.z-bloom.spatial.z) : Math.hypot(n.gx-bloom.gx,n.gy-bloom.gy)) <= 3)) return 'lost';
     const wind = this.wind;
     let budget = this.storm.phase === 'active' ? STORM.daughtersPerBloom : 1;
+    let founded = 0;
     for (const targetId of this.sporeTargets(from.site.id, wind.direction, this.storm.phase === 'active', owner)) {
       const target = this.require(targetId);
       // A rejected landing cannot spend a kit. Bind/validate the real soil
@@ -554,13 +900,14 @@ export class RegionalMatch {
       try { this.ensureSharedSoil(targetId); } catch { continue; }
       const cost = ECON.colonyFund;
       // A colony pays for its daughter out of what it is holding. A parent that
-      // cannot afford the journey does not send anyone, and the spore is only
-      // ever a score.
-      if (!payColonyFund(parent, cost)) return;
+      // cannot afford the journey does not send anyone and is never put in debt.
+      if (!payColonyFund(parent, cost)) return founded > 0 ? 'released' : 'unaffordable';
       if (owner === 'player') this.found(target, from, cost, wind.strength);
       else this.foundRival(target, from, cost, wind.strength);
-      if (--budget <= 0) return;
+      founded++;
+      if (--budget <= 0) break;
     }
+    return founded > 0 ? 'released' : 'nowhere';
   }
 
   private found(target: StandState, from: StandState, cost: { carbon: number; water: number; nitrogen: number }, wind: number): void {
@@ -568,6 +915,8 @@ export class RegionalMatch {
     // the soil that was already under it.
     this.ensureSharedSoil(target.site.id);
     target.sim.foundColony(cost);
+    // The daughter is born knowing everything the player has learned.
+    this.shareLineage(target);
     target.sim.regionalContinuation = this.regionalPlay;
     target.sim.player.colonyId = `player@${this.seedText}:stand-${target.site.id}`;
     this.ensureSpatialColony(target.site.id);
@@ -576,10 +925,7 @@ export class RegionalMatch {
     const at = this.time;
     target.arrivals.push({ at, from: from.site.id, spores: cost.carbon });
     this.colonization.push({ at, from: from.site.id, to: target.site.id, wind, cost: { ...cost } });
-    target.sim.events.unshift({
-      at,
-      text: `A spore from the ${from.site.community.replace(/-/g, ' ')} founds a colony in the ${target.site.community.replace(/-/g, ' ')}.`,
-    });
+    this.broadcast(`Spores from stand ${from.site.id + 1} (${from.site.community.replace(/-/g, ' ')}) found a colony in stand ${target.site.id + 1} (${target.site.community.replace(/-/g, ' ')}).`);
   }
 
   get wind() {
@@ -629,7 +975,7 @@ export class RegionalMatch {
     if (status !== 'Ready to summon') return status;
     if (!payColonyFund(net!, STORM.cost)) return 'The connected reserve changed; bank the storm cost.';
     // Previous completed blooms belong to the old weather, never this warning.
-    this.stepSpores(SPORE_BEAT);
+    this.stepSpores(SPORE_BEAT, true);
     this.continueGrowing();
     Object.assign(this.storm, {
       phase: 'warning', direction: ((direction % (Math.PI*2)) + Math.PI*2) % (Math.PI*2),
@@ -664,14 +1010,14 @@ export class RegionalMatch {
 
   private advanceStorm(): void {
     if (this.storm.phase === 'warning' && this.time >= this.storm.activeAt - 1e-8) {
-      this.stepSpores(SPORE_BEAT);
+      this.stepSpores(SPORE_BEAT, true);
       this.storm.phase = 'active';
       this.windRng = mulberry32(hashString(`${this.seedText}:windfall:${this.storm.sequence}`));
       for (const held of this.heldSpores.splice(0)) this.release(this.require(held.from),held.owner,held.bloomIndex);
       this.broadcast('The storm has arrived. Fresh spores ride the chosen wind across the region. The stream is rising.');
     }
     if (this.storm.phase === 'active' && this.time >= this.storm.endsAt - 1e-8) {
-      this.stepSpores(SPORE_BEAT);
+      this.stepSpores(SPORE_BEAT, true);
       this.storm.phase = 'recovery';
       this.broadcast('The storm is passing. Ordinary dispersal resumes.');
     }
@@ -698,6 +1044,7 @@ export class RegionalMatch {
     this.ensureSharedSoil(target.site.id);
     target.sim.rival = createNetwork('rival','Storm-born decomposer',old.gx,old.gy,mulberry32(hashString(`${this.seedText}:rival:${target.site.id}:${this.storm.sequence}`)),cost.carbon,{water:cost.water,nitrogen:cost.nitrogen});
     target.sim.rival.colonyId = `rival@${this.seedText}:stand-${target.site.id}`;
+    this.shareLineage(target);
     target.rivalPresent = true;
     target.sim.rivalEnabled = true;
     target.sim.regionalContinuation = this.regionalPlay;

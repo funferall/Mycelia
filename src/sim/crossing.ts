@@ -687,6 +687,101 @@ export class CrossingMatch {
   }
 
   // -------------------------------------------------------------------------
+  // Fusion
+  // -------------------------------------------------------------------------
+
+  /**
+   * Take another of the same player's colonies into this one where their
+   * strands touch (`MAP-15`, decided 28 September: fusion is automatic).
+   *
+   * Every node of the other graph joins this graph with its id shifted past
+   * ours; its founding node is re-parented to our node at the contact, so the
+   * two become one connected body. Resources are carried node by node, so the
+   * total is conserved exactly. Its stores (surplus, a body in progress,
+   * blooms) join ours, its tree bonds are re-pointed at the same trees in our
+   * table, and it is left empty and extinct. Subclusters of the absorbed
+   * graph rejoin the colony at large.
+   */
+  absorb(other: CrossingMatch, mine: number, theirs: number): { nodes: number; bonds: number } {
+    const a = this.colony;
+    const b = other.colony;
+    if (a === b || !a.nodes[mine]?.alive || !b.nodes[theirs]?.alive) return { nodes: 0, bonds: 0 };
+    const offset = a.nodes.length;
+    // Both graphs keep regional x as origin + column; y, lateral and depth are
+    // already absolute, so only the along axis shifts.
+    const dx = other.originX - this.originX;
+    // Everything the other graph had reached, we now hold: its trees join our table.
+    for (const stand of other.stands) this.activate(stand.site.id, `Fused with a colony holding stand ${stand.site.id + 1}`, null);
+    let bonds = 0;
+    for (const node of b.nodes) {
+      const moved: HyphaNode = {
+        ...node,
+        id: node.id + offset,
+        parent: node.parent >= 0 ? node.parent + offset : mine,
+        children: node.children.map((child) => child + offset),
+        gx: node.gx + dx,
+        wx: node.wx + dx,
+        targetGx: node.targetGx + dx,
+        group: 0,
+      };
+      if (node.bondedTree >= 0) {
+        const ref = other.view.treeRefAt(node.bondedTree);
+        const index = ref ? this.treeIndex(ref) : -1;
+        const tree = index >= 0 ? (this.view.trees[index] as Tree) : null;
+        const tip = tree?.rootTips[node.bondedRootTip];
+        if (tree && tip && tip.bondedTo === node.id) {
+          moved.bondedTree = index;
+          tip.bondedTo = moved.id;
+          tip.bondedColonyId = a.colonyId ?? null;
+          bonds++;
+        } else {
+          moved.bondedTree = -1;
+          moved.bondedRootTip = -1;
+        }
+      }
+      a.nodes.push(moved);
+    }
+    // The other founding spore hangs from our node at the contact.
+    const joinedRoot = b.rootId + offset;
+    (a.nodes[joinedRoot] as HyphaNode).parent = mine;
+    (a.nodes[mine] as HyphaNode).children.push(joinedRoot);
+    // Stores and reproduction join ours.
+    a.surplus += b.surplus;
+    a.spores += b.spores;
+    a.fruited += b.fruited;
+    a.lengthCm += b.lengthCm;
+    a.tipCount += b.tipCount;
+    a.blooms.push(...b.blooms.map((bloom) => ({ ...bloom, gx: bloom.gx + dx })));
+    if (b.fruit.active) {
+      if (!a.fruit.active) {
+        a.fruit = { ...b.fruit, nodeId: b.fruit.nodeId + offset, gx: b.fruit.gx + dx };
+      } else {
+        // One body at a time: the second body's committed energy returns to the reserve.
+        a.surplus += b.fruit.store;
+      }
+    }
+    // The absorbed graph is now empty.
+    b.nodes = [];
+    b.extinct = true;
+    b.fruit = { ...b.fruit, active: false, store: 0, progress: 0 };
+    b.surplus = 0;
+    b.waypoints = [];
+    b.groups = undefined;
+    updateTotals(b);
+    markConnectivity(a);
+    updateTotals(a);
+    this.log(`Fused with the colony founded in stand ${other.originStandId + 1}: ${a.nodes.length - offset} strands joined.`);
+    return { nodes: a.nodes.length - offset, bonds };
+  }
+
+  /** Every living node with its regional position, for contact tests. */
+  livingPositions(): Array<{ id: number; position: NodePosition }> {
+    const out: Array<{ id: number; position: NodePosition }> = [];
+    for (const node of this.colony.nodes) if (node.alive) out.push({ id: node.id, position: this.nodePosition(node) });
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // Orders
   // -------------------------------------------------------------------------
 

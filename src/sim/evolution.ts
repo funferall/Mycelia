@@ -1,6 +1,11 @@
 import { markConnectivity, type Network } from './network';
 
-/** Adaptations belong to a body. Promotion keeps them; a new spore starts anew. */
+/**
+ * Adaptations belong to the player, not to one body: in a regional match every
+ * colony shares one learned list (`RegionalMatch.lineage`), so a spore daughter
+ * starts with everything learned. Readiness is still judged on the colony
+ * doing the learning, and powers keep per-colony timers.
+ */
 export const ADAPTATIONS = [
   { id: 'storm-crown', branch: 'Fruiting', name: 'Storm crown', parent: 'spore-memory', need: 'Five minutes of colony life, a completed fruiting, Mineral weave and two living bonds.', effect: 'Summon a shared storm. Choose its wind, prepare fruiting bodies, and colonize farther downwind.', ready: (n: Network) => n.evolution.age >= 300 && n.fruited >= 1 && bonds(n) >= 2 && n.evolution.learned.includes('mineral-weave') },
   { id: 'deep-drink', branch: 'Exchange', name: 'Deep drink', parent: '', need: 'Sustain a living root bond.', effect: 'Draw water from occupied soil 20% faster.', ready: (n: Network) => bonds(n) >= 1 },

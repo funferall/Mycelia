@@ -311,6 +311,8 @@ function dump(region, seed) {
     stand.sim.player.fruited += 1;
     const events = m.colonization.length;
     let before = stand.sim.player.carbon;
+    // A mature body holds its spores: the player releases them.
+    m.releaseSpores(standId);
     for (let i = 0; i < 240 && m.colonization.length === events; i++) {
       before = stand.sim.player.carbon;
       m.step(1 / 60);

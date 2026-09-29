@@ -261,3 +261,31 @@ export function horizonBands(world: World): Array<{ id: StratumId; label: string
   if (last) last.toCm = GRID.rows * GRID.cmPerRow;
   return bands;
 }
+
+/** What a soil colour depends on, whether it comes from a local cell or the regional volume. */
+export interface SoilLook {
+  readonly stratum: StratumId;
+  readonly water: number;
+  readonly organic: number;
+  readonly nitrogen: number;
+  readonly occupancy: number;
+  readonly stream: boolean;
+  /** 0 far above the water table, 1 at or below it. */
+  readonly saturation: number;
+}
+
+/**
+ * The mount's soil colour for one sample, as the particle soil above paints it
+ * (without its per-particle depth shade), so a section of the regional volume
+ * reads as the same ground.
+ */
+export function soilColour(look: SoilLook, target: THREE.Color): THREE.Color {
+  if (look.stream) return target.copy(_notch).lerp(_stream, look.saturation).multiplyScalar(0.85);
+  target.copy(STRATUM_COLOR[look.stratum]);
+  target.multiplyScalar(1 - look.water * 0.3);
+  target.lerp(_cool, look.water * 0.12);
+  target.lerp(_warm, look.organic * 0.18);
+  target.lerp(_dust, Math.max(0, 0.35 - look.nitrogen) * 0.5);
+  target.lerp(_saturated, 0.38 * look.saturation);
+  return target;
+}

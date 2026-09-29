@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { GRID, PLAYER_PALETTE } from '../sim/content';
 import type { Vec3 } from '../sim/spatial';
 import type { ClippedEdge, SectionClip, SectionSpec } from './sections';
+import { soilColour, type SoilLook } from './soil';
 
 /** Amber for the living section, dimmer brown for a severed remnant. */
 const LIVE = new THREE.Color(PLAYER_PALETTE.core[0], PLAYER_PALETTE.core[1], PLAYER_PALETTE.core[2]);
@@ -23,6 +24,23 @@ const FRAME = new THREE.Color(0.72, 0.65, 0.48);
 const MARK = new THREE.Color(PLAYER_PALETTE.glow[0], PLAYER_PALETTE.glow[1], PLAYER_PALETTE.glow[2]);
 /** How far a continuation mark reaches beyond the slab, in region units. */
 const MARK_LENGTH = 2.4;
+/**
+ * How far the drawn soil runs past each end of the section, into the next
+ * stand, in region units. The section's own stand is the subject; the
+ * neighbour is shown faintly so the edge reads as a seam, not a wall.
+ */
+export const SECTION_SOIL_MARGIN = 48;
+/** How bright a neighbouring stand's soil is, against the section's own. */
+const NEIGHBOUR_SHADE = 0.42;
+const SEAM = new THREE.Color(0.86, 0.76, 0.52);
+
+/** What the backdrop needs from the regional soil. */
+export interface SectionSoilSource {
+  /** The soil's look at a regional point, or null outside the region. */
+  sample(x: number, y: number, z: number): SoilLook | null;
+  /** Which stand owns a horizontal position, or null outside the region. */
+  standAt(x: number, y: number): number | null;
+}
 
 export class SectionView {
   readonly group = new THREE.Group();
@@ -36,6 +54,11 @@ export class SectionView {
   /** Strand nodes as dots: at fixture spacing a one-unit segment is tiny. */
   private nodes: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
   private spec: SectionSpec | null = null;
+  /** The regional soil drawn behind the strands, running into the neighbours. */
+  private soil: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
+  private seams: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null;
+  private soilSource: SectionSoilSource | null = null;
+  private soilFor: string | null = null;
   private strandCount = 0;
   private markCount = 0;
 
@@ -45,11 +68,25 @@ export class SectionView {
     this.group.visible = false;
   }
 
-  /** Which slab is being shown. Rebuilds only the frame. */
+  /** Which slab is being shown. Rebuilds the frame, and the soil if the slab changed. */
   setSection(spec: SectionSpec | null): void {
     this.spec = spec;
     this.group.visible = spec !== null;
     this.buildFrame();
+    if ((spec?.id ?? null) !== this.soilFor) this.buildSoil();
+  }
+
+  /** Where the soil backdrop reads its material from. */
+  setSoilSource(source: SectionSoilSource | null): void {
+    this.soilSource = source;
+    this.soilFor = null;
+    this.buildSoil();
+  }
+
+  /** Redraw the soil, e.g. after the ground has changed under a power. */
+  refreshSoil(): void {
+    this.soilFor = null;
+    this.buildSoil();
   }
 
   /**
@@ -126,7 +163,13 @@ export class SectionView {
   }
 
   dispose(): void {
-    for (const batch of [this.strands, this.marks, this.frame, this.nodes]) {
+    if (this.soil) {
+      this.group.remove(this.soil);
+      this.soil.geometry.dispose();
+      this.soil.material.dispose();
+      this.soil = null;
+    }
+    for (const batch of [this.strands, this.marks, this.frame, this.nodes, this.seams]) {
       if (!batch) continue;
       this.group.remove(batch);
       batch.geometry.dispose();
@@ -136,9 +179,105 @@ export class SectionView {
     this.marks = null;
     this.frame = null;
     this.nodes = null;
+    this.seams = null;
   }
 
   // -------------------------------------------------------------------------
+
+  /**
+   * The ground the section cuts through, as a vertex-coloured sheet one unit
+   * per column and one centimetre per row, running past both ends into the
+   * neighbouring stands. It sits behind the strands and is rebuilt only when
+   * the section changes: soil does not move fast enough to need more.
+   */
+  private buildSoil(): void {
+    if (this.soil) {
+      this.group.remove(this.soil);
+      this.soil.geometry.dispose();
+      this.soil.material.dispose();
+      this.soil = null;
+    }
+    const spec = this.spec;
+    const source = this.soilSource;
+    this.soilFor = spec?.id ?? null;
+    if (!spec || !source) {
+      this.seams = this.replace(this.seams, new Float32Array(0), new Float32Array(0), 0.5);
+      return;
+    }
+    const from = Math.floor(spec.alongFrom - SECTION_SOIL_MARGIN);
+    const to = Math.ceil(spec.alongTo + SECTION_SOIL_MARGIN);
+    const rows = Math.max(2, Math.round(spec.depthToCm - spec.depthFromCm) + 1);
+    const depthAt = (row: number) => spec.depthFromCm + ((spec.depthToCm - spec.depthFromCm) * row) / (rows - 1);
+    const positions: number[] = [];
+    const colours: number[] = [];
+    const indices: number[] = [];
+    const colour = new THREE.Color();
+    const seamPositions: number[] = [];
+    const seamColours: number[] = [];
+    // Columns run left to right; a column outside the region breaks the sheet
+    // so nothing is drawn past the region's own edge.
+    let previousColumn: number | null = null;
+    let previousStand: number | null = null;
+    for (let along = from; along <= to; along++) {
+      const top = pointOn(spec, along, spec.depthFromCm, this.groundAt);
+      const stand = source.standAt(top.x, top.y);
+      if (stand === null) {
+        previousColumn = null;
+        previousStand = null;
+        continue;
+      }
+      const own = stand === spec.standId;
+      const column = positions.length / 3;
+      for (let row = 0; row < rows; row++) {
+        const point = pointOn(spec, along, depthAt(row), this.groundAt);
+        const scene = this.toScene(point);
+        positions.push(scene.x, scene.y, scene.z);
+        const look = source.sample(point.x, point.y, point.z);
+        if (look) soilColour(look, colour);
+        else colour.setRGB(0.05, 0.045, 0.04);
+        // The grain of the ground: a fixed per-voxel hash, never animated.
+        const grain = 0.86 + 0.28 * hash(along, row);
+        colour.multiplyScalar(grain * (0.8 + 0.2 * (1 - row / rows)) * (own ? 1.15 : NEIGHBOUR_SHADE));
+        colours.push(colour.r, colour.g, colour.b);
+      }
+      if (previousColumn !== null) {
+        for (let row = 0; row < rows - 1; row++) {
+          const a = previousColumn + row;
+          const b = column + row;
+          indices.push(a, b, a + 1, b, b + 1, a + 1);
+        }
+      }
+      // A stand boundary inside the sheet: a dashed seam from ground to depth.
+      if (previousStand !== null && previousStand !== stand) {
+        for (let row = 0; row < rows - 1; row += 3) {
+          const a = this.toScene(pointOn(spec, along - 0.5, depthAt(row), this.groundAt));
+          const b = this.toScene(pointOn(spec, along - 0.5, depthAt(Math.min(rows - 1, row + 2)), this.groundAt));
+          seamPositions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          seamColours.push(SEAM.r, SEAM.g, SEAM.b, SEAM.r, SEAM.g, SEAM.b);
+        }
+      }
+      previousColumn = column;
+      previousStand = stand;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+    });
+    this.soil = new THREE.Mesh(geometry, material);
+    this.soil.frustumCulled = false;
+    // Drawn first, so every strand, node and mark sits over it.
+    this.soil.renderOrder = -2;
+    this.group.add(this.soil);
+    this.seams = this.replace(this.seams, new Float32Array(seamPositions), new Float32Array(seamColours), 0.55);
+  }
 
   /** The slab's own outline: extent along the plane, and its depth. */
   private buildFrame(): void {
@@ -220,6 +359,13 @@ export class SectionView {
     this.group.add(points);
     return points;
   }
+}
+
+/** A stable 0..1 hash for the soil's grain. */
+function hash(a: number, b: number): number {
+  let h = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 /** A point on the section plane at a given along-distance and depth. */

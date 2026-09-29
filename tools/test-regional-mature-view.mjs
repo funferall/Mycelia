@@ -40,6 +40,8 @@ try {
     parent.water = 12;
     parent.nitrogen = 8;
     parent.fruited++;
+    game.match.step(1 / 60);
+    game.match.releaseSpores(game.match.activeStandId);
     for (let i = 0; i < 120 && game.match.colonization.length === 0; i++) game.match.step(1 / 60);
     const landing = game.match.colonization[0];
     if (!landing) return null;

@@ -267,7 +267,7 @@ and equivalent useful details have been accounted for, then remove it.
 | CORE-02 | Verified | Resource conservation and founding reserve | Birth, decay, harvest, construction, reserve and exact connected-path bond-charge assertions pass. |
 | CORE-03 | Verified | Living connectivity and tree trade | Cut supply and dead-founder disconnection tests pass. A reachable free junction may draw the 1.1-carbon bond charge from its connected ancestors, with the founder paying first; an unfunded or severed path cannot bond. |
 | CORE-04 | Verified | Supplied fruiting and stored bloom history | Weather pause, supplied progress, severed loss, and actual bloom locations are covered. A bloom also records the ground its own strand physically stands on, which is what lets the same body be found above the forest floor. |
-| CORE-05 | Implemented, unverified | Repeatable two-bloom victory | `raven-wood`, `old-growth`, and `ironwood` completed through public orders with 480 spores on an earlier tree. Remaining: complete the full-match rerun after the opening bond funding change. |
+| CORE-05 | Implemented, unverified | Regional victory (replaces the two-bloom win) | A regional match no longer ends at two blooms: `RegionalMatch.regionalPlay` defaults to true and every stand's simulation continues past its bloom goal. A standalone single-stand `Simulation` keeps the two-bloom goal for the headless journey. The match is won by holding `HOLD_TILES` = 5 stands, where a stand is held by strictly more bonded trees than the rival, and keeping at least 5 until the season index advances (`stepVictory`, checked once a second). A broken hold is announced and resets. The instrument's notes line shows `holdStatus()`. A victory overlay offers a new sheet or Keep growing. `test:regional-play` covers: no two-bloom win; win through a season turn; a broken hold with no win; a tied stand not counting. Remaining: a played-browser win, a stand-by-stand hold view in the survey, and a rival domination measure (the rival never bonds trees, so it cannot win yet). See "Major plan: regional spread" under Current priorities. |
 | CORE-06 | Verified | Outcome and command guards | Invalid/deep fruiting, permanent cords, and post-outcome guards pass. |
 | CORE-07 | Implemented, unverified | First-player journey through the actual UI | An earlier `test:journey` run clicked through the full `raven-wood` match to 2 blooms, 480 spores and a fresh sheet. The current tree has a played-browser check of the lean-strand `oak` opening through its successful bond. Remaining: complete a current whole-match UI rerun through both blooms and restart. |
 | CORE-08 | Partial | Subclusters: steer parts of a large colony separately | Requested 28 September. Underground, press and hold on the soil to grow a selection circle (starts at 2 cells, +14 cells/s, max 42); release to split the living strands inside into a subcluster (`GrowthGroup` in `network.ts`). Needs a colony of at least 60 strands and a selection of at least 6; at most 6 subclusters. Subclusters stay one network: while joined to the root they share carbon, water and minerals, and cut-off strands starve as before. Orders (Grow clicks, Rest/Wake) go to the selected subcluster; Esc returns to the colony at large; keys 1-6 select; a bar under Grow/Share/Rest lists strands and tips and merges groups back. One shared tip allowance: a subcluster or the colony with an order and fewer than 2 tips sprouts from its own strand nearest the target, and when the allowance is spent the group with the most tips retires its youngest tip to make room. The selected subcluster's strands and tips are lit pale blue. A never-split colony is bit-identical to before. Gaps: local transect only (not section views or regional spatial colonies); Bond, Cord and Fruit orders are not group-specific; no touch equivalent for press-and-hold beyond a held touch; the rival does not use subclusters; balance of the 60-strand threshold and borrowing is untuned. |
@@ -304,15 +304,15 @@ and equivalent useful details have been accounted for, then remove it.
 | MAP-04 | Partial | Hydrology and water features | The region owns the stream course, stand channel and wet banks. Surface water has analytic flow and eddies; underground water and soil share an 8 cm capillary gradient above the live table. Hyphae can touch that upper fringe but cannot extend into saturated ground, including paid targets invalidated by a rising table. Existing submerged strands persist but stop extending; soil under the stream bed only becomes passable as the table recedes. The opening now queries the same continuous groundwater and stream course as spatial growth. Remaining: ponds, vernal pools, springs, seasonal channels, erosion, oxygen stress on existing strands, and a local water-table visual/readout that follows variation along the slice rather than its centre value. |
 | MAP-05 | Partial | Distinct forest stands | Seven communities are derived from moisture, drainage, slope, relief and disturbance (oak ridge, mixed slope, birch hollow, hemlock ravine, stream corridor, wetland edge, recovering clearing), the community sets the stand species mix, and each stand now draws its own trees from that mix. The background vegetation reads the same seven communities: canopy density, stature, species mix, regeneration, fern, grass, rock and deadwood lean per community, and a stand's own density field makes two stands of one community differ. `tools/test-dressing.mjs` asserts that ravines carry more conifer than ridges, that ridges are rockier than ravines, and that clearings are younger than ridges. Remaining: playable-tree age structure and canopy openness still do not vary by community, broader community-by-community visual acceptance remains. Understory and deadwood now render from the regional placement, verified in the current dressing smoke. |
 | MAP-06 | Partial | Stand suitability and succession | Species placement follows the community a stand's own moisture, drainage and slope produce: a stream corridor grows birch and hemlock, an oak ridge grows oak, a ravine grows hemlock. Remaining: succession through gaps, regeneration and recovery is unchanged from the single-stand prototype. |
-| MAP-07 | Partial | Cross-stand fungal network | The fixture covers conserved growth, trade, cords, severance and all four edge directions. The ordinary opening writes shared soil and records each node's regional XYZ and stand from its first tick. Promotion keeps every node address and position; a running graph can order toward any passable XYZ and choose among 26 adjacent 3D voxels, including a lateral crossing with its actual portal direction. Diagonal corner hops are refused so a portal always joins stands sharing an edge. Paid spore daughters remain separate graphs over the same soil, with stable tree-bond ownership. Remaining: greedy steering may stall around large obstructions, simultaneous multi-graph interaction in one tile, root/infection spread across boundaries, and longer free-growth balance and input QA. |
+| MAP-07 | Partial | Cross-stand fungal network | The fixture covers conserved growth, trade, cords, severance and all four edge directions. Promotion keeps every node address and position, and a running graph can order toward any passable XYZ with 26-neighbour steering; diagonal corner hops are refused. **Seamless edges (regional plan A):** the forest-view "Grow through a stand edge" button is gone. In the flat transect, faint strips of the neighbouring stands' soil (`src/render/edge-soil.ts`, sampled from the shared soil volume) run past both ends, and a grow order placed there promotes the colony and orders it across in that direction. In section mode the section is drawn over a vertex-coloured soil backdrop that runs 48 units into each neighbouring stand, with a dashed seam; grow orders there are accepted. The opening section now prefers the colony's own growth plane. When the frontier first enters another stand, a Follow prompt (`#follow-frontier`) offers to open that stand's section; the view never moves by itself. Return to forest surfaces over the section's stand when no forest picture was saved. `test-regional-spatial-view` crosses by clicking the neighbour's soil. Remaining: greedy steering may stall around large obstructions; the neighbour strips in the flat transect cover only the west and east neighbours; root/infection spread across boundaries; longer free-growth balance and input QA. |
 | MAP-08 | Partial | Regional exploration and information | Forest selection and the section stand selector open any of nine persistent underground tiles, even without a colony. A daughter stand rebinds its own controls, and returning to the founding stand restores its local underground controls; Follow, Surface here, forest pose return and projected-strand selection remain. Remaining: water-feature selection, finer survey knowledge, simultaneous multi-graph selection in an occupied tile, and longer repeated-rebase QA. |
 | MAP-09 | Partial | Generated-map fairness | Validation refuses a region whose stands cannot be reached from the founding stand, or whose founding stand has no water in reach; the founding stand is chosen for habitable ground near water on the way down. Remaining: no repair pass, no threat-counterplay check, no check that a loss is recoverable, and the player's and rival's start stands are not yet chosen randomly (`MAP-16`). |
-| MAP-10 | Partial | Regional colonization loop | A paid spore immediately founds a separate spatial body on the same soil, with its own root, stores, orders, fruiting and stand origin. It has no physical supply link to its parent. Every graph steps once in stable stand order; a strand arrival records growthCrossings without minting a spore kit. The mature browser check steers a daughter independently. Remaining: regional victory rule, drawn spore hops, mature balance, contested contact in one tile and eventual player-directed fusion (`MAP-15`). |
+| MAP-10 | Partial | Regional colonization loop | A paid spore founds a separate spatial body on the same soil, with its own root, stores, orders, fruiting and stand origin. **Player-timed spores (regional plan B):** a completed bloom holds its spores. The player releases them with Release spores (`#release-spores`, shown while `sporesReady` > 0), or the next gust takes them. A gust is a seeded signal (`gustAt`, `SPORE_GUST` 0.65), about one every 77 s, or any storm-strength wind. The wind still picks the stand (`sporeTargets`). A release the colony cannot pay for keeps its spores and says what is needed; an unaffordable gust is logged once per bloom. Storm paths keep their forced release. Landings are broadcast region-wide and drawn as spore clouds rising, crossing the canopy and settling (`src/render/spore-flight.ts`), with a rising audio cue. The rival's spores follow the same gust rule. `test:spores` covers holding, release on command, release on the first gust exactly once, the unaffordable case and determinism. Remaining: flights run from stand centre to stand centre rather than from the body itself; mature balance; contested contact in one tile; rival crossing of stand edges. |
 | MAP-11 | Partial | Regional atlas interface | The nine-stand survey distinguishes spore lineage from physical connection: a living spore daughter is labelled as an independent network, while a continuous strand arrival names its growth source. It records lineage survival separately from supply in the founding graph. Remaining: multi-graph occupancy per tile, infection, water features, finer fog of war, network sensing and browser text QA. |
 | MAP-12 | Partial | Simulation streaming and level of detail | Stand ecology, shared soil and each independent spatial graph advance in fixed order, independent of camera selection; empty stands stay dormant until reached. The latest mature browser check advanced 30 seconds of a two-colony match in 5.61 seconds on fast SwiftShader without drawing those ticks; this does not establish a rendered 4× budget. Remaining: coarse distant cadence, pooled geometry, bounded particles, hardware measurements and a multi-graph 4× budget. |
 | MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
 | MAP-14 | Partial | Shared spatial network and soil coordinates | Regional XYZ ownership, stable references, supercover traversal and one sparse SoilVolume remain. The opening, rival, trees and spore daughters use lazy local views into that canonical material. Opening nodes record their physical XYZ and stand from the first tick; promotion expands their founder-relative x bounds without changing any existing node address or position, and moves no soil. Section and reveal read the same regional XYZ. Remaining: the flat opening UI still samples one east-west slice, local water-table summaries approximate a varying regional surface, surface tree placement still has its own formula, and no save format carries SPATIAL_VERSION. |
-| MAP-15 | Planned | Player-directed fusion of independent networks | A spore daughter remains a disconnected graph even when its mycelium meets its parent or another daughter. Later, provide an explicit player action at a valid physical contact point to fuse compatible networks. The operation must preserve conservation, node/tree ownership, lineage history, and deterministic replay; until chosen, touching graphs must not share resources, connectivity, fruiting or orders. No automatic fusion is implemented. |
+| MAP-15 | Implemented, unverified | Automatic fusion of the player's colonies | Decided 28 September: two of the player's colonies fuse automatically when their strands touch; there is no manual fusion action. Once a second `stepFusion` looks for a living node of one player body in a 26-neighbour voxel of another. The older colony (founding first, then by spore arrival) absorbs the younger through `CrossingMatch.absorb`. Nodes are appended with shifted ids, and the younger founder is re-parented to the contact node. Resources move node by node and are conserved. Surplus, blooms, fruited, spores and a body in progress join the survivor (a second active body returns its store to surplus). Tree bonds are re-pointed through the trees' stand and id. The younger body is retired, its stand records `fusedInto`, and a fusion is broadcast. Player colonies never fuse with the rival. `test:regional-play` grows a daughter and the founding colony into contact and checks: conservation, every strand joined, bonds pointing at living junctions, a cut link severing again, and determinism. Remaining: the absorbed colony's subclusters rejoin the colony at large rather than keeping their ids; no browser check of a fusion yet. |
 | MAP-16 | Planned | Randomized player and rival starting stands | Requested 27 September: the player's starting tile must be chosen at random per match by the procedural generator instead of always resolving to the same best-scoring stand, and the opponent mycelium must begin in a different starting stand from the player. The choice must derive from the match seed so `MAP-13` replay stays exact, keep `MAP-09`'s reachability and water-in-reach guarantees for whatever stand is drawn, and give the rival its own habitable start at a fair distance rather than an adjacent or identical tile. No randomized starting-stand selection exists today: the player's stand is the deterministic best score and the rival starts inside the player's own opening transect. |
 
 #### Regional generation order
@@ -502,7 +502,7 @@ Ecological references supporting this direction:
 | UX-02 | Partial | Actionable root labels | Explicit root IDs and states exist. The label says Bond only when the selected free junction is in range and its connected path can pay; otherwise it says Reach or needs carbon. Remaining: collision handling, safe areas, compact viewports, and prioritization during a mature match. |
 | UX-03 | Partial | Responsive layouts | Current `test:evolution-view` passes 1440x1000, 820x900 and 390x844 layout, disclosure access and stacked tech branches on fast SwiftShader. Screenshots inspected in forest and underground views. Remaining: real touch/hardware checks, the 1180px band, mature-world label occlusion and a full rerun of the migrated `test:view` suite. |
 | UX-04 | Partial | Forest-dusk HUD and resource instrument | Complete amber/slate/sage rings express connected reserve strength relative to base growth costs per tip, never maximum capacity. Exact amounts on hover/focus, semantic disclosures for advanced controls, native tech dialog with focus return and isolated shortcuts. `test:evolution-view` passes current browser interactions and screenshots; production build passes. Remaining: normal-quality/hardware visual QA, player usability and mature-match safe areas. |
-| TECH-01 | Partial | Single-network adaptation tree | Six compatible, free milestone-earned adaptations: water uptake, nitrogen uptake, fed-strand recovery, transport, resting allocation and fruit maturation. `test:evolution` verifies all six effects, prerequisites, distinct partner counting, idempotence, topology and deterministic steps. State belongs to the Network, preserved by body promotion; new spores begin fresh. Remaining: natural-match balance, deeper branch content (`TECH-04`), explicit regional persistence acceptance fixtures and a small authored icon (picture) for each of the six adaptations, which the dialog currently lists as text without imagery. Genetic currency is unchanged and is not spent on research. |
+| TECH-01 | Partial | Adaptation tree owned by the player | Six compatible, free milestone-earned adaptations: water uptake, nitrogen uptake, fed-strand recovery, transport, resting allocation and fruit maturation. `test:evolution` verifies all six effects, prerequisites, distinct partner counting, idempotence, topology and deterministic steps. **Player-owned (regional plan C):** in a regional match every colony's `evolution.learned` is one shared array per side (`RegionalMatch.lineage`), so learning in any colony teaches all of them. A spore daughter is born knowing everything learned. Ages, active powers and cooldowns stay per colony. `test:regional-play` checks the shared list, a daughter's inheritance, no stacking, and a separate rival lineage. Remaining: natural-match balance, deeper branch content (`TECH-04`), and a small authored icon for each adaptation. Genetic currency is unchanged and is not spent on research. |
 | TECH-02 | Partial | Contextual late-game powers | First completed bloom plus branch research unlock Forest pulse (double transport), Mend the web (node-carbon-funded repair) and Second spring (double supplied maturation). Each is active for 20 simulation seconds and recovers for 120 seconds from activation. Tests cover first-bloom gating, cooldown, topology, paid healing, fruit reserve spending and frost. Browser learn/invoke/cooldown checks use a clearly synthetic mature fixture. Remaining: natural full-match earning and strategic balance, power-specific world feedback beyond existing node pulses, and a small authored icon (picture) for each of the three powers. |
 | TECH-03 | Partial | Summon storm: shared fruiting race and directional colonization | Implemented 28 September: `storm-crown` capstone (Fruiting branch; 300s age, a completed fruiting, Mineral weave, two bonds); region-owned idle/warning/active/recovery lifecycle in `RegionalMatch` (60s warning, 45s storm, 180s recovery; 80C/12W/6N cost), direction locked at announcement; warning blooms are held and released on arrival (dead parents forfeit them); each storm bloom funds up to three paid, independent downwind daughters; the rival banks, fruits and colonizes on the same wind; warm storm rain permits fruiting through frost; "Continue growing" replaces the two-bloom stop. UI: `src/ui/storm.ts` picker with "wind blows toward", map preview, countdown and live-region announcements. Graphics: `src/render/storm.ts` (delegated to Sonnet 5.5, extended by Claude) slate front, cloud bands, a differential-rotation spiral vortex shader over the summoning colony, heavy slanted rain, forked lightning ribbons with a stage-light flash (none under reduced motion), and amber spore trails, at most six draws. Playable trees lean and buffet downwind; background trees bend in the vertex shader (stone and logs stay rigid). Windfall: during the active storm each mature tree has a seeded chance to be thrown down (`STORM.fallRate` 0.0012/s, scaled by maturity and weakness; at most two per stand per storm); it dies, topples downwind in view and draws a strike; every bond it held is torn and the bonded junction loses its stored carbon, water and nitrogen and is left damaged (health 0.35, mendable). **Flood (the storm's water half) implemented 28 September**, `src/sim/flood.ts`: the level rises through the active storm (peak after 30 s) and drains over 40 s of recovery. Every stand the stream crosses floods to 18 columns beyond the channel's edge; stands with no stream are high ground. Flooded soil (top 40 cm) is waterlogged and closed to growth (`SoilCell.flooded` in `passableAt`). Thin surface strands under 8 cm wash away; others drown; reinforced/thick cords hold and the root holds on. Trees are waterlogged by species (oak worst, birch barely; `Tree.drowned`). The peak's reach is silted as it drains (organic and nitrogen up). No rolls. Graphics: floor shader floodwater with foam edge and a fading silt stain, a swollen stream ribbon, and debris and foam carried downstream (`src/render/flood.ts`); the storm watch reports the flood and your drowned strands. Underground (`src/render/underground-weather.ts`, one plane per active stand): storm wetting front, percolation fingers and falling droplets; standing floodwater above flooded columns and airless soil with bubbles below. Gaps: nothing visible in the sky during the first half of the warning (distant strikes begin past 55%); flood does not carry spores or daughters downstream; spatial colonies' voxel soil is not flooded (only their stands' transect cells); the flood's floor water uses distance to the drawn course while the simulation uses distance to the transect channel, so edges can disagree slightly; no audio or camera response; flood/water half absent; balance untuned; hardware-GPU cost unmeasured; browser loop uses a synthetic late-game fixture. |
 | TECH-04 | Planned | Deeper tech tree: more branches, tiers and real choices | Requested 27 September: flesh out the six-adaptation tree into a branching path worth planning around. Grow each branch from two adaptations to three or more tiers, add forks and optional picks so two matches can research differently, add cross-branch synergies and branch capstones (the three existing powers become the first capstones; the region-scale ecological superpowers of `TECH-06` are the final ones), and decide whether learning stays free milestone-earned or gains an explicit research currency. Every new node needs a distinct ecological effect, a prerequisite rule, an icon and balance coverage; state must stay deterministic and survive promotion/spore founding exactly as the six current adaptations do. The opponent must be able to research the same tree (`MAP-16`, `ADV-05`). No new adaptation content exists yet; the plan is specified below. |
@@ -518,6 +518,302 @@ Ecological references supporting this direction:
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
 ## Current priorities
+
+### Major plan: regional spread (decided 28 September; phases A to E implemented 29 September)
+
+**Progress, 29 September:**
+
+- **Phases A to E are implemented.** See `MAP-07`, `MAP-10`, `TECH-01`,
+  `MAP-15` and `CORE-05`, and the verification record.
+- **Phase F is partial.** Rival spores follow the same gust rule.
+- **The rival cannot yet:**
+  - cross stand edges;
+  - win the region.
+- **Why the rival cannot win:** it is a saprotroph that never bonds trees, so
+  "more bonded trees than the rival" leaves it nothing to dominate with. The
+  first open question below must be answered before F can finish.
+- **Decisions taken while implementing, where the plan left a choice:**
+  - **Promotion stays lazy:** a colony gets its regional body only when an
+    order crosses an edge or a fusion needs it. Unsplit play is therefore
+    unchanged: the 90 s fingerprints stay `raven-wood` `0837080b77c11551` and
+    `storm-race` `cd272b4bfd5a5183`.
+  - **Gust:** a gust is `gustAt(t) >= 0.65`.
+  - **Absorbed subclusters:** a fused colony's subclusters rejoin the colony at
+    large.
+  - **Hold progress:** it shows in the instrument's notes line.
+
+
+Self-contained plan for the next large feature. The user will schedule it. It
+touches `MAP-07`, `MAP-10`, `MAP-11`, `MAP-15`, `TECH-01`, `CORE-05` and
+`ADV-05`. Update those rows as each phase lands.
+
+#### Problem
+
+The user has played many matches and has never seen their mycelium enter a
+neighbouring tile, or a spore found a colony elsewhere. Both exist in code,
+but a player cannot find them:
+
+- **Crossing.**
+  - The only way across is a forest-view button, **Grow through a stand
+    edge** (`#forest-cross`, `index.html:65`). It is handled by
+    `Game.growAcrossStand()` (`src/game.ts` ~722), which calls
+    `RegionalMatch.growAcross()` (`src/sim/match.ts` ~301).
+  - That call promotes the local colony into a regional `CrossingMatch`
+    (`ensureSpatialColony`) and orders it across one pre-chosen seam
+    (`CrossingMatch.orderAcross()`, `src/sim/crossing.ts` ~694).
+  - Underground, an unpromoted colony's section edge behaves as a wall.
+- **Spores.**
+  - `RegionalMatch.stepSpores()` (`match.ts` ~522, every `SPORE_BEAT` = 1 s)
+    releases automatically after every completed bloom.
+  - `release()` (~540) sends one spore to the first valid downwind stand from
+    `sporeTargets()` (~647 → `downwindStands`, `src/sim/region.ts` ~541).
+    Adjacent stands are in reach at ordinary wind; `STORM.reach` 4.25 and 3
+    daughters per bloom apply in a storm.
+  - The parent pays `ECON.colonyFund` (46 carbon, 6 water, 3 nitrogen;
+    `src/sim/content.ts`) through `payColonyFund`. If it cannot pay, it
+    returns silently.
+  - `found()` (~566) creates the daughter: `foundColony` plus its own
+    `CrossingMatch`. The only notice is one event line in the target stand.
+  - No spore flight is drawn.
+- **The match ends before the region matters.**
+  - `RegionalMatch.outcome` (~283) returns `fruited` at 2 blooms unless
+    `regionalPlay` is set.
+  - `Simulation.checkOutcome()` (`src/sim/sim.ts` ~388) stops a colony at
+    `fruitGoal` blooms unless `regionalContinuation` is set.
+  - `continueGrowing()` (~601) lifts both, but only after a storm.
+- **Tech is per colony.**
+  - `Network.evolution` (`src/sim/network.ts` ~136: learned, age, active,
+    cooldown) lives on each network.
+  - `src/sim/evolution.ts` says "a new spore starts anew", so every
+    daughter starts with no adaptations.
+- **The rival spreads only through the storm path.**
+  - `prepareRival` (~685) and `foundRival` (~696) use the same release code.
+  - The rival is a saprotroph (`ADV-05`) and never bonds trees.
+
+#### Decisions (user interview, 28 September)
+
+1. **Seamless edges.**
+   - An order toward a section edge continues into the neighbouring tile.
+     There is no separate crossing action, and the forest-view button is
+     removed.
+   - The neighbouring soil shows faintly past the seam.
+   - When the frontier crosses, a prompt offers to slide the view across.
+     The view never moves on its own.
+2. **Spores: the player chooses when; the wind chooses where.**
+   - A mature fruiting body holds its spores.
+   - The player may release at any time; otherwise the next strong gust
+     releases them.
+   - The destination follows `sporeTargets` / `downwindStands`, as now.
+   - The flight and landing are drawn, and an unaffordable release says so.
+3. **Daughters are independent colonies that fuse automatically on contact.**
+   - When strands of two of the player's colonies physically meet, the
+     networks join into one: connectivity, stores and fruiting.
+   - This supersedes the manual fusion planned in `MAP-15`.
+   - A player colony never fuses with the rival.
+4. **Adaptations belong to the player.**
+   - What is learned applies to every current and future colony, including
+     spore daughters and fused networks.
+   - Powers keep a per-colony cooldown unless decided otherwise.
+5. **Victory: colonize the region.**
+   - Hold 5 of 9 tiles, then keep all of them until the season turns.
+   - A tile counts only if the player dominates it: more bonded trees there
+     than the rival.
+   - Storms, fire and drought can break the hold.
+6. **No bloom cap.**
+   - Remove the two-bloom win and the stop-after-two-blooms rule.
+   - The match ends on the regional win or on extinction.
+7. **The rival plays by the same rules.**
+   - It crosses edges, releases spores on the wind, and can win by holding
+     5 dominated tiles through a season.
+
+#### Phases (in order; each ends green and committed)
+
+**A. Seamless edges (`MAP-07`)**
+
+- **Promotion.**
+  - Promote a colony to its regional `CrossingMatch` automatically:
+    lazily, the first time an order targets a point at or beyond its
+    stand's section edge, or on first tick.
+  - Promotion already preserves node addresses, XYZ, soil and resources.
+  - Remove `#forest-cross` and `growAcrossStand()` once nothing calls them.
+- **Orders.**
+  - Underground orders beyond the edge resolve through `CrossingMatch.growAt`
+    in the neighbour's regional coordinates.
+  - The edge stops being a wall.
+  - Diagonal corner hops stay refused (existing rule).
+- **Draw.**
+  - Draw the neighbouring tile's soil a short distance past the seam
+    (faded, not interactive except for orders).
+  - Add a subtle seam marker.
+- **Following.**
+  - When a strand first enters another stand (`onActivate` /
+    `growthCrossings`), show a prompt: "Your frontier has entered the
+    <community>. Follow ↦".
+  - Accepting calls `enterStand(id)` and opens the matching section.
+  - The view never moves by itself.
+- **Tests.**
+  - Extend `tools/test-crossing.mjs`: an order past the edge grows across
+    without a promotion call, conservation holds, and addresses are
+    unchanged.
+  - Extend or add a browser test: click beyond the edge underground, the
+    strand arrives, the prompt appears, and following opens the neighbour.
+- **Risks.**
+  - Greedy steering stalls around large obstructions (known `MAP-07` gap);
+    this may need a simple detour or search.
+  - The unsplit-colony fingerprints (`raven-wood` `0837080b77c11551`,
+    `storm-race` `cd272b4bfd5a5183`, 90 s at 60 Hz) change if promotion
+    happens on first tick. Record the new values deliberately.
+
+**B. Visible, player-timed spores (`MAP-10`)**
+
+- **State.**
+  - Replace the automatic `stepSpores` release with a `ready` state on
+    completed blooms: a mature body holding spores.
+  - Add a **Release spores** action on the body (both views) and in the
+    instrument.
+- **Gusts.**
+  - Define "strong gust" deterministically from `region.windAt(time)`, for
+    example strength ≥ a threshold, sampled on the fixed step.
+  - An unreleased body releases on the first gust.
+  - Storm behaviour (`heldSpores`, `STORM.daughtersPerBloom`) is unchanged.
+- **Cost feedback.**
+  - Check the cost before release.
+  - If the parent cannot pay `colonyFund`, keep the spores and say so
+    ("needs 46 carbon, 6 water, 3 nitrogen in connected strands"), instead
+    of failing silently.
+- **Draw.**
+  - A spore cloud rises from the body, drifts downwind across the forest
+    toward the target stand and settles.
+  - The daughter's founding is announced region-wide, and the survey (`S`)
+    updates.
+  - Add an audio cue in the score.
+- **Tests.**
+  - Headless: a held body releases on command and on the first gust, never
+    twice; an unaffordable release keeps its spores and messages; the
+    destinations equal `sporeTargets`; replay is deterministic.
+  - Browser: release from a mature body and see the flight, the landing and
+    the new colony.
+
+**C. Player-owned tech (`TECH-01`)**
+
+- **Migration.** Move `learned` and the adaptation state from
+  `Network.evolution` to a per-player owner on `RegionalMatch` (for example
+  `match.lineage.player` / `.rival`).
+- **Readers.** Every effect in `src/sim/evolution.ts` and the transport,
+  harvest and fruiting code that reads `net.evolution.learned` must read the
+  owner's set instead.
+- **Colony-scoped state.** Readiness checks such as `bonds(n)` and
+  `n.evolution.age` stay per colony or become region-wide; decide per
+  adaptation. Power `active` and `cooldown` stay per colony (default).
+- **Daughters.** A spore daughter immediately benefits from everything
+  learned.
+- **Tests.**
+  - Update `test-evolution`: a daughter founded after learning has the
+    effects.
+  - Learning in one colony applies to all.
+  - Single-colony fingerprints are unchanged.
+
+**D. Automatic fusion (`MAP-15`, superseded design)**
+
+- **Contact.** Detect contact when a living strand of one player graph is
+  26-neighbour adjacent to a living strand of another player graph in the
+  shared `SoilVolume`.
+- **Merge.**
+  - Join them under one network: the older root survives, the other graph's
+    root is re-parented to the contact node, and every resource is conserved
+    exactly.
+  - Keep stable node and tree-bond ownership and lineage history, and record
+    a fusion event.
+  - Subcluster groups (`CORE-08`) survive, with ids made unique.
+- **Rival.** Never fuse with the rival.
+- **Tests.** In a crossing-suite fixture with two daughters grown into
+  contact:
+  - one network results;
+  - totals are conserved;
+  - bonds are kept;
+  - a piece severed after fusion starves as before;
+  - replay is deterministic.
+
+**E. Regional victory and no bloom cap (`CORE-05`, `MAP-10`, `MAP-11`)**
+
+- **Remove the cap.**
+  - Remove the `fruited >= 2` outcome in `RegionalMatch.outcome` and the
+    `fruitGoal` stop in `Simulation.checkOutcome`.
+  - `regionalPlay` becomes the default.
+  - Extinction stays a loss.
+- **Win rule.**
+  - Domination per tile: the player holds strictly more bonded trees there
+    than the rival.
+  - Hold: 5 or more dominated tiles; the season index must advance once
+    while the count never drops below 5.
+  - The win fires at the season turn.
+- **Show progress.**
+  - Survey and instrument show "Tiles held: n / 5" and the hold progress
+    through the season.
+  - A broken hold is announced.
+- **Tests.** Headless fixtures cover:
+  - 5 tiles reached, then held through a turn: win;
+  - one lost mid-season: no win, and the hold resets;
+  - a tie with the rival does not count.
+  - Update `test-journey` and `test-sim` expectations that assume a
+    two-bloom win.
+
+**F. Rival parity (`ADV-05`, `MAP-10`)**
+
+- **Growth.** The rival crosses edges (phase A mechanics), and its
+  fruiting and spore release follow phase B rules (timing policy: open
+  question).
+- **Its win.** A rival victory by the same hold rule needs a domination
+  measure the rival can meet; see the open questions.
+
+#### Cross-cutting constraints
+
+- **Determinism.**
+  - Every new decision (gusts, contact, domination) is computed on the fixed
+    step in stable stand order.
+  - Seeded runs stay reproducible (`MAP-13`).
+  - Re-record the fingerprints only on purpose.
+- **Conservation.** Carbon, water and nitrogen are conserved through
+  release, founding and fusion (`CORE-02`).
+- **Performance.**
+  - More colonies and cross-tile graphs raise simulation cost.
+  - Measure with `npm run check:gpu` and `tools/bench-large-network.mjs`.
+  - The 4× forest-view drop recorded 28 September is still unexplained.
+- **Tests.** Headless modules must avoid TypeScript parameter properties
+  (`stripTypeScriptTypes`). New modules must be added to the hard-coded
+  module lists in `test-sim`, `test-region`, `test-dressing`, `test-crossing`
+  and `test-roots`.
+- **This file.** Record current evidence in this file per phase.
+
+#### Open questions (ask the user before the phase that needs them)
+
+- **Rival domination (E, F).** The rival is a saprotroph and never bonds
+  trees. How does it dominate a tile? For example: strands or occupied
+  soil, dead matter claimed, or trees it has killed. Also, how is "more
+  bonded trees than the rival" compared against it?
+- **Gust threshold and cost (B).** What wind strength counts as a strong
+  gust, and does `colonyFund` stay at 46 carbon, 6 water and 3 nitrogen?
+- **Rival release timing (F).** Scripted, or opportunistic like the gust
+  rule?
+- **Hold display (E).** Instrument, survey, or a new regional banner?
+- **Tech without a colony (C).** What happens to player tech if the player
+  has no living colony? Extinction ends the match anyway, so this may not
+  matter.
+- **Powers after tech moves (C).** Are powers still invoked from a chosen
+  colony, with a cooldown per colony?
+
+#### Done when
+
+- A new player, without instructions, sees their strands cross into a
+  neighbouring tile and follows them there.
+- They release spores from a mature body, watch them drift and land, and
+  play the daughter.
+- They see two of their colonies fuse on contact.
+- Every colony uses the tech they learned.
+- The game ends by holding 5 dominated tiles through a season turn, or by
+  the rival doing so.
+- All suites and the regional browser checks pass, with evidence recorded
+  here.
 
 Work in this order unless the user explicitly changes priority.
 
@@ -1632,6 +1928,74 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: regional spread, plan phases A to E (`MAP-07`, `MAP-10`, `TECH-01`, `MAP-15`, `CORE-05`)
+
+- **A. Seamless edges**
+  - New: `src/render/edge-soil.ts`.
+  - `SectionView` soil backdrop and seams (`SECTION_SOIL_MARGIN` 48).
+  - `RegionalMatch.transectPlane`.
+  - Edge-click crossing in `Game.applyOrderAt`.
+  - Follow prompt: `#follow-frontier`, `Game.followFrontier`.
+  - The opening section prefers the colony's growth plane.
+  - Every descent saves the forest pose; Return to forest falls back to surfacing.
+  - The `#forest-cross` button is removed.
+- **B. Player-timed spores**
+  - `SPORE_GUST`, `gustAt`, `gusting`, `sporesReady`, `releaseSpores`.
+  - `release()` now returns an outcome; a gust cannot spend spores the colony cannot pay for.
+  - Region-wide landing broadcast.
+  - `src/render/spore-flight.ts`, `#release-spores`, and a `spores` chime.
+- **C. Player-owned tech.** `RegionalMatch.lineage` is one shared learned list per side.
+- **D. Automatic fusion.** `CrossingMatch.absorb` and `livingPositions`; `RegionalMatch.stepFusion`, `fusions` and `StandState.fusedInto`.
+- **E. Regional victory.**
+  - `HOLD_TILES`, `standDominance`, `stepVictory`, `hold`, `victory`, `holdStatus`.
+  - `regionalPlay` defaults to true.
+  - `SheetUI.showVictory` and `regionLine`.
+- **Tests changed on purpose**
+  - `test-regional-spatial-view` crosses by clicking the neighbour's soil and checks the Follow prompt.
+  - `test-region`, `test-crossing` and `test-regional-mature-view` release spores explicitly.
+  - `test-evolution` states that a bare network starts empty.
+  - `test-journey` now expects the match to continue past two blooms and a Release spores action; it was not run (20-minute budget, and too slow on software WebGL, as recorded before).
+- **New tests**
+  - `npm run test:spores`: pass, 6 checks.
+  - `npm run test:regional-play`: pass, 10 checks (lineage 3, fusion 3, victory 4).
+  - In the fusion fixture, a daughter and the founding colony grown toward each other met after about 140 s of simulated time and fused 703 strands.
+- **Headless regressions, all pass on this tree:**
+  - `test-sim` (11)
+  - `test-region` (18)
+  - `test-crossing` (18)
+  - `test-storm`
+  - `test-wildfire`
+  - `test-drought`
+  - `test-flood`
+  - `test-evolution`
+  - `test-fruiting`
+  - `test-subclusters`
+  - `test-sections` (10)
+  - `test-dressing` (9)
+  - `test-roots` (6)
+  - `test-spatial` (18)
+  - `test-batches`
+  - `test-lod`
+- **Browser suites, run on a fresh build:**
+  - Pass:
+    - `test-regional-spatial-view`
+    - `test-regional-mature-view`
+    - `test-underground-view`
+    - `test-storm-view`
+    - `test-subclusters-view`
+    - `test-mushroom-view`
+    - `test-evolution-view`
+  - `test-view` fails only the long-standing refused-order check.
+- **Replays unchanged:** the 90 s fingerprints stay `raven-wood` `0837080b77c11551` and `storm-race` `cd272b4bfd5a5183`.
+- **GPU captures** (`raven-wood`, RTX 4060, no browser errors):
+  - The flat transect shows both neighbours' soil past its ends.
+  - After a crossing, the section shows real soil into the neighbour instead of an empty frame.
+  - Release spores appears under the order note, and the spore cloud crosses the canopy.
+- `npm run typecheck`: pass.
+- **Not done:**
+  - Phase F beyond rival spores. The rival cannot cross edges or win; its domination measure is an open question.
+  - A played-browser win, and a browser check of a fusion.
 
 ### 28 September 2026: species root architecture after the Wurzelatlas drawings (`ROOT-01` to `ROOT-05`)
 

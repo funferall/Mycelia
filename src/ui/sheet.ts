@@ -33,6 +33,8 @@ type FieldName = (typeof RECORD_FIELDS)[number];
  */
 export class SheetUI {
   private evolution: EvolutionUI;
+  /** The regional hold, shown in the notes line in place of the old bloom count. */
+  regionLine: string | null = null;
   private readonly cells = new Map<FieldName, HTMLElement>();
   private readonly rail: HTMLElement;
   private readonly notes: HTMLElement;
@@ -199,7 +201,7 @@ export class SheetUI {
 
     const latest = sim.events[sim.events.length - 1];
     if (latest) {
-      this.notes.textContent = `${latest.text}  ·  Spores away ${player.fruited}/${sim.fruitGoal}.`;
+      this.notes.textContent = `${latest.text}  ·  ${this.regionLine ?? `Spores away ${player.fruited}/${sim.fruitGoal}.`}`;
     }
     if (journey && document.querySelector<HTMLElement>('#begin')!.hidden) this.updateJourney(sim, journey);
   }
@@ -224,6 +226,30 @@ export class SheetUI {
     this.outcome.hidden = true;
     this.outcome.querySelectorAll('button').forEach(button => button.remove());
     this.refreshClock = 1;
+  }
+
+  /** The regional result: the region taken, or lost to the rival. */
+  showVictory(won: boolean, body: string, onRestart: () => void, onContinue: () => void): void {
+    if (!this.outcome.hidden && this.outcome.dataset.victory) return;
+    this.outcome.querySelectorAll('button').forEach((button) => button.remove());
+    this.outcomeTitle.textContent = won ? 'The region is yours' : 'The region is lost';
+    this.outcomeBody.textContent = body;
+    const restart = document.createElement('button');
+    restart.type = 'button';
+    restart.textContent = 'Open a new sheet';
+    restart.addEventListener('click', onRestart);
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.textContent = 'Keep growing';
+    keep.dataset.explore = '';
+    keep.addEventListener('click', () => {
+      this.resetStand();
+      delete this.outcome.dataset.victory;
+      onContinue();
+    });
+    this.outcome.append(restart, keep);
+    this.outcome.dataset.victory = won ? 'won' : 'lost';
+    this.outcome.hidden = false;
   }
 
   showOutcome(sim: Simulation, onRestart: () => void, onExplore?: () => void): void {
@@ -272,7 +298,7 @@ function must(selector: string): HTMLElement {
   return element;
 }
 
-function formatClock(seconds: number): string {
+export function formatClock(seconds: number): string {
   const total = Math.floor(seconds);
   const m = Math.floor(total / 60);
   const s = total % 60;

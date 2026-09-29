@@ -1024,6 +1024,11 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .primary-intents .order-key, .primary-intents .order-hint, .primary-intents .order::before, .primary-intents .order::after, .primary-intents #rest span { display: none; }
 .primary-intents .is-on, .primary-intents #rest[aria-pressed='true'] { color: var(--amber); border-bottom-color: var(--amber); }
 #order-note { font: 14px/1.45 var(--serif); color: var(--ink-dim); margin: 16px 0; min-height: 2.9em; }
+.follow-frontier { color: var(--ink); border-top: 1px solid var(--rule); font-style: italic; }
+.release-spores { color: var(--ink); }
+.release-spores small { color: var(--ink-dim); font-size: 13px; margin-left: 10px; }
+.release-spores.gusting small { color: var(--ink); }
+.follow-frontier::after { content: '\21A6'; font-style: normal; margin-left: 12px; }
 .evolution-open { width: 100%; padding: 14px 0; margin-bottom: 12px; background: none; border: 0; border-top: 1px solid #b4a38740; border-bottom: 1px solid #b4a38740; color: var(--paper); font: 20px var(--serif); cursor: pointer; text-align: left; }
 .evolution-open::after { content: '\2197'; float: right; color: var(--amber); }
 .forest-disclosure { padding: 0; }

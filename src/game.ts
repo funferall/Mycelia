@@ -7,20 +7,23 @@ import { FruitingView, type FruitingSite } from './render/fruiting';
 import { TILE_SIZE, SurfaceForest } from './render/surface';
 import { COMMUNITY_LABEL, type Region } from './sim/region';
 import { RegionalMatch } from './sim/match';
-import { CrossingMatch } from './sim/crossing';
-import { standFrameOf, type Vec3 } from './sim/spatial';
+import { CrossingMatch, type CrossingDirection } from './sim/crossing';
+import { elevationAtDepthCm, standFrameOf, standIdAt, type Vec3 } from './sim/spatial';
 import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import { ForestDressing } from './render/forest-dressing';
 import { forestFloorField } from './render/forest-floor-field';
 import { layoutForestDressing, playableTrunkPositions, type DressingBand } from './render/forest-dressing-layout';
 import { NetworkReveal, REVEAL_PICK_RADIUS, type RevealEdge } from './render/network-reveal';
-import { SectionView } from './render/section-view';
+import { SECTION_SOIL_MARGIN, SectionView } from './render/section-view';
+import { EDGE_SOIL_COLUMNS, buildEdgeSoil } from './render/edge-soil';
+import { SporeFlights } from './render/spore-flight';
 import {
   browsableSections,
   clipEdges,
   flipSection,
   sectionAnchor,
+  sectionContains,
   sectionForPoint,
   sectionLabel,
   sectionOrder,
@@ -40,7 +43,7 @@ import type { CameraPose } from './render/camera';
 import { makeGlowTexture } from './render/textures';
 import type { QualityPreset } from './render/quality';
 import { deriveJourney, type Journey, type RootTarget } from './ui/journey';
-import { SheetUI, type OrderId } from './ui/sheet';
+import { SheetUI, formatClock, type OrderId } from './ui/sheet';
 import { SurveySheet } from './ui/survey';
 import { StormUI } from './ui/storm';
 import { StormView } from './render/storm';
@@ -137,6 +140,12 @@ export class Game {
   private lastView = '';
   private awakened = false;
   private markerClock = 0;
+  /** Set once the regional result has been shown, so it is shown once. */
+  private victoryShown = false;
+  /** Stand crossings already offered to the player as a Follow prompt. */
+  private crossingsSeen = 0;
+  /** The stand the Follow prompt would take the player into, if one is offered. */
+  private followStand: number | null = null;
   private journeyClock = 0;
   private journey: Journey | null = null;
   private lastBonds = 0;
@@ -168,6 +177,10 @@ export class Game {
    * of the region, where the simulation recorded it.
    */
   private readonly fruiting: FruitingView;
+  /** Released spores crossing the canopy toward the stands they found. */
+  private readonly sporeFlights: SporeFlights;
+  /** Colonization records already drawn as flights. */
+  private colonizationSeen = 0;
   private readonly stormUI: StormUI;
   private readonly stormView: StormView;
   private readonly fireView: FireView;
@@ -259,6 +272,7 @@ export class Game {
 
     this.soil = new SoilMesh(this.sim.world);
     this.stage.scene.add(this.soil.group);
+    this.attachEdgeSoil();
 
     this.playerMesh = new HyphaeMesh(PLAYER_PALETTE, glow);
     // Thinner filaments for the rival, so the two networks differ in texture.
@@ -285,6 +299,9 @@ export class Game {
     // so it moves with the ground when the player enters another stand.
     this.fruiting = new FruitingView(this.assets, (point) => this.regionToScenePoint(point));
     this.stage.scene.add(this.fruiting.group);
+    this.sporeFlights = new SporeFlights(glow, (point) => this.regionToScenePoint(point));
+    this.stage.scene.add(this.sporeFlights.group);
+    this.colonizationSeen = this.match.colonization.length;
     this.stormUI = new StormUI(this.match, text => { this.ui.setNote(text); if (text === 'Storm announced') this.ui.resetStand(); });
     const stormWidth = this.region.cols * TILE_SIZE, stormDepth = this.region.rows * TILE_SIZE;
     this.stormView = new StormView(stormWidth,stormDepth,this.stage.quality.id === 'fast');
@@ -692,6 +709,18 @@ export class Game {
         (point) => this.regionToScenePoint(point),
         (x, y) => this.region.heightAt(x, y)
       );
+      this.sectionView.setSoilSource({
+        sample: (x, y, z) => {
+          const sample = this.match.soil.sample(x, y, z);
+          if (sample.standId === null) return null;
+          const m = sample.material;
+          return {
+            stratum: m.stratum, water: m.water, organic: m.organic, nitrogen: m.nitrogen,
+            occupancy: m.occupancy, stream: m.stream, saturation: sample.saturation,
+          };
+        },
+        standAt: (x, y) => standIdAt(this.region, x, y),
+      });
       this.stage.scene.add(this.sectionView.group);
     }
     this.refreshSpatialViews();
@@ -714,12 +743,123 @@ export class Game {
       }
       standSelect.value = String(this.section?.spec.standId ?? this.selectedStandId ?? this.match.activeStandId);
     }
-    const crossing = document.querySelector<HTMLButtonElement>('#forest-cross');
-    if (crossing) crossing.hidden = false;
   }
 
-  /** Direct the running colony through a stand edge and open its real sections. */
-  growAcrossStand(): { ok: boolean; message: string } {
+  /**
+   * When the player's frontier first enters another stand, offer to follow it
+   * there. The offer stays until taken or until a later crossing replaces it.
+   */
+  private offerFollow(): void {
+    const crossings = this.match.growthCrossings;
+    if (crossings.length === this.crossingsSeen) return;
+    const latest = crossings[crossings.length - 1];
+    this.crossingsSeen = crossings.length;
+    const button = document.querySelector<HTMLButtonElement>('#follow-frontier');
+    if (!latest || !button) return;
+    const site = this.region.stands[latest.to];
+    if (!site) return;
+    this.followStand = latest.to;
+    button.textContent = `Your frontier has entered the ${COMMUNITY_LABEL[site.community].toLowerCase()} (stand ${latest.to + 1}). Follow`;
+    button.hidden = false;
+    this.sound.chime('bond');
+  }
+
+  /** Draw every newly recorded spore landing as a cloud crossing the canopy. */
+  private launchSporeFlights(): void {
+    const records = this.match.colonization;
+    if (records.length === this.colonizationSeen) return;
+    for (let i = this.colonizationSeen; i < records.length; i++) {
+      const record = records[i]!;
+      const from = this.region.stands[record.from];
+      const to = this.region.stands[record.to];
+      if (!from || !to) continue;
+      this.sporeFlights.launch(
+        { x: from.centreX, y: from.centreY, z: this.region.heightAt(from.centreX, from.centreY) },
+        { x: to.centreX, y: to.centreY, z: this.region.heightAt(to.centreX, to.centreY) },
+        record.owner === 'rival' ? 'rival' : 'player'
+      );
+      if (record.owner !== 'rival') this.sound.chime('spores');
+    }
+    this.colonizationSeen = records.length;
+  }
+
+  /** Show the Release spores action while a mature body in this stand holds them. */
+  private syncSporeButton(): void {
+    const button = document.querySelector<HTMLButtonElement>('#release-spores');
+    if (!button) return;
+    const ready = this.match.sporesReady(this.match.activeStandId);
+    button.hidden = ready === 0;
+    if (ready === 0) return;
+    const gust = this.match.gusting();
+    button.classList.toggle('gusting', gust);
+    const label = ready === 1 ? 'Release spores' : `Release spores (${ready} bodies ready)`;
+    const hint = gust ? 'a gust is rising' : 'or the next gust will';
+    if (button.dataset.label !== `${label}|${hint}`) {
+      button.dataset.label = `${label}|${hint}`;
+      button.innerHTML = `${label}<small>${hint}</small>`;
+    }
+  }
+
+  /** The player's release order for the stand in view. */
+  releaseSpores(): { ok: boolean; message: string } {
+    const result = this.match.releaseSpores(this.match.activeStandId);
+    this.syncSporeButton();
+    return result;
+  }
+
+  /** Take the Follow offer: open the section in the stand the frontier reached. */
+  followFrontier(): { ok: boolean; message: string } {
+    const button = document.querySelector<HTMLButtonElement>('#follow-frontier');
+    const target = this.followStand;
+    if (button) button.hidden = true;
+    this.followStand = null;
+    if (target === null) return { ok: false, message: 'Nothing to follow.' };
+    const body = this.match.spatialForStand(target) ?? this.match.spatial;
+    if (!body) return { ok: false, message: 'The frontier is no longer there.' };
+    if (body !== this.spatial) {
+      this.match.spatial = body;
+      this.attachSpatialFixture(body);
+    }
+    if (this.stage.rig.view !== 'underground') this.setView('underground');
+    const result = this.openSection(target);
+    if (result.ok) this.syncViewUI();
+    return result;
+  }
+
+  /**
+   * Faint strips of the neighbouring stands' soil past both ends of the flat
+   * transect, sampled from the shared regional soil. A child of the soil group,
+   * so it shows, hides and disposes with the transect it borders.
+   */
+  private attachEdgeSoil(): void {
+    const standId = this.match.activeStandId;
+    const plane = this.match.transectPlane(standId);
+    const site = this.region.stands[standId];
+    if (!plane || !site) return;
+    const strips = buildEdgeSoil({
+      west: site.sx > 0,
+      east: site.sx < this.region.cols - 1,
+      sample: (column, depthCm) => {
+        const x = plane.originX + column + 0.5;
+        const y = plane.fixedY;
+        if (standIdAt(this.region, x, y) === null) return null;
+        const sample = this.match.soil.sample(x, y, elevationAtDepthCm(this.region, x, y, depthCm));
+        const m = sample.material;
+        return {
+          stratum: m.stratum, water: m.water, organic: m.organic, nitrogen: m.nitrogen,
+          occupancy: m.occupancy, stream: m.stream, saturation: sample.saturation,
+        };
+      },
+    });
+    this.soil.group.add(strips);
+  }
+
+  /**
+   * Direct the running colony through a stand edge and open its real sections.
+   * Reached by a grow order placed in the neighbour's soil past the transect's
+   * end; the edge is a seam, not a separate action.
+   */
+  growAcrossStand(direction?: CrossingDirection): { ok: boolean; message: string } {
     const selected = this.selectedStandId ?? this.match.activeStandId;
     if (!this.match.stands[selected]?.sim.hasColony) {
       return { ok: false, message: 'Choose a stand that holds your colony before directing a crossing.' };
@@ -733,7 +873,7 @@ export class Game {
         this.match.spatial = reachedBody;
         result = reachedBody.orderAcross();
       } else {
-        result = this.match.growAcross();
+        result = this.match.growAcross(direction);
       }
     } catch (error) {
       return { ok: false, message: `No passable stand edge was found: ${String(error)}` };
@@ -797,17 +937,23 @@ export class Game {
     if (inStand.length > 0) {
       // The plane the colony's own strands sit in, so the opening section is
       // not an empty one when there is something to show.
+      // A strand counts in every slab that holds it, so an east-west colony is
+      // not credited to whichever north-south slab happens to be listed first.
+      // Ties go to the colony's own growth direction.
       const counts = new Map<string, number>();
       for (const edge of inStand) {
-        const spec = sectionForPoint(this.spatial.region, forStand, edge.to);
-        if (spec) counts.set(spec.id, (counts.get(spec.id) ?? 0) + 1);
+        for (const spec of forStand) {
+          if (sectionContains(this.spatial.region, spec, edge.to)) counts.set(spec.id, (counts.get(spec.id) ?? 0) + 1);
+        }
       }
+      const growth = this.spatial.plane?.along;
       let best: SectionSpec | null = null;
-      let bestCount = 0;
+      let bestScore = 0;
       for (const spec of forStand) {
         const count = counts.get(spec.id) ?? 0;
-        if (count > bestCount) {
-          bestCount = count;
+        const score = count + (count > 0 && spec.plane.along === growth ? 0.5 : 0);
+        if (score > bestScore) {
+          bestScore = score;
           best = spec;
         }
       }
@@ -1058,7 +1204,10 @@ export class Game {
 
   /** Back to the forest, exactly where and on what the player left it. */
   returnToForest(): { ok: boolean; message: string } {
+    // A section reached by growing across from the transect has no remembered
+    // forest picture of its own: surface over the stand being browsed instead.
     if (!this.forestContext) {
+      if (this.section) return this.surfaceHere();
       this.sectionView?.setSection(null);
       return { ok: false, message: 'Nothing to return to.' };
     }
@@ -1642,6 +1791,21 @@ export class Game {
         this.setView('forest');
       } : undefined);
     }
+    // The regional hold is the match: say where it stands, and end it once decided.
+    this.ui.regionLine = this.match.holdStatus();
+    if (this.match.victory !== 'playing' && !this.victoryShown) {
+      this.victoryShown = true;
+      const won = this.match.victory === 'won';
+      const held = this.match.hold[won ? 'player' : 'rival'].tiles;
+      this.ui.showVictory(
+        won,
+        won
+          ? `Your mycelium held ${held} stands through the turn of the season, after ${formatClock(this.match.time)}. ${this.match.colonization.filter((c) => c.owner !== 'rival').length} spore journeys and ${this.match.fusions.length} fusions made one living network of the forest.`
+          : `The rival held ${held} stands through the turn of the season. Your colonies can still grow.`,
+        () => this.restart(),
+        () => this.setView('forest')
+      );
+    }
     if (this.reportedColonies !== this.match.colonizedStands) {
       this.reportedColonies = this.match.colonizedStands;
       const arrival = this.match.colonization.at(-1);
@@ -1675,7 +1839,11 @@ export class Game {
     }
     if (draw) this.stage.render(dt);
     this.markerClock += dt;
+    this.offerFollow();
+    this.launchSporeFlights();
+    this.sporeFlights.update(dt, this.stage.rig.surfaceBlend > 0.3);
     if (this.markerClock > 0.1) {
+      this.syncSporeButton();
       this.markerClock = 0;
       this.updateMarkers(this.journey);
       // The survey is a record of the whole region, so it is refreshed on the
@@ -1779,10 +1947,6 @@ export class Game {
         ? 'Network revealed. Click a projected strand to open the section through it.'
         : 'Network hidden. The forest is unchanged underneath.');
     });
-    document.querySelector('#forest-cross')?.addEventListener('click', () => {
-      this.awaken();
-      this.ui.setNote(this.growAcrossStand().message);
-    });
     // The section browser's own controls. They exist for the player, not only
     // for the bench: Previous and Next open a section on their first press.
     const sectionAction = (selector: string, run: () => { ok: boolean; message: string }) => {
@@ -1798,6 +1962,8 @@ export class Game {
     sectionAction('#section-follow', () => (this.section ? this.followConnection() : this.openFirstSection()));
     sectionAction('#section-root', () => this.seekSectionRoot());
     sectionAction('#section-return', () => this.returnToForest());
+    sectionAction('#follow-frontier', () => this.followFrontier());
+    sectionAction('#release-spores', () => this.releaseSpores());
     sectionAction('#section-surface', () => this.surfaceHere());
     document.querySelector<HTMLSelectElement>('#section-stand')?.addEventListener('change', (event) => {
       const id = Number((event.target as HTMLSelectElement).value);
@@ -1862,6 +2028,9 @@ export class Game {
   }
 
   private descend(): void {
+    // Every descent remembers the forest it left, so Return to forest has a
+    // picture to come back to however the player later moves below.
+    if (this.stage.rig.view === 'forest' && !this.stage.rig.transitioning) this.captureForestContext();
     // With a spatial colony attached, descending is a descent into its real
     // sections rather than into the match's own stand transect: the general
     // action reopens the last section, and any other section can be chosen by
@@ -2078,6 +2247,7 @@ export class Game {
     // keeps a mushroom standing on the ground it fruited from.
     this.fruiting.group.position.add(new THREE.Vector3(dx, 0, dz));
     this.stormView.group.position.add(new THREE.Vector3(dx, 0, dz));
+    this.sporeFlights.group.position.add(new THREE.Vector3(dx, 0, dz));
     // The reveal and the section follow the same landscape: they are drawn in
     // region coordinates, so one shift keeps them where the ground is.
     this.sceneShift.x += dx;
@@ -2086,6 +2256,7 @@ export class Game {
     this.sectionView?.group.position.add(new THREE.Vector3(dx, 0, dz));
     this.stage.rig.rebaseForest(dx, dz);
     this.soil = new SoilMesh(this.sim.world);
+    this.attachEdgeSoil();
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
     this.living = new LivingView(this.sim, this.assets);
@@ -2470,7 +2641,11 @@ export class Game {
     const along = spec.plane.along === 'x' ? regional.x : regional.y;
     const z = this.hit.y - GRID.rows / 2;
     const depthCm = (this.region.heightAt(regional.x, regional.y) - z) * GRID.cmPerRow;
-    if (along < spec.alongFrom || along >= spec.alongTo || depthCm < spec.depthFromCm || depthCm >= spec.depthToCm) return null;
+    // The drawn soil runs past both ends into the next stand, and a grow order
+    // there is a real order: the section edge is a seam, not a wall.
+    if (along < spec.alongFrom - SECTION_SOIL_MARGIN || along >= spec.alongTo + SECTION_SOIL_MARGIN) return null;
+    if (depthCm < spec.depthFromCm || depthCm >= spec.depthToCm) return null;
+    if (standIdAt(this.region, regional.x, regional.y) === null) return null;
     return { x: regional.x, y: regional.y, z };
   }
 
@@ -2506,6 +2681,17 @@ export class Game {
     const point = this.gridAt(clientX, clientY);
     if (!point) return;
     const order = this.ui.order;
+    if (order === 'grow' && (point.gx < 0 || point.gx >= GRID.cols)) {
+      const direction = point.gx < 0 ? 'west' : 'east';
+      const site = this.region.stands[this.match.activeStandId];
+      const neighbour = site && (direction === 'west' ? site.sx > 0 : site.sx < this.region.cols - 1);
+      const within = point.gx >= -EDGE_SOIL_COLUMNS && point.gx < GRID.cols + EDGE_SOIL_COLUMNS;
+      if (!neighbour || !within || point.gy < 0 || point.gy >= GRID.rows) return;
+      const result = this.growAcrossStand(direction);
+      if (result.ok) this.sound.chime('grow');
+      this.ui.setNote(result.message);
+      return;
+    }
     if (order === 'grow') {
       const result = this.sim.growTo(point.gx, point.gy, this.liveGroup());
       if (result.ok) {
@@ -2733,6 +2919,8 @@ interface LabCrossingMatch {
 interface SpatialFixture {
   readonly region: Region;
   readonly originStandId: number;
+  /** The plane the colony was founded to grow along; optional for bench fixtures. */
+  readonly plane?: { readonly along: 'x' | 'y'; readonly fixed: number };
   readonly time: number;
   colonyEdges(): Array<{
     key: string;

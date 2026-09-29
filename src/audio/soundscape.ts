@@ -268,10 +268,15 @@ export class Soundscape {
   }
 
   /** Cue a moment of play in the score's own tuning. */
-  chime(kind: 'grow' | 'bond' | 'fruit'): void {
+  chime(kind: 'grow' | 'bond' | 'fruit' | 'spores'): void {
     if (!this.context || !this.enabled) return;
     const now = this.context.currentTime;
-    const overtones = kind === 'fruit' ? [8, 10, 12, 14, 16] : kind === 'bond' ? [12, 14, 16] : [12];
+    // Spores: a quick rising scatter, the only cue that climbs past the octave.
+    const overtones = kind === 'spores' ? [8, 9, 11, 12, 13, 14, 16, 18, 22] : kind === 'fruit' ? [8, 10, 12, 14, 16] : kind === 'bond' ? [12, 14, 16] : [12];
+    if (kind === 'spores') {
+      overtones.forEach((h, i) => this.bell(this.bellFrequency(h) * (i > 5 ? 2 : 1), now + i * 0.11, 0.05, Math.sin(i * 1.7) * 0.8));
+      return;
+    }
     overtones.forEach((h, i) => this.bell(this.bellFrequency(h), now + i * 0.28, kind === 'grow' ? 0.05 : 0.09, (i / overtones.length - 0.5) * 0.8));
   }
 

@@ -37,7 +37,9 @@ net.evolution.cooldown.pulse = 0;
 net.nodes[0].children = net.nodes[0].children.filter(id => id !== 1);
 markConnectivity(net);
 assert.notEqual(powerState(net, 'pulse'), 'Ready to invoke', 'disconnected partners do not qualify');
-assert.equal(fresh().evolution.learned.length, 0, 'daughter body starts without adaptations');
+// A bare network knows nothing; in a regional match the shared lineage supplies
+// what the player has learned (see tools/test-regional-play.mjs).
+assert.equal(fresh().evolution.learned.length, 0, 'a bare network starts without adaptations');
 console.log('PASS milestone gating, distinct partners, idempotence, first bloom, cooldown and severance');
 
 // Identical bodies in identical soil: each upgrade must affect its claimed behavior.
