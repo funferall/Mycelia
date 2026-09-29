@@ -13,6 +13,157 @@ The authoritative implementation status, feature register, priorities, known
 limitations, and verification record are in [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
 Future work must be recorded there rather than in separate plans or handoffs.
 
+![The forest from above, with the colony's reserve rings and orders in the side panel](docs/guide/forest.jpg)
+
+## How to play
+
+You are a fungus. You start as one spore under a stand of trees, in one of the
+nine stands of a forested valley. You spread a network of strands through the
+soil and trade with the trees above. Then you spread across the region and
+hold it against a rival network. Every game has a fresh seed, so the forest,
+the soil and the starting stands change each time.
+
+### 1. Wake up and look around
+
+The game opens on the forest from above. Drag to look around, scroll to zoom,
+and click a crown to see a tree. When you are ready, press **Awaken the spore**.
+Press **V**, or scroll in close, to go **Underground**. That view is a cut
+through the soil: the root systems of the trees above, the water table below,
+and your colony, glowing amber.
+
+![Underground: the tree roots, the water table and a young network](docs/guide/underground.jpg)
+
+### 2. Grow, and pay for every centimetre
+
+Everything you do costs one of three resources. The three rings in the side
+panel show how much you hold:
+
+- **carbon** (amber) is sugar from the trees, and the fuel for everything;
+- **water** (slate) and **nitrogen** (sage) come from the soil your strands
+  sit in.
+
+Choose an order, then click the soil:
+
+- **Grow** (`1`) sends your growing tips toward that point. Growth costs
+  carbon, and hard or dry soil costs more.
+- **Share** (`2`; called Bond in the keys) forms a partnership with a tree
+  through one of its root tips. The tree then sends you carbon, and you must keep it supplied with
+  water and minerals. A tree you neglect breaks the bond.
+- **Cord** (`3`) thickens a strand into a cord. Cords move resources faster
+  and survive fire and fighting, but they cost more to keep.
+- **Fruit** (`4`) raises a mushroom once you have saved enough surplus.
+
+**Rest** (`R`) stops growth so carbon can build up. Your first bond is the turning point: each tree
+you feed lets you grow more tips at once. A network that grows into poor soil
+without a partner starves and shrinks.
+
+### 3. Fruit, and send spores on the wind
+
+When enough carbon is saved, **Fruit** raises a mushroom through the soil to
+the forest floor. A finished mushroom holds spores. Wait for a gust, then press
+**Release spores**: the wind carries them to another stand, where they found a
+new colony of your own. You can also grow straight across a stand's edge:
+click the soil beyond it with **Grow**, or use **Follow the frontier** to keep
+the camera on the growing edge.
+
+![A mushroom rising from the network into the forest](docs/guide/fruiting.jpg)
+
+Each colony keeps its own resources. Colonies of yours that touch fuse into
+one network. A tile for each colony appears in the side panel, and clicking it
+takes you below. **See colonies through the floor** shows all your networks
+from the forest view, and the trees you hold glow softly.
+
+### 4. Learn, and use the powers
+
+Open **Unfold the tech tree**. Adaptations unlock as you reach milestones, and
+you learn them for free. There are three branches:
+
+- **Exchange**: soil water and nitrogen come in faster.
+- **Resilience**: fed strands heal, and transport along cords is faster.
+- **Fruiting**: surplus is saved toward mushrooms, and mushrooms mature
+  faster.
+
+After your first mushroom, each finished branch also gives a short power:
+**Forest pulse**, **Mend the web** and **Second spring**.
+
+![The tech tree: three branches of adaptations and their powers](docs/guide/tech-tree.jpg)
+
+The top of each branch is an ecological power that changes the whole region,
+for every colony, including yours:
+
+- **Summon storm** (Storm crown). You choose its direction. Rain, lightning
+  and falling trees follow, and fruiting and spores travel further on the
+  wind.
+- **Kindle wildfire** (Ember crown). You choose which way the fire runs.
+  Trees your network keeps watered survive; dry ones burn. Deep cords live
+  through it, and the ash that follows makes mushrooms mature faster. Burned
+  trees rot into the soil over the next few minutes.
+- **Call drought** (Parch crown). The rain stops across the region. Unfed
+  trees wither and shallow strands dry out; the ground near the stream holds.
+
+| Storm | Wildfire |
+|---|---|
+| ![A storm with lightning over the forest](docs/guide/storm.jpg) | ![A wildfire front crossing the forest](docs/guide/wildfire.jpg) |
+| **Drought** | **Flood** |
+| ![Drought: the region dried pale](docs/guide/drought.jpg) | ![A flood over the region after heavy rain](docs/guide/flood.jpg) |
+
+### 5. Fight at the front
+
+A rival fungus lives in another stand. Where its strands touch yours, a
+**front** opens and the two networks fight. A banner names the stand, and `Z`
+takes you there. Your strands at the front spend their own carbon to dissolve
+the enemy's, so the side that keeps its front supplied wins. Cut a strand and
+everything beyond it starves. Reach an enemy's founding strand and the whole
+colony dies.
+
+You can also fight directly. Point at the enemy's strands and press a key; the
+chemical is paid for from your strands nearby:
+
+| Key | Chemical | Cost | Use it for |
+|---|---|---|---|
+| `Q` | Lysing enzymes | carbon | Quick bursts on fine strands. Spam it. |
+| `W` | Leachate | water | A poison that lingers in wet soil. |
+| `E` | Ammonia | nitrogen | Damage, and strips nitrogen from enemy strands. |
+| `A` | Oxalate burst | carbon + nitrogen | A heavy blast that cuts through cords. |
+| `D` | Coil | all three | Kills the thickest enemy strand in reach, cutting off what lies beyond it. |
+| `C` | Barrage | carbon + water | A dark wall: your strands inside take far less damage. |
+
+![A front: your amber colony meets the rival's pale strands, with a barrage ring and the chemical bar](docs/guide/contact.jpg)
+
+Under **Opponent** in the side panel you choose who plays the rival:
+
+- a simple built-in bot;
+- an offline heuristic agent;
+- an AI decision model (TypeSafe Jev, or OpenAI Decisions once it is
+  available), which makes about four decisions a second.
+
+### 6. Win the region
+
+A stand counts as yours when you hold more of its trees in partnership than
+the rival does. Hold **5 of the 9 stands** until the season changes, and the
+region is yours. If the rival does the same, you lose. **Survey the region**
+(`S`) lists what every stand holds.
+
+![The regional survey: all nine stands and who holds them](docs/guide/survey.jpg)
+
+### Handy moves
+
+- **Split your network.** Hold the mouse still on the soil to draw a circle,
+  and the strands inside become a subcluster you can order separately. The
+  number keys then pick a subcluster.
+- **Pause and change speed.** Space pauses; the speed buttons run from
+  1× to 4×.
+- **Sections.** In a regional colony, `[` and `]` move through cross-sections
+  of the soil, `X` turns the cut, and `G` follows a strand.
+- **Watch the seasons.** Mushrooms only rise in warm, wet weather, which
+  means spring and autumn. Summer is too dry and winter too cold, unless a
+  storm or the ash after a fire changes the weather. Autumn also drops leaf
+  litter that feeds the soil.
+
+![Autumn over the canopy](docs/guide/autumn.jpg)
+
+![Subclusters: part of the network selected and ordered on its own](docs/guide/subclusters.jpg)
+
 ## Running it
 
 ```bash
@@ -105,6 +256,9 @@ written down under "Authored 3D assets" in `DESIGN.md`.
 | `1`–`4` | Grow / Bond / Cord / Fruit |
 | `[` / `]` / `X` / `G` | Previous / next section, flip orientation, follow a strand in a regional section |
 | `N` | Toggle the forest Network projection when a spatial colony is present |
+| `Q` `W` `E` | Light chemicals at the cursor, underground: lysing enzymes, leachate, ammonia |
+| `A` `D` `C` | Heavy chemicals at the cursor: oxalate burst, coil, barrage |
+| `Z` | Jump to the busiest front |
 
 Click the sheet to apply the selected order. With **Bond** selected, click a
 root tip to form a symbiosis; a bonded tree ships carbon in exchange for water
