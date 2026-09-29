@@ -43,6 +43,8 @@ import {
   stepNetwork,
   tryBond,
   updateTotals,
+  createGroupWhere,
+  dissolveGroup,
   type HyphaNode,
   type Network,
 } from './network';
@@ -805,7 +807,7 @@ export class CrossingMatch {
   }
 
   /** An order from a displayed section, checked against the shared material. */
-  growAt(point: Vec3, along: 'x' | 'y', fixed: number): { ok: boolean; message: string } {
+  growAt(point: Vec3, along: 'x' | 'y', fixed: number, group = 0): { ok: boolean; message: string } {
     if (!this.regionalCoordinates && (along !== this.plane.along || Math.abs(fixed - this.plane.fixed) > this.laneSpread + 2)) {
       return { ok: false, message: 'This section can be inspected, but growth follows the colony’s current corridor.' };
     }
@@ -819,8 +821,32 @@ export class CrossingMatch {
     if (owner === null || !voxel || this.soil.blockAt(voxel.x, voxel.y, voxel.z).blocked) {
       return { ok: false, message: 'That section point is stone, open water or saturated ground.' };
     }
-    orderWaypoint(this.colony, gx, gy, this.view, this.regionalCoordinates ? lateral : undefined);
-    return { ok: true, message: `Frontier directed to stand ${owner + 1}, −${Math.round(rowDepthCm(gy))} cm.` };
+    // A selected subcluster takes the order alone; the rest keep theirs.
+    const live = group && this.colony.groups?.some((g) => g.id === group) ? group : 0;
+    orderWaypoint(this.colony, gx, gy, this.view, this.regionalCoordinates ? lateral : undefined, live);
+    const who = live ? `Subcluster ${live}` : 'Frontier';
+    return { ok: true, message: `${who} directed to stand ${owner + 1}, −${Math.round(rowDepthCm(gy))} cm.` };
+  }
+
+  /** Circle part of the body in physical XYZ and make it a subcluster. */
+  splitAt(point: Vec3, radius: number): { ok: boolean; message: string; id?: number } {
+    return createGroupWhere(this.colony, this.view, (node) => {
+      const at = this.nodePosition(node);
+      return Math.hypot(at.x - point.x, at.y - point.y, at.z - point.z) <= radius;
+    });
+  }
+
+  /** Return a subcluster to the body at large. */
+  mergeGroup(id: number): boolean {
+    return dissolveGroup(this.colony, this.view, id);
+  }
+
+  /** Node ids of one subcluster, for highlighting it in a section. */
+  groupNodeIds(group: number): Set<number> {
+    const ids = new Set<number>();
+    if (!group) return ids;
+    for (const node of this.colony.nodes) if (node.alive && node.group === group) ids.add(node.id);
+    return ids;
   }
 
   /** Select in physical XYZ, so overlapping projections stay distinct. */

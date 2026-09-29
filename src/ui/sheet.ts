@@ -91,10 +91,15 @@ export class SheetUI {
     document.addEventListener('keydown', (event) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement || event.ctrlKey || event.metaKey || event.altKey) return;
       const map: Record<string, OrderId> = { '1': 'grow', '2': 'bond', '3': 'cord', '4': 'fruit' };
+      // While subclusters exist, their numbers belong to them.
+      if (this.numberKeyClaimed?.(event.key)) return;
       const order = map[event.key];
       if (order) this.orderHandler?.(order);
     });
   }
+
+  /** Set by the game: true when a number key selects a subcluster instead of an order. */
+  numberKeyClaimed: ((key: string) => boolean) | null = null;
 
   onOrder(handler: (order: OrderId) => void): void {
     this.orderHandler = handler;

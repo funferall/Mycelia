@@ -1593,13 +1593,23 @@ export function groupSummary(net: Network): GroupSummary[] {
 export function createGroup(
   net: Network, world: NetworkWorld, gx: number, gy: number, radius: number
 ): { ok: boolean; message: string; id?: number; strands?: number; tips?: number } {
+  return createGroupWhere(net, world, (n) => Math.hypot(n.gx + 0.5 - gx, n.gy + 0.5 - gy) <= radius);
+}
+
+/**
+ * Split the living strands a rule picks into a new subcluster. The transect
+ * circles by grid cell; a regional section circles in physical XYZ.
+ */
+export function createGroupWhere(
+  net: Network, world: NetworkWorld, pick: (node: HyphaNode) => boolean
+): { ok: boolean; message: string; id?: number; strands?: number; tips?: number } {
   let living = 0;
   for (const node of net.nodes) if (node.alive && node.connected) living++;
   if (living < MIN_SPLIT_STRANDS) {
     return { ok: false, message: `Grow the colony to ${MIN_SPLIT_STRANDS} strands before splitting it (${living} now).` };
   }
   net.groups ??= [];
-  const selected = net.nodes.filter((n) => n.alive && Math.hypot(n.gx + 0.5 - gx, n.gy + 0.5 - gy) <= radius);
+  const selected = net.nodes.filter((n) => n.alive && pick(n));
   if (selected.length < MIN_GROUP_STRANDS) {
     return { ok: false, message: `Circle at least ${MIN_GROUP_STRANDS} of your strands to make a subcluster.` };
   }

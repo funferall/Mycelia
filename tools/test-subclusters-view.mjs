@@ -91,6 +91,14 @@ try {
   assert.equal(rested.colony, false, 'the colony keeps growing');
   assert.match(rested.label, /Wake/);
 
+  // With subclusters present, a number key picks the subcluster and leaves the order alone.
+  await page.evaluate(() => document.querySelector('[data-order="grow"]')?.click());
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('1');
+  const keyed = await page.evaluate(() => ({ group: window.mycelia.game.selectedGroup, order: window.mycelia.game.ui.order }));
+  assert.equal(keyed.group, 1, 'the number key selects the subcluster');
+  assert.equal(keyed.order, 'grow', 'and does not change the order');
+
   // Escape returns orders to the colony; merge dissolves the subcluster.
   await page.keyboard.press('Escape');
   const escaped = await page.evaluate(() => window.mycelia.game.selectedGroup);

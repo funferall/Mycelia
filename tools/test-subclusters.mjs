@@ -123,3 +123,38 @@ const meanDistance = (nodes, p) => nodes.reduce((v, n) => v + Math.hypot(n.wx - 
   assert.equal(run(), run());
   console.log('PASS deterministic replay with subclusters');
 }
+{
+  // A regional body (the colony has grown across a stand edge): a subcluster
+  // circled in physical XYZ takes a section order alone.
+  const { m, net, step } = grown(60, 'split-regional');
+  const site = m.region.stands[m.region.foundingStand];
+  const dir = site.sx < m.region.cols - 1 ? 'east' : 'west';
+  assert.equal(m.growAcross(dir).ok, true, 'the colony becomes a regional body');
+  step(5);
+  const body = m.spatialColonies.get(m.region.foundingStand);
+  assert.equal(body.colony, net, 'the body is the same network');
+  const { elevationAtDepthCm } = await load('spatial');
+  const root = body.nodePosition(net.nodes[net.rootId]);
+  const far = net.nodes.filter((n) => n.alive && n.isTip)
+    .map((n) => ({ n, at: body.nodePosition(n) }))
+    .sort((a, b) => Math.hypot(b.at.x - root.x, b.at.y - root.y) - Math.hypot(a.at.x - root.x, a.at.y - root.y))[0];
+  const split = body.splitAt(far.at, 12);
+  assert(split.ok && split.id, split.message);
+  const colonyBefore = JSON.stringify(net.waypoints);
+  const x = far.at.x + (far.at.x > root.x ? 14 : -14);
+  const target = { x, y: far.at.y, z: elevationAtDepthCm(m.region, x, far.at.y, 12) };
+  const ordered = body.growAt(target, 'x', far.at.y, split.id);
+  assert(ordered.ok, ordered.message);
+  assert.match(ordered.message, /Subcluster/);
+  const group = net.groups.find((g) => g.id === split.id);
+  assert.equal(group.waypoints.length, 1, 'the order went to the subcluster');
+  assert.equal(JSON.stringify(net.waypoints), colonyBefore, 'the colony kept its own orders');
+  const nearest = () => Math.min(...net.nodes.filter((n) => n.alive && n.group === split.id).map((n) => { const p = body.nodePosition(n); return Math.hypot(p.x - target.x, p.y - target.y, p.z - target.z); }));
+  const before = nearest();
+  step(30);
+  const after = nearest();
+  assert(after < before - 3, `the subcluster grows toward its order (${before.toFixed(1)} -> ${after.toFixed(1)})`);
+  assert.equal(body.groupNodeIds(split.id).size, net.nodes.filter((n) => n.alive && n.group === split.id).length);
+  assert(body.mergeGroup(split.id) && !net.groups.some((g) => g.id === split.id), 'merged back');
+  console.log(`PASS a regional body's subcluster (${split.message.split(':')[1].trim()}) took a section order alone and closed from ${before.toFixed(1)} to ${after.toFixed(1)} in 30 s`);
+}

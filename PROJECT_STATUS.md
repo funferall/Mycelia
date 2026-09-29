@@ -2533,6 +2533,30 @@ either foundation.
 
 ## Verification record
 
+### 29 September 2026: subclusters in regional sections (`CORE-08`)
+
+- **Fixed: section orders ignored subclusters.** In a regional section, the
+  view a colony is in once it has crossed a stand edge, a grow order always
+  went to the whole body. `CrossingMatch.growAt` now takes the selected
+  group. The new `CrossingMatch.splitAt` circles strands in XYZ, and the
+  selection circle works on the section plane.
+- **Fixed: number keys switched the order.** With subclusters present, the
+  number keys `1` to `6` select a subcluster only; they no longer also
+  switch the order. Before, `2` picked Bond as well, so the next click tried
+  to bond instead of steering.
+- **Section highlight.** The selected subcluster is drawn in the selection
+  blue in the section.
+- **Verification:**
+  - `node tools/test-subclusters.mjs` passes 7 checks. The new one: a
+    regional body's subcluster took a section order alone and closed from
+    12.7 to 0.8 in 30 s.
+  - `node tools/test-subclusters-view.mjs` passes, including the number-key
+    check.
+  - `tsc` passes.
+- **Not verified in the browser:** circling in a section. The fixture found
+  no growing tip on the opened section plane, so that check was dropped for
+  now.
+
 ### 29 September 2026: wind-driven wildfire and hurricane rain (`TECH-03`, `TECH-06`)
 
 - The wildfire front now advances from the region's seeded wind: a tailwind

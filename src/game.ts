@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ECON, GRID, SPECIES } from './sim/content';
-import { groupResting, groupSummary, nearestNode, setGroupResting } from './sim/network';
+import { groupResting, groupSummary, nearestNode, setGroupResting, type Network } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
 import { FruitingView, type FruitingSite } from './render/fruiting';
@@ -223,7 +223,7 @@ export class Game {
    * the press-and-hold circle that selects one. See `GrowthGroup`.
    */
   private selectedGroup = 0;
-  private lasso: { startedAt: number; clientX: number; clientY: number; gx: number; gy: number; radius: number; active: boolean } | null = null;
+  private lasso: { startedAt: number; clientX: number; clientY: number; gx: number; gy: number; point?: { x: number; y: number; z: number }; radius: number; active: boolean } | null = null;
   private lassoRing: THREE.Mesh | null = null;
   private clusterBar: HTMLElement | null = null;
   private clusterKey = '';
@@ -1069,7 +1069,7 @@ export class Game {
     const clip = clipEdges(this.spatial.region, this.section.spec, this.spatial.colonyEdges() as RevealEdge[]);
     const enemy = clipEdges(this.spatial.region, this.section.spec, this.enemyEdges());
     this.sectionView.setSection(this.section.spec);
-    this.sectionView.sync(clip, enemy);
+    this.sectionView.sync(clip, enemy, this.spatial.groupNodeIds?.(this.selectedGroup));
     this.reveal?.setSlice(this.section.spec);
   }
 
@@ -2119,8 +2119,8 @@ export class Game {
       const group = this.liveGroup();
       if (group) {
         // Rest and wake apply to the selected subcluster alone.
-        const resting = !groupResting(this.sim.player, group);
-        setGroupResting(this.sim.player, group, resting);
+        const resting = !groupResting(this.groupNet(), group);
+        setGroupResting(this.groupNet(), group, resting);
         this.ui.setNote(resting ? `Subcluster ${group} rests. The rest of the colony keeps its orders.` : `Subcluster ${group} begins to grow again.`);
         this.syncClusterControls(true);
         return;
@@ -2721,8 +2721,14 @@ export class Game {
       // Underground, holding still on the soil grows a selection circle.
       this.lasso = null;
       if (this.canSelectRegion() && !event.shiftKey) {
-        const point = this.gridAt(event.clientX, event.clientY);
-        if (point) this.lasso = { startedAt: performance.now(), clientX: event.clientX, clientY: event.clientY, gx: point.gx, gy: point.gy, radius: 0, active: false };
+        if (this.section) {
+          // In a regional section the circle is drawn on the section plane, in XYZ.
+          const point = this.sectionPointAt(event.clientX, event.clientY);
+          if (point) this.lasso = { startedAt: performance.now(), clientX: event.clientX, clientY: event.clientY, gx: 0, gy: 0, point, radius: 0, active: false };
+        } else {
+          const point = this.gridAt(event.clientX, event.clientY);
+          if (point) this.lasso = { startedAt: performance.now(), clientX: event.clientX, clientY: event.clientY, gx: point.gx, gy: point.gy, radius: 0, active: false };
+        }
       }
       // A capture that cannot be taken is not a reason to lose the press: the
       // drag ends at pointerup either way, and a synthetic or stale pointer id
@@ -2828,7 +2834,7 @@ export class Game {
       if (event.key === 'Escape' && this.survey.open) this.survey.hide();
       // Escape returns orders to the whole colony; 1-6 pick a subcluster.
       else if (event.key === 'Escape' && this.selectedGroup) this.selectGroup(0);
-      if (/^[1-6]$/.test(event.key) && this.sim.player.groups?.some((g) => g.id === Number(event.key))) this.selectGroup(Number(event.key));
+      if (/^[1-6]$/.test(event.key) && this.groupNet().groups?.some((g) => g.id === Number(event.key))) this.selectGroup(Number(event.key));
       // Section keys do not steal input from an independent local colony below.
       if (this.spatial) {
         if (this.section || this.stage.rig.view === 'forest') {
@@ -3019,7 +3025,7 @@ export class Game {
       const order = this.ui.order;
       let result: { ok: boolean; message: string };
       if (order === 'grow') {
-        result = spatial.growAt(point, this.section.spec.plane.along, this.section.spec.plane.fixed);
+        result = spatial.growAt(point, this.section.spec.plane.along, this.section.spec.plane.fixed, this.liveGroup());
       } else if (order === 'bond') {
         result = this.seekSectionRoot();
       } else if (!spatial.regionalCoordinates && this.section.spec.plane.along !== spatial.plane.along) {
@@ -3080,15 +3086,25 @@ export class Game {
   // steer it on its own. The simulation side is `GrowthGroup` in network.ts.
   // -------------------------------------------------------------------------
 
-  /** Region selection works on the local transect, not in a section view. */
+  /** Region selection works on the local transect, and in a regional section of a colony body. */
   private canSelectRegion(): boolean {
-    return this.stage.rig.view === 'underground' && !this.stage.rig.transitioning && !this.section &&
-      this.awakened && this.sim.outcome === 'playing' && this.sim.hasColony;
+    if (this.stage.rig.view !== 'underground' || this.stage.rig.transitioning || !this.awakened) return false;
+    if (this.section) return Boolean(this.spatial);
+    return this.sim.outcome === 'playing' && this.sim.hasColony;
+  }
+
+  /**
+   * The network subclusters belong to: the regional body when a section of it
+   * is open, else the stand's own colony. Both views read and order the same
+   * groups when they are the same network.
+   */
+  private groupNet(): Network {
+    return (this.section && this.spatial?.colony) || this.sim.player;
   }
 
   /** The selected subcluster if it still exists, else the colony at large. */
   private liveGroup(): number {
-    if (this.selectedGroup && !this.sim.player.groups?.some((g) => g.id === this.selectedGroup)) this.selectGroup(0);
+    if (this.selectedGroup && !this.groupNet().groups?.some((g) => g.id === this.selectedGroup)) this.selectGroup(0);
     return this.selectedGroup;
   }
 
@@ -3096,6 +3112,8 @@ export class Game {
     this.selectedGroup = id;
     this.playerMesh.setHighlight(id);
     this.syncClusterControls(true);
+    if (this.section) this.refreshSectionClip();
+    if (id) this.ui.setNote(`Subcluster ${id} selected: click the soil with Grow to steer it alone. Esc: whole colony.`);
   }
 
   /** Grow the circle while the press is held still; draw it in the soil's frame. */
@@ -3118,7 +3136,15 @@ export class Game {
       this.stage.scene.add(this.lassoRing);
     }
     this.lassoRing.visible = true;
-    this.lassoRing.position.set(lasso.gx - GRID.cols / 2, GRID.rows / 2 - lasso.gy, 3.5);
+    if (lasso.point && this.section) {
+      // On the section plane: face the viewer across it.
+      const at = this.regionToScenePoint(lasso.point);
+      this.lassoRing.position.set(at.x + this.sceneShift.x, at.y, at.z + this.sceneShift.z);
+      this.lassoRing.rotation.set(0, this.section.spec.plane.along === 'x' ? 0 : Math.PI / 2, 0);
+    } else {
+      this.lassoRing.position.set(lasso.gx - GRID.cols / 2, GRID.rows / 2 - lasso.gy, 3.5);
+      this.lassoRing.rotation.set(0, 0, 0);
+    }
     this.lassoRing.scale.setScalar(lasso.radius);
   }
 
@@ -3128,7 +3154,9 @@ export class Game {
 
   private finishLasso(lasso: NonNullable<Game['lasso']>): void {
     this.hideLassoRing();
-    const result = this.sim.splitAt(lasso.gx, lasso.gy, lasso.radius);
+    const result = lasso.point && this.section && this.spatial?.splitAt
+      ? this.spatial.splitAt(lasso.point, lasso.radius)
+      : this.sim.splitAt(lasso.gx, lasso.gy, lasso.radius);
     this.ui.setNote(result.message);
     if (!result.ok || !result.id) return;
     this.playerMesh.refreshColors();
@@ -3142,7 +3170,7 @@ export class Game {
    * Rest button honest about whichever group is selected.
    */
   private syncClusterControls(force = false): void {
-    const net = this.sim.player;
+    const net = this.groupNet();
     const summary = groupSummary(net);
     const key = `${this.selectedGroup}|${summary.map((g) => `${g.id}:${g.strands}:${g.tips}:${g.resting}`).join(',')}`;
     const rest = document.querySelector<HTMLButtonElement>('#rest');
@@ -3179,7 +3207,7 @@ export class Game {
     for (const button of bar.querySelectorAll<HTMLButtonElement>('.cluster-merge')) {
       button.addEventListener('click', () => {
         const id = Number(button.dataset.merge);
-        this.sim.mergeGroup(id);
+        if (this.section && this.spatial?.mergeGroup) this.spatial.mergeGroup(id); else this.sim.mergeGroup(id);
         this.playerMesh.refreshColors();
         if (this.selectedGroup === id) this.selectGroup(0); else this.syncClusterControls(true);
         this.ui.setNote(`Subcluster ${id} rejoins the colony and follows its orders.`);
@@ -3292,6 +3320,11 @@ interface SpatialFixture {
   }>;
   reachedStandIds(): number[];
   browsableStandIds(): number[];
+  /** The body's network and its subclusters (a regional colony; bench fixtures may lack them). */
+  readonly colony?: Network;
+  splitAt?(point: { x: number; y: number; z: number }, radius: number): { ok: boolean; message: string; id?: number };
+  mergeGroup?(id: number): boolean;
+  groupNodeIds?(group: number): Set<number>;
   standFrame(standId: number): { originX: number; originY: number; size: number } | null;
   orderAcross(): { ok: boolean; message: string };
   step(dt: number): void;
