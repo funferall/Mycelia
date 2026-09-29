@@ -86,8 +86,8 @@ export class FireUI {
     this.watch.querySelector('strong')!.textContent = label;
     const lost = fire.losses.player;
     this.watch.querySelector('div p')!.textContent = phase === 'warning'
-      ? `Toward ${toward} · grow deep, reinforce cords, hold wet ground`
-      : `Toward ${toward} · your losses: ${lost.strands} strands burned, ${lost.singed} singed, ${lost.bodies} fruiting bodies`;
+      ? `Toward ${toward} · water your partner trees, grow deep, reinforce cords, hold wet ground`
+      : `Toward ${toward} · your losses: ${lost.strands} strands burned, ${lost.singed} singed, ${lost.bodies} fruiting bodies · trees: ${fire.livingTreesBurned} torched, ${fire.treesScorched} scorched, ${fire.treesSpared} spared`;
     (this.watch.querySelector('.fire-arrow') as HTMLElement).style.transform = `rotate(${-direction}rad)`;
     if (phase !== this.phase) {
       this.phase = phase;

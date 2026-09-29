@@ -151,3 +151,80 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   assert.equal(run(), run());
   console.log('PASS deterministic replay');
 }
+
+// ---------------------------------------------------------------------------
+// Wildfire v2, W1: water is fire armour.
+// ---------------------------------------------------------------------------
+const { stepHydration, hydrationTarget, HYDRATION_SECONDS } = await load('world');
+const { FLAMMABILITY } = await load('wildfire');
+{
+  // Hydration follows what the partners deliver, smoothed over ~40 s.
+  const { m, from } = fixture('ember-hydration');
+  const world = from.sim.world;
+  const [fed, unfed] = world.trees.filter(t => !t.dead);
+  for (const c of world.cells) c.water = 0.3;
+  fed.rootTips[0].bondedTo = 0;
+  fed.waterReceived = 1;
+  fed.hydration = 0;
+  unfed.hydration = 0;
+  for (let i = 0; i < HYDRATION_SECONDS * 10; i++) { stepHydration(world, fed, 0.1); stepHydration(world, unfed, 0.1); }
+  const target = hydrationTarget(world, fed);
+  assert(Math.abs(fed.hydration - target * (1 - Math.exp(-1))) < 0.02, `one time constant reaches 63% (${fed.hydration.toFixed(3)} of ${target.toFixed(3)})`);
+  assert(fed.hydration > unfed.hydration * 2, 'a fed tree is far better watered than an unfed one');
+  void m;
+  console.log(`PASS hydration follows supply: fed ${fed.hydration.toFixed(2)}, unfed ${unfed.hydration.toFixed(2)} after ${HYDRATION_SECONDS}s`);
+}
+{
+  // The same fire, the same seed: watered forests keep their trees.
+  const burnWith = (hydration) => {
+    const { m, id } = fixture('ember-armour');
+    const living = [];
+    for (const s of m.stands) for (const t of s.sim.world.trees) if (!t.dead) { t.hydration = hydration; living.push(t); }
+    m.kindleFire(id, 0);
+    m.step(FIRE.warning + FIRE.burn + 1);
+    return { torched: m.fire.livingTreesBurned, scorched: m.fire.treesScorched, spared: m.fire.treesSpared, living: living.length, trees: living, m };
+  };
+  const dry = burnWith(0);
+  const wet = burnWith(1);
+  assert(dry.torched >= dry.living * 0.4, `unfed crowns mostly burn (${dry.torched}/${dry.living})`);
+  assert(wet.torched <= Math.max(1, dry.torched * 0.1), `fed crowns resist (${wet.torched} against ${dry.torched})`);
+  // Scorched trees live and keep their bonds.
+  const fedScorched = wet.trees.filter(t => t.scorched);
+  assert(fedScorched.length > 0 && fedScorched.every(t => !t.dead && t.health < 1), 'a ground fire scars but spares');
+  // Torched trees leave remains; a fierce, dry fire fells some of them as logs.
+  const dead = dry.trees.filter(t => t.burned);
+  assert(dead.every(t => t.burned.remains && t.burned.biomass > 0), 'every burned tree records its remains');
+  const logs = dead.filter(t => t.burned.remains === 'log');
+  assert(logs.length > 0 && logs.every(t => t.fallen && Math.abs(t.fallen.direction - dry.m.fire.state.direction) < 1e-9), 'felled trees lie downwind');
+  console.log(`PASS water is armour: unfed ${dry.torched}/${dry.living} torched (${logs.length} felled as logs), fed ${wet.torched} torched and ${wet.scorched} scorched`);
+}
+{
+  // Bonds survive a scorch and end with a torch.
+  const { m, id, from } = fixture('ember-bonds');
+  const trees = from.sim.world.trees.filter(t => !t.dead);
+  for (const t of trees) { t.rootTips[0].bondedTo = 0; t.rootTips[0].bondedColonyId = null; t.hydration = 0.55; }
+  m.kindleFire(id, 0);
+  m.step(FIRE.warning + FIRE.burn + 1);
+  for (const t of trees) {
+    if (t.burned) assert.equal(t.rootTips[0].bondedTo, null, 'a torched tree gives up its bond');
+    else assert.equal(t.rootTips[0].bondedTo, 0, 'a scorched or spared tree keeps its bond');
+  }
+  console.log(`PASS bonds: ${trees.filter(t => t.burned).length} torched trees let go, ${trees.filter(t => !t.burned).length} survivors keep theirs`);
+}
+{
+  // Species and firebreaks, from the odds themselves.
+  const { m, from } = fixture('ember-odds');
+  const world = from.sim.world;
+  // A tree away from the stream (a bank is a refuge, where nothing burns).
+  const tree = world.trees.find(t => !t.dead && !m.fire.treeOdds(world, t).refuge);
+  // Moderately watered, so no species reaches the 97% cap on this dry ground.
+  tree.hydration = 0.6;
+  const odds = (species) => { const was = tree.species; tree.species = species; const o = m.fire.treeOdds(world, tree); tree.species = was; return o.burn; };
+  assert(odds('oak') < odds('birch') && odds('birch') < odds('hemlock'), 'hemlock torches, birch catches, oak resists');
+  assert(FLAMMABILITY.hemlock > FLAMMABILITY.birch && FLAMMABILITY.birch > FLAMMABILITY.oak);
+  const open = m.fire.treeOdds(world, tree, 100).burn;
+  m.fire.recentTrees = [{ p: 90, hydration: 1 }, { p: 93, hydration: 1 }, { p: 97, hydration: 1 }];
+  const behindBelt = m.fire.treeOdds(world, tree, 100).burn;
+  assert(behindBelt < open * 0.6, `a green belt is a firebreak (${behindBelt.toFixed(2)} behind it, ${open.toFixed(2)} in the open)`);
+  console.log(`PASS species and firebreak: oak ${odds('oak').toFixed(2)} < birch ${odds('birch').toFixed(2)} < hemlock ${odds('hemlock').toFixed(2)}; a watered belt cuts ${open.toFixed(2)} to ${behindBelt.toFixed(2)}`);
+}

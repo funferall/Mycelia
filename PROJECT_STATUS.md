@@ -831,10 +831,30 @@ choices from the match seed so `MAP-13` replay stays exact, and keep `MAP-09`'s
 reachability and water-in-reach guarantees for whatever stand is drawn.
 Recorded as `MAP-16` (Planned); no implementation exists yet.
 
-### Major plan: wildfire v2, fire that reads the network (written 29 September; W4 assets done 29 September)
+### Major plan: wildfire v2, fire that reads the network (written 29 September; W4 and W1 done 29 September)
 
 **Progress, 29 September:**
 
+- **W1, hydration and new ignition (done).**
+  - `Tree.hydration` (`stepHydration` in `src/sim/world.ts`, run in
+    `Simulation.stepTrees`) is 0.6 of the bond water delivered plus 0.4 of the
+    soil water at rooting depth. It is an exponential moving average with a
+    40 s time constant.
+  - `Wildfire.treeOdds` combines:
+    - intensity: dryness 0.55 to 1.2, fuel from dead wood and topsoil
+      organic matter, and the firebreak;
+    - hydration;
+    - `FLAMMABILITY` (hemlock 1.25, birch 1.1, oak 0.7), with maturity and
+      health.
+  - Burn chance is `flam * intensity * (1 - hydration)^1.6`, capped at 0.97.
+    Refuges stay at 0.
+  - Outcomes: torched (a snag, or a log felled downwind at high intensity),
+    scorched (health loss, bonds kept), or spared.
+  - Trees are judged in front order, so a watered belt weakens what follows.
+    `burned` records `remains` and `biomass`.
+  - The fire watch reports trees torched, scorched and spared per fire.
+  - Hydration 1 means no torching: the open question on a hard floor is
+    still open.
 - **W4 assets (done).** `tools/make-fire-assets.py` builds nine assets with
   gentle LODs:
   - charred oak, birch and hemlock (variant `charred`, no foliage);
@@ -845,7 +865,7 @@ Recorded as `MAP-16` (Planned); no implementation exists yet.
 - **Still to do:**
   - the logs, stump, ember bed, fireweed and ash bed are registered but not
     yet placed: they arrive with W2 remains and W5 effects;
-  - W1 to W3, W5 and W6 have not started.
+  - W2, W3, W5 and W6 have not started.
 
 
 A self-contained plan to deepen the existing Ember crown wildfire (`TECH-06`).
@@ -2222,6 +2242,31 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: wildfire v2 W1, water is fire armour (`TECH-06`)
+
+- Changed files: `src/sim/world.ts` (hydration), `src/sim/sim.ts` (stepped
+  with trees), `src/sim/wildfire.ts` (`treeOdds`, `FLAMMABILITY`, ordered
+  judging, outcomes, per-fire counters) and `src/ui/wildfire.ts` (watch and
+  advice).
+- **No change without a fire:** 90 s fingerprints are identical to the
+  committed code. The new drawn-start baselines are `raven-wood`
+  `8e90afcc63ba88f4` and `storm-race` `45160dc3472d0e23`.
+- `test-wildfire`: pass, 10 checks, 4 of them new:
+  - hydration after one 40 s time constant: fed 0.46, unfed 0.08;
+  - the same fire at hydration 0 and 1: unfed 59/75 torched (22 felled as
+    logs downwind); fed 0 torched and 16 scorched but alive;
+  - bonds are kept by survivors and released by the torched;
+  - burn odds at equal hydration: oak 0.21 < birch 0.33 < hemlock 0.37; a
+    watered belt cuts a tree's odds from 0.33 to 0.16.
+- **Also pass:**
+  - `test-drought`: a fire in a drought now takes 44% to 55% of living trees;
+    it was 44% to 73% when watering did not matter.
+  - `test-storm`, `test-flood` and `test-sim` (11).
+- **Browser, on a fresh build:**
+  - `test-wildfire-view`: 36 living trees burned, no errors.
+  - `test-underground-view`.
+- `npm run typecheck`: pass.
 
 ### 29 September 2026: wildfire v2 assets (`TECH-06`, `ASSET-02`)
 

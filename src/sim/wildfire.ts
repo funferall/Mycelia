@@ -1,7 +1,7 @@
 import { GRID } from './content';
 import { STAND_SIZE, type Region } from './region';
 import { burnNode, markConnectivity, payColonyFund, updateTotals, type Network } from './network';
-import type { NetworkWorld, Tree } from './world';
+import { treeHydration, type NetworkWorld, type Tree, type World } from './world';
 import { hashString, mulberry32 } from './rng';
 import { standFrameOf, treeSpatialPosition } from './spatial';
 import type { CrossingMatch } from './crossing';
@@ -14,8 +14,15 @@ import type { StandState } from './match';
  * chose. Everything is judged exactly once, at the moment the front reaches it,
  * from the fire's own seed: where anyone is looking never changes what burns.
  *
- * - Crowns burn unless the ground under them is wet (stream banks, rain-soaked
- *   soil). A burned tree is dead: its bonds end and its body is ash.
+ * - Water is fire armour (wildfire v2, W1). Each tree meets the front with a
+ *   fire intensity (dry ground, fuel from dead wood and litter, and weaker
+ *   just past well-watered trees: a green belt is a firebreak) and its own
+ *   hydration (mostly the water its mycorrhizal partners have been
+ *   delivering). Species flammability sets the rest: hemlock torches, birch's
+ *   paper bark catches, oak's thick bark resists. It is torched (dies as a
+ *   charred snag, or falls as a charred log), scorched (a ground fire: it
+ *   loses health but keeps its bonds), or spared. Stream banks and soaked
+ *   soil remain refuges.
  * - Underground, heat only reaches the top of the soil. Shallow tips and thin
  *   strands die; thick or reinforced cords and every colony's root are singed
  *   and survive; anything deeper is untouched.
@@ -42,7 +49,29 @@ export const FIRE = {
   dryBelow: 0.35,
   /** Soil rows the fire turns to ash as it passes. */
   ashRows: 5,
+  /** How far behind the front well-watered trees still weaken it, region units. */
+  breakReach: 20,
+  /** A torched tree's chance never reaches certainty. */
+  maxBurn: 0.97,
 } as const;
+
+/**
+ * How readily each species' crown carries fire: hemlock's thin bark and low
+ * branches torch, birch's paper bark catches, oak's thick bark resists.
+ */
+export const FLAMMABILITY: Record<string, number> = { hemlock: 1.25, birch: 1.1, oak: 0.7 };
+
+/** One tree's odds when the front reaches it: the rule, without the roll. */
+export interface TreeFireOdds {
+  /** Chance the crown is torched and the tree dies. */
+  burn: number;
+  /** Chance, if not torched, that a ground fire scorches it. */
+  scorch: number;
+  intensity: number;
+  hydration: number;
+  /** True on stream banks and soaked soil: nothing happens there. */
+  refuge: boolean;
+}
 
 /** 0 at or below dryBelow, 1 at the wet refuge: how much the soil's water resists the fire. */
 function dampness(wet: number): number {
@@ -126,6 +155,11 @@ export class Wildfire {
     announcedAt: 0, igniteAt: 0, endsAt: 0, clearAt: 0, readyAt: 0, start: 0, end: 0,
   };
   readonly burnedTrees: BurnedTree[] = [];
+  /** Living trees the front scorched but did not kill, and those it left untouched. */
+  treesScorched = 0;
+  treesSpared = 0;
+  /** Recently crossed living trees, for the firebreak: projection and hydration. */
+  private recentTrees: Array<{ p: number; hydration: number }> = [];
   readonly burnedStands = new Set<number>();
   readonly losses: Record<'player' | 'rival', FireLosses> = {
     player: { strands: 0, singed: 0, bodies: 0 },
@@ -229,7 +263,12 @@ export class Wildfire {
       start, end,
     } satisfies Partial<FireState>);
     this.burnedStands.clear();
-    this.broadcast(`Smoke on the horizon. A wildfire will run across the region in ${FIRE.warning} seconds. Grow deep, reinforce cords, and hold wet ground.`);
+    this.recentTrees = [];
+    // The watch reports this fire's trees.
+    this.livingTreesBurned = 0;
+    this.treesScorched = 0;
+    this.treesSpared = 0;
+    this.broadcast(`Smoke on the horizon. A wildfire will run across the region in ${FIRE.warning} seconds. Water your partner trees, grow deep, reinforce cords, and hold wet ground.`);
     return 'Fire kindled';
   }
 
@@ -273,6 +312,7 @@ export class Wildfire {
       return p > a && p <= b;
     };
     const { region } = this.host;
+    const reached: Array<{ stand: StandState; tree: Tree; p: number }> = [];
     for (const stand of this.host.stands) {
       const frame = standFrameOf(region, stand.site.id);
       if (!frame) continue;
@@ -292,9 +332,13 @@ export class Wildfire {
       for (const tree of world.trees) {
         if (tree.burned) continue;
         const at = treeSpatialPosition(tree, region, frame);
-        if (crossed(at.x, at.y)) this.burnTree(stand, tree, this.reachedAt(this.project(at.x, at.y)));
+        if (crossed(at.x, at.y)) reached.push({ stand, tree, p: this.project(at.x, at.y) });
       }
     }
+    // Judged in the order the front meets them, so a green belt behind it
+    // really does weaken what comes next. Ties break by stand and tree id.
+    reached.sort((u, v) => (u.p - v.p) || (u.stand.site.id - v.stand.site.id) || (u.tree.id - v.tree.id));
+    for (const { stand, tree, p } of reached) this.burnTree(stand, tree, this.reachedAt(p), p);
     for (const target of this.burnables()) {
       const { net, local } = target;
       const frame = local ? standFrameOf(region, local.site.id) : null;
@@ -320,21 +364,80 @@ export class Wildfire {
     return s.igniteAt + ((p - s.start) / (s.end - s.start)) * FIRE.burn;
   }
 
-  private burnTree(stand: StandState, tree: Tree, at: number): void {
-    const cell = stand.sim.world.cells[6 * GRID.cols + tree.gx];
+  /**
+   * One tree's odds when the front reaches it (no roll), from the fire's own
+   * state: intensity (dry ground, dead wood and litter as fuel, weakened just
+   * past well-watered trees), the tree's hydration and its species. Also the
+   * basis of the warning's risk overlay.
+   */
+  treeOdds(world: World, tree: Tree, p = Number.NaN): TreeFireOdds {
+    const cell = world.cells[6 * GRID.cols + tree.gx];
     const wet = cell ? Math.min(1, cell.water + cell.streamNear * 0.5) : 0;
-    const roll = this.rng();
-    const ash = stand.sim.world.cells[2 * GRID.cols + tree.gx];
+    const refuge = wet >= FIRE.wetRefuge || (cell?.streamNear ?? 0) > 0.35;
+    const hydration = treeHydration(world, tree);
+    // Dry ground carries the fire: 0.55 when damp, 1.2 when parched.
+    const dryness = 0.55 + 0.65 * (1 - dampness(wet));
+    // Fuel: dead wood near the tree, and litter and organic matter in the topsoil.
+    let dead = 0;
+    for (const other of world.trees) {
+      if (other !== tree && other.dead && Math.abs(other.gx - tree.gx) <= 12) dead++;
+    }
+    let organic = 0;
+    for (let gy = 0; gy < FIRE.ashRows; gy++) organic += world.cells[gy * GRID.cols + tree.gx]?.organic ?? 0;
+    const fuel = 0.8 + Math.min(0.45, dead * 0.15) + 0.3 * (organic / FIRE.ashRows);
+    // A firebreak: the front just crossed well-watered trees.
+    let firebreak = 1;
+    if (Number.isFinite(p)) {
+      const behind = this.recentTrees.filter((r) => r.p < p && r.p >= p - FIRE.breakReach);
+      if (behind.length > 0) {
+        const mean = behind.reduce((v, r) => v + r.hydration, 0) / behind.length;
+        firebreak = 1 - 0.5 * mean * Math.min(1, behind.length / 3);
+      }
+    }
+    const intensity = dryness * fuel * firebreak;
+    const flammable = (FLAMMABILITY[tree.species] ?? 1) * (1.1 - 0.25 * tree.maturity) * (1 + 0.4 * (1 - tree.health));
+    const burn = refuge ? 0 : Math.max(0, Math.min(FIRE.maxBurn, flammable * intensity * Math.pow(1 - hydration, 1.6)));
+    const scorch = refuge ? 0 : Math.max(0, Math.min(0.9, 0.6 * intensity * (1 - 0.5 * hydration)));
+    return { burn, scorch, intensity, hydration, refuge };
+  }
+
+  private burnTree(stand: StandState, tree: Tree, at: number, p: number): void {
+    const world = stand.sim.world;
+    const cell = world.cells[6 * GRID.cols + tree.gx];
+    const wet = cell ? Math.min(1, cell.water + cell.streamNear * 0.5) : 0;
+    const ash = world.cells[2 * GRID.cols + tree.gx];
+    let remains: 'snag' | 'log' = tree.fallen ? 'log' : 'snag';
     if (tree.dead) {
       // Standing snags and fallen logs are fuel: they always go unless soaked.
       if (wet >= FIRE.wetRefuge) return;
-    } else if (wet >= FIRE.wetRefuge || (cell?.streamNear ?? 0) > 0.35 || roll >= 0.25 + 0.75 * (1 - dampness(wet))) {
-      return;
+    } else {
+      const odds = this.treeOdds(world, tree, p);
+      this.recentTrees.push({ p, hydration: odds.refuge ? 1 : odds.hydration });
+      if (this.recentTrees.length > 64) this.recentTrees.shift();
+      const roll = this.rng();
+      if (roll >= odds.burn) {
+        if (roll < odds.burn + (1 - odds.burn) * odds.scorch) {
+          // A ground fire: scarred bark and lost health, but the tree lives
+          // and keeps its bonds; a supplied partner recovers.
+          tree.health = Math.max(0.05, tree.health - (0.15 + 0.25 * Math.min(1, odds.intensity)) * (1 - 0.5 * odds.hydration));
+          tree.scorched = { at };
+          this.treesScorched++;
+        } else {
+          this.treesSpared++;
+        }
+        return;
+      }
+      // Torched. A fierce fire through a dry tree brings it down.
+      const fell = Math.max(0, Math.min(0.75, (odds.intensity - 0.8) * 1.5 * (1 - odds.hydration)));
+      if (this.rng() < fell) {
+        remains = 'log';
+        tree.fallen = { direction: this.state.direction, at };
+      }
     }
     const living = !tree.dead;
     tree.dead = true;
     tree.health = 0;
-    tree.burned = { at };
+    tree.burned = { at, remains, biomass: tree.height * (0.5 + tree.maturity) };
     for (const tip of tree.rootTips) {
       if (tip.bondedTo === null) continue;
       const id = tip.bondedColonyId ?? null;

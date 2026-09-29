@@ -30,7 +30,7 @@ import {
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
-import { belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, updateMoisture, updateSoil, type Tree, type World } from './world';
+import { belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, stepHydration, updateMoisture, updateSoil, type Tree, type World } from './world';
 
 /** What a founding spore brings with it when it starts a colony. */
 export interface FoundingKit {
@@ -262,6 +262,9 @@ export class Simulation {
   private stepTrees(dt: number, playerManagedByRegion = false): void {
     for (const tree of this.world.trees) {
       if (tree.dead) continue;
+      // How well watered the tree has been lately. Read before this step's
+      // trade, so it follows what the partners actually delivered.
+      stepHydration(this.world, tree, dt);
       const spec = SPECIES[tree.species];
       const rootRow = rowAtDepthCm(spec.rootDepthCm * 0.5);
       const soilCell = this.world.cells[idx(tree.gx, Math.min(GRID.rows - 1, rootRow))];

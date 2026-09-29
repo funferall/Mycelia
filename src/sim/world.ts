@@ -74,8 +74,23 @@ export interface Tree {
   dead: boolean;
   /** Set when a storm threw the tree down: which way it fell and when. */
   fallen?: { direction: number; at: number };
-  /** Set when a wildfire burned the tree (or its snag): a charred standing trunk. */
-  burned?: { at: number };
+  /**
+   * Set when a wildfire killed the tree (or burned its snag). `remains` says
+   * what it left: a charred snag standing, or a charred log where it fell.
+   * `biomass` is what the remains hold for the soil (wildfire v2, W2).
+   */
+  burned?: { at: number; remains?: 'snag' | 'log'; biomass?: number };
+  /** Set when a ground fire passed without killing the tree: a scarred trunk. */
+  scorched?: { at: number };
+  /**
+   * 0..1, how well watered the tree has been lately: mostly the water its
+   * mycorrhizal partners deliver, partly the soil at its roots. Smoothed over
+   * about 40 s, so a last-second watering is not armour. Fire reads it
+   * (wildfire v2): a well-fed tree resists, an unfed one is kindling.
+   * Absent until the tree's stand is first stepped; `treeHydration` falls
+   * back to the soil alone.
+   */
+  hydration?: number;
   /** Set when a drought killed the tree: it stands dead, bleached and leafless. */
   parched?: { at: number };
   /** Set when floodwater drowned the tree's roots. */
@@ -194,6 +209,38 @@ export const rowAtDepthCm = (cm: number): number =>
 export const WATER_FRINGE_CM = 8;
 
 /** Shared by soil colour and growth: the upper fringe is reachable. */
+/** Seconds over which a tree's hydration follows its supply. */
+export const HYDRATION_SECONDS = 40;
+
+/** Soil water where a tree actually roots, with the stream's dampness. */
+export function rootSoilWater(world: World, tree: Tree): number {
+  const spec = SPECIES[tree.species];
+  const row = Math.min(GRID.rows - 1, rowAtDepthCm(spec.rootDepthCm * 0.5));
+  const cell = world.cells[idx(tree.gx, row)];
+  if (!cell) return 0;
+  return Math.max(0, Math.min(1, cell.water + cell.streamNear * 0.5));
+}
+
+/** What a tree's hydration is heading toward: its partners' water first, then the soil. */
+export function hydrationTarget(world: World, tree: Tree): number {
+  if (tree.dead || tree.parched) return 0;
+  const bonded = tree.rootTips.some((tip) => tip.bondedTo !== null);
+  const bondWater = bonded ? Math.max(0, Math.min(1, tree.waterReceived)) : 0;
+  return 0.6 * bondWater + 0.4 * rootSoilWater(world, tree);
+}
+
+/** Move a tree's hydration toward its target over one step. */
+export function stepHydration(world: World, tree: Tree, dt: number): void {
+  const target = hydrationTarget(world, tree);
+  const current = tree.hydration ?? target;
+  tree.hydration = current + (target - current) * (1 - Math.exp(-dt / HYDRATION_SECONDS));
+}
+
+/** A tree's hydration now, falling back to the soil alone before it is first stepped. */
+export function treeHydration(world: World, tree: Tree): number {
+  return tree.hydration ?? hydrationTarget(world, tree);
+}
+
 export function groundwaterSaturation(world: World, depthCm: number): number {
   const t = Math.max(0, Math.min(1, (depthCm - world.waterTableCm + WATER_FRINGE_CM) / WATER_FRINGE_CM));
   return t * t * (3 - 2 * t);
