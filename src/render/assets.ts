@@ -41,6 +41,31 @@ export type AssetId =
   | 'prop.log'
   | 'prop.snag'
   | 'prop.boulder'
+  /** Forest v3: three forms per canopy species, and the living forest floor. */
+  | 'tree.oak-broad'
+  | 'tree.oak-tall'
+  | 'tree.oak-old'
+  | 'tree.birch-single'
+  | 'tree.birch-twin'
+  | 'tree.birch-leaning'
+  | 'tree.hemlock-full'
+  | 'tree.hemlock-young'
+  | 'tree.hemlock-windswept'
+  | 'prop.nurse-log'
+  | 'prop.broken-log'
+  | 'prop.mossy-stump'
+  | 'prop.broken-snag'
+  | 'prop.fallen-branch'
+  | 'prop.boulder-round'
+  | 'prop.boulder-slab'
+  | 'prop.boulder-tall'
+  | 'understory.bracken'
+  | 'understory.lady-fern'
+  | 'understory.berry-shrub'
+  | 'understory.hobblebush'
+  | 'understory.trillium'
+  | 'understory.litter-autumn'
+  | 'understory.litter-summer'
   /**
    * Reproductive bodies. The ids match `forest-manifest.json` exactly, so the
    * manifest's own tiers and triangle counts apply to them rather than being
@@ -88,6 +113,30 @@ export const ASSETS: readonly AssetSpec[] = [
   { id: 'prop.log', file: 'props/log.glb', use: 'fallen log on the forest floor' },
   { id: 'prop.snag', file: 'props/snag.glb', use: 'standing dead wood' },
   { id: 'prop.boulder', file: 'props/boulder.glb', use: 'exposed rock' },
+  { id: 'tree.oak-broad', file: 'trees/oak-broad.glb', use: 'open-grown oak' },
+  { id: 'tree.oak-tall', file: 'trees/oak-tall.glb', use: 'tall oak in closed canopy' },
+  { id: 'tree.oak-old', file: 'trees/oak-old.glb', use: 'old leaning oak' },
+  { id: 'tree.birch-single', file: 'trees/birch-single.glb', use: 'yellow birch' },
+  { id: 'tree.birch-twin', file: 'trees/birch-twin.glb', use: 'twin-stemmed yellow birch' },
+  { id: 'tree.birch-leaning', file: 'trees/birch-leaning.glb', use: 'leaning yellow birch' },
+  { id: 'tree.hemlock-full', file: 'trees/hemlock-full.glb', use: 'full eastern hemlock' },
+  { id: 'tree.hemlock-young', file: 'trees/hemlock-young.glb', use: 'young eastern hemlock' },
+  { id: 'tree.hemlock-windswept', file: 'trees/hemlock-windswept.glb', use: 'windswept eastern hemlock' },
+  { id: 'prop.nurse-log', file: 'props/nurse-log.glb', use: 'mossy nurse log with seedlings' },
+  { id: 'prop.broken-log', file: 'props/broken-log.glb', use: 'snapped bare log' },
+  { id: 'prop.mossy-stump', file: 'props/mossy-stump.glb', use: 'mossy stump with shelf fungi' },
+  { id: 'prop.broken-snag', file: 'props/broken-snag.glb', use: 'snapped standing snag' },
+  { id: 'prop.fallen-branch', file: 'props/fallen-branch.glb', use: 'fallen branch' },
+  { id: 'prop.boulder-round', file: 'props/boulder-round.glb', use: 'mossy glacial boulder' },
+  { id: 'prop.boulder-slab', file: 'props/boulder-slab.glb', use: 'low rock slab' },
+  { id: 'prop.boulder-tall', file: 'props/boulder-tall.glb', use: 'tall erratic' },
+  { id: 'understory.bracken', file: 'understory/bracken.glb', use: 'bracken in an opening' },
+  { id: 'understory.lady-fern', file: 'understory/lady-fern.glb', use: 'lady fern in moist shade' },
+  { id: 'understory.berry-shrub', file: 'understory/berry-shrub.glb', use: 'blueberry shrub' },
+  { id: 'understory.hobblebush', file: 'understory/hobblebush.glb', use: 'flowering hobblebush' },
+  { id: 'understory.trillium', file: 'understory/trillium.glb', use: 'trillium patch' },
+  { id: 'understory.litter-autumn', file: 'understory/litter-autumn.glb', use: 'autumn leaf litter' },
+  { id: 'understory.litter-summer', file: 'understory/litter-summer.glb', use: 'summer leaf litter' },
   { id: 'fungus.spore-body', file: 'fungi/spore-body.glb', use: 'erupting primordium' },
   { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'a rising fruiting body' },
   { id: 'fungus.fruiting-cluster', file: 'fungi/fruiting-cluster.glb', use: 'a bloom that has released its spores' },

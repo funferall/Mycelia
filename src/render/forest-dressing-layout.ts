@@ -64,7 +64,91 @@ export type DecorationAsset =
   | 'prop.boulder'
   | 'prop.log'
   | 'prop.stump'
-  | 'prop.snag';
+  | 'prop.snag'
+  | 'tree.oak-broad'
+  | 'tree.oak-tall'
+  | 'tree.oak-old'
+  | 'tree.birch-single'
+  | 'tree.birch-twin'
+  | 'tree.birch-leaning'
+  | 'tree.hemlock-full'
+  | 'tree.hemlock-young'
+  | 'tree.hemlock-windswept'
+  | 'prop.nurse-log'
+  | 'prop.broken-log'
+  | 'prop.mossy-stump'
+  | 'prop.broken-snag'
+  | 'prop.fallen-branch'
+  | 'prop.boulder-round'
+  | 'prop.boulder-slab'
+  | 'prop.boulder-tall'
+  | 'understory.bracken'
+  | 'understory.lady-fern'
+  | 'understory.berry-shrub'
+  | 'understory.hobblebush'
+  | 'understory.trillium'
+  | 'understory.litter-autumn'
+  | 'understory.litter-summer';
+
+/**
+ * Forms of each canopy species, with each form's height against the species'
+ * own. A cell picks one by its own hash, so a stand reads as a mix of broad,
+ * tall and old trees rather than one tree repeated.
+ */
+const CANOPY_FORMS: Record<'oak' | 'birch' | 'hemlock', readonly (readonly [DecorationAsset, number])[]> = {
+  oak: [['tree.oak-broad', 0.95], ['tree.oak-tall', 1.1], ['tree.oak-old', 0.9], ['tree.oak', 1]],
+  birch: [['tree.birch-single', 1], ['tree.birch-twin', 1], ['tree.birch-leaning', 0.92], ['tree.birch', 1]],
+  hemlock: [['tree.hemlock-full', 1], ['tree.hemlock-young', 0.68], ['tree.hemlock-windswept', 1.08], ['tree.hemlock', 1]],
+};
+
+/**
+ * Ground pieces by kind: [asset, share, min height, height range]. Heights are
+ * each piece's natural size in metres, because the instance scale is its height
+ * (leaf litter is a wide, 13 cm deep carpet and must stay that flat).
+ */
+type GroundPiece = readonly [DecorationAsset, number, number, number];
+const GROUND_PIECES: Partial<Record<DecorationKind, readonly GroundPiece[]>> = {
+  fern: [
+    ['understory.fern', 0.3, 1.1, 1.3],
+    ['understory.lady-fern', 0.35, 0.8, 0.45],
+    ['understory.hobblebush', 0.2, 0.9, 0.7],
+    ['understory.berry-shrub', 0.15, 0.6, 0.4],
+  ],
+  grass: [
+    ['understory.grass', 0.35, 0.55, 0.6],
+    ['understory.bracken', 0.25, 1.0, 0.45],
+    ['understory.trillium', 0.12, 0.32, 0.15],
+    ['understory.litter-autumn', 0.14, 0.12, 0.03],
+    ['understory.litter-summer', 0.14, 0.12, 0.03],
+  ],
+  deadwood: [
+    ['prop.log', 0.14, 1, 1.1],
+    ['prop.snag', 0.08, 1.4, 1.2],
+    ['prop.nurse-log', 0.2, 1.25, 0.35],
+    ['prop.broken-log', 0.14, 0.7, 0.3],
+    ['prop.mossy-stump', 0.16, 1.1, 0.5],
+    ['prop.broken-snag', 0.1, 2.6, 1.2],
+    ['prop.fallen-branch', 0.18, 0.22, 0.1],
+  ],
+  rock: [
+    ['prop.boulder', 0.25, 0.7, 2.5],
+    ['prop.boulder-round', 0.3, 0.8, 1.8],
+    ['prop.boulder-slab', 0.25, 0.45, 0.8],
+    ['prop.boulder-tall', 0.2, 1.2, 1.6],
+  ],
+};
+
+/** One ground piece for a kind, by a pick in [0, 1) and a size roll in [0, 1). */
+function groundPiece(kind: DecorationKind, pick: number, size: number): { asset: DecorationAsset; height: number } | null {
+  const pieces = GROUND_PIECES[kind];
+  if (!pieces) return null;
+  let at = 0;
+  for (const piece of pieces) {
+    at += piece[1];
+    if (pick < at || piece === pieces[pieces.length - 1]) return { asset: piece[0], height: piece[2] + size * piece[3] };
+  }
+  return null;
+}
 
 /**
  * One piece of background vegetation.
@@ -344,13 +428,14 @@ export function layoutForestDressing(input: DressingInput): ForestDecoration[] {
       const yaw = cellHash(region.seed, cx, cy, 4) * Math.PI * 2;
       const phase = cellHash(region.seed, cx, cy, 5);
       const species = cellHash(region.seed, cx, cy, 6);
-      const canopyAsset: DecorationAsset =
-        species < profile.mix[0] ? 'tree.oak' : species < profile.mix[1] ? 'tree.birch' : 'tree.hemlock';
+      const canopySpecies = species < profile.mix[0] ? 'oak' : species < profile.mix[1] ? 'birch' : 'hemlock';
+      const forms = CANOPY_FORMS[canopySpecies];
+      const [canopyAsset, formHeight] = forms[Math.min(forms.length - 1, Math.floor(cellHash(region.seed, cx, cy, 13) * forms.length))]!;
       const stature = profile.stature * (0.82 + cellHash(region.seed, cx, cy, 7) * 0.38);
       // Background canopy is meant to stand over the understory, not beside it:
       // it is the layer the region's silhouette is made of.
       const canopyHeight =
-        (canopyAsset === 'tree.oak' ? 19 : canopyAsset === 'tree.birch' ? 16 : 17) * stature * 1.08;
+        (canopySpecies === 'oak' ? 19 : canopySpecies === 'birch' ? 16 : 17) * formHeight * stature * 1.08;
       const saplingAsset: DecorationAsset =
         species < profile.mix[0]
           ? 'understory.oak-sapling'
@@ -405,6 +490,11 @@ export function layoutForestDressing(input: DressingInput): ForestDecoration[] {
         kind = 'rock';
         asset = 'prop.boulder';
         height = 0.7 + (1 - kindRoll) * 3;
+      }
+      const piece = kind === 'young' ? null : groundPiece(kind, cellHash(region.seed, cx, cy, 14), cellHash(region.seed, cx, cy, 15));
+      if (piece) {
+        asset = piece.asset;
+        height = piece.height;
       }
       candidates.push({
         kind,

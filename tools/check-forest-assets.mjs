@@ -75,7 +75,9 @@ for (const asset of manifest.assets) {
         }
       }
     });
-    assert(primitives <= 3, `${tier.file}: material/draw-call budget`);
+    // Trees draw their own materials; forest-floor pieces are only ever drawn
+    // through the dressing, which bakes every material into vertex colours.
+    assert(primitives <= (asset.anchorCrown ? 3 : 5), `${tier.file}: material/draw-call budget`);
     assert.equal(triangles, tier.triangles, `${tier.file}: exported triangle count`);
     assert(triangles <= tier.maxTriangles && triangles > 0, `${tier.file}: triangle budget`);
     assert(triangles < previousTriangles, `${tier.file}: decreasing LOD cost`);

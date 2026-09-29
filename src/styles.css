@@ -1139,3 +1139,15 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .gpu-notice p { margin: 0 0 12px; }
 .gpu-notice button { min-height: 36px; padding: 0 16px; border: 1px solid #b99e65; background: #302817; color: #ffe0a3; font: 16px var(--serif); cursor: pointer; }
 .gpu-notice button:focus-visible { outline: 2px solid #d8be81; outline-offset: 3px; }
+/* Subclusters: the colony and each circled group, with its strands and tips. */
+.cluster-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.cluster-bar[hidden] { display: none; }
+.cluster-chip { display: inline-flex; align-items: stretch; border: 1px solid #5e5641; background: #1d1912; }
+.cluster-chip.is-selected { border-color: #9fe6ff; box-shadow: 0 0 0 1px #9fe6ff inset; }
+.cluster-select { min-height: 40px; padding: 4px 10px; border: 0; background: none; color: var(--paper); font: 16px var(--serif); text-align: left; cursor: pointer; }
+.cluster-select small { display: block; color: #b7a987; font-size: 13px; }
+.cluster-chip.is-selected .cluster-select { color: #d9f6ff; }
+.cluster-merge { min-width: 32px; border: 0; border-left: 1px solid #5e5641; background: none; color: #c9b893; font: 18px var(--serif); cursor: pointer; }
+.cluster-merge:hover, .cluster-select:hover { background: #2b2519; }
+.cluster-bar :focus-visible { outline: 2px solid #d8be81; outline-offset: 2px; }
+.cluster-hint { flex-basis: 100%; margin: 2px 0 0; color: #a79a7c; font: 13px/1.4 var(--serif); }

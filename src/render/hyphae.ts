@@ -13,6 +13,8 @@ export function nodePosition(node: HyphaNode, out: THREE.Vector3): THREE.Vector3
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** The player's selected subcluster. */
+const SELECTED = new THREE.Color('#9fe6ff');
 const FLOW_COOL = new THREE.Color('#ff9a3c');
 const FLOW_HOT = new THREE.Color('#fff2cf');
 
@@ -61,6 +63,22 @@ export class HyphaeMesh {
   private readonly dir = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
   private readonly color = new THREE.Color();
+  /** Subcluster whose strands are lit as the player's selection (0: none). */
+  private highlight = 0;
+  /** Recolour every strand on the next sync, not just the moving ones. */
+  private recolor = false;
+
+  /** Light one subcluster's strands and tips as the current selection. */
+  setHighlight(group: number): void {
+    if (group === this.highlight) return;
+    this.highlight = group;
+    this.recolor = true;
+  }
+
+  /** Strands changed group without moving: recolour everything next sync. */
+  refreshColors(): void {
+    this.recolor = true;
+  }
 
   constructor(palette: HyphaePalette, glowMap: THREE.Texture, options: HyphaeOptions = {}) {
     this.palette = palette;
@@ -197,10 +215,13 @@ export class HyphaeMesh {
       if (parent) this.writeSegment(node, parent, slot);
     }
 
-    // Only gliding tips and freshly pulsed strands change shape between frames.
+    // Only gliding tips and freshly pulsed strands change shape between frames,
+    // unless the selection changed and every strand needs its colour again.
+    const all = this.recolor;
+    this.recolor = false;
     for (const node of nodes) {
       if (!node.alive || node.parent < 0) continue;
-      if (!node.isTip && node.pulse <= 0.02) continue;
+      if (!all && !node.isTip && node.pulse <= 0.02) continue;
       const slot = this.slotOf[node.id] as number;
       const parent = nodes[node.parent];
       if (slot >= 0 && parent) this.writeSegment(node, parent, slot);
@@ -267,6 +288,8 @@ export class HyphaeMesh {
     const heat = Math.min(1, node.thickness * 0.75 + flow * 0.5 + node.pulse * 0.4);
     this.color.copy(this.palette.glow).lerp(this.palette.core, heat);
     this.color.multiplyScalar((0.22 + heat * 0.5) * (0.2 + health * 0.8));
+    // The selected subcluster reads cool and bright against the warm colony.
+    if (this.highlight && node.group === this.highlight) this.color.lerp(SELECTED, 0.6).multiplyScalar(1.5);
     this.mesh.setColorAt(slot, this.color);
   }
 
@@ -283,6 +306,7 @@ export class HyphaeMesh {
       const ready = Math.min(1, node.carbon * 0.4);
       this.color.copy(this.palette.glow).lerp(this.palette.core, ready);
       this.color.multiplyScalar(0.3 + ready * 0.5);
+      if (this.highlight && node.group === this.highlight) this.color.lerp(SELECTED, 0.7).multiplyScalar(1.6);
       col.setXYZ(n, this.color.r, this.color.g, this.color.b);
       n++;
     }

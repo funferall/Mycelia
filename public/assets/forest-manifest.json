@@ -484,6 +484,489 @@
           "bytes": 8864
         }
       ]
+    },
+    {
+      "id": "tree.oak-broad",
+      "variant": "living",
+      "species": "oak",
+      "form": "broad",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/oak-broad.glb",
+          "triangles": 2350,
+          "maxTriangles": 4000,
+          "bytes": 107228
+        },
+        {
+          "file": "trees/oak-broad-lod1.glb",
+          "triangles": 1290,
+          "maxTriangles": 2400,
+          "bytes": 63792
+        },
+        {
+          "file": "trees/oak-broad-lod2.glb",
+          "triangles": 744,
+          "maxTriangles": 1200,
+          "bytes": 35216
+        }
+      ],
+      "anchorCrown": [
+        0.90926,
+        8.9538,
+        -0.06841
+      ]
+    },
+    {
+      "id": "tree.oak-tall",
+      "variant": "living",
+      "species": "oak",
+      "form": "tall",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/oak-tall.glb",
+          "triangles": 2194,
+          "maxTriangles": 4000,
+          "bytes": 98796
+        },
+        {
+          "file": "trees/oak-tall-lod1.glb",
+          "triangles": 1186,
+          "maxTriangles": 2400,
+          "bytes": 58172
+        },
+        {
+          "file": "trees/oak-tall-lod2.glb",
+          "triangles": 692,
+          "maxTriangles": 1200,
+          "bytes": 32404
+        }
+      ],
+      "anchorCrown": [
+        0.43542,
+        10.85264,
+        0.16477
+      ]
+    },
+    {
+      "id": "tree.oak-old",
+      "variant": "living",
+      "species": "oak",
+      "form": "old",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/oak-old.glb",
+          "triangles": 2456,
+          "maxTriangles": 4000,
+          "bytes": 110032
+        },
+        {
+          "file": "trees/oak-old-lod1.glb",
+          "triangles": 1318,
+          "maxTriangles": 2400,
+          "bytes": 64332
+        },
+        {
+          "file": "trees/oak-old-lod2.glb",
+          "triangles": 788,
+          "maxTriangles": 1200,
+          "bytes": 36620
+        }
+      ],
+      "anchorCrown": [
+        0.07393,
+        7.77714,
+        -0.63517
+      ]
+    },
+    {
+      "id": "tree.birch-single",
+      "variant": "living",
+      "species": "birch",
+      "form": "single",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/birch-single.glb",
+          "triangles": 2000,
+          "maxTriangles": 4000,
+          "bytes": 87332
+        },
+        {
+          "file": "trees/birch-single-lod1.glb",
+          "triangles": 1068,
+          "maxTriangles": 2400,
+          "bytes": 52112
+        },
+        {
+          "file": "trees/birch-single-lod2.glb",
+          "triangles": 624,
+          "maxTriangles": 1200,
+          "bytes": 28264
+        }
+      ],
+      "anchorCrown": [
+        0.45921,
+        9.696,
+        0.06504
+      ]
+    },
+    {
+      "id": "tree.birch-twin",
+      "variant": "living",
+      "species": "birch",
+      "form": "twin",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/birch-twin.glb",
+          "triangles": 2192,
+          "maxTriangles": 4000,
+          "bytes": 94088
+        },
+        {
+          "file": "trees/birch-twin-lod1.glb",
+          "triangles": 1182,
+          "maxTriangles": 2400,
+          "bytes": 56428
+        },
+        {
+          "file": "trees/birch-twin-lod2.glb",
+          "triangles": 692,
+          "maxTriangles": 1200,
+          "bytes": 30100
+        }
+      ],
+      "anchorCrown": [
+        0.49899,
+        9.27803,
+        0.07193
+      ]
+    },
+    {
+      "id": "tree.birch-leaning",
+      "variant": "living",
+      "species": "birch",
+      "form": "leaning",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/birch-leaning.glb",
+          "triangles": 1888,
+          "maxTriangles": 4000,
+          "bytes": 82176
+        },
+        {
+          "file": "trees/birch-leaning-lod1.glb",
+          "triangles": 1006,
+          "maxTriangles": 2400,
+          "bytes": 49004
+        },
+        {
+          "file": "trees/birch-leaning-lod2.glb",
+          "triangles": 592,
+          "maxTriangles": 1200,
+          "bytes": 26780
+        }
+      ],
+      "anchorCrown": [
+        1.82888,
+        8.25049,
+        -0.1659
+      ]
+    },
+    {
+      "id": "tree.hemlock-full",
+      "variant": "living",
+      "species": "hemlock",
+      "form": "full",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/hemlock-full.glb",
+          "triangles": 2959,
+          "maxTriangles": 4000,
+          "bytes": 95560
+        },
+        {
+          "file": "trees/hemlock-full-lod1.glb",
+          "triangles": 1336,
+          "maxTriangles": 2400,
+          "bytes": 48196
+        },
+        {
+          "file": "trees/hemlock-full-lod2.glb",
+          "triangles": 1111,
+          "maxTriangles": 1200,
+          "bytes": 38084
+        }
+      ],
+      "anchorCrown": [
+        0.1,
+        10.08,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.hemlock-young",
+      "variant": "living",
+      "species": "hemlock",
+      "form": "young",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/hemlock-young.glb",
+          "triangles": 2541,
+          "maxTriangles": 4000,
+          "bytes": 81972
+        },
+        {
+          "file": "trees/hemlock-young-lod1.glb",
+          "triangles": 1149,
+          "maxTriangles": 2400,
+          "bytes": 41532
+        },
+        {
+          "file": "trees/hemlock-young-lod2.glb",
+          "triangles": 957,
+          "maxTriangles": 1200,
+          "bytes": 32936
+        }
+      ],
+      "anchorCrown": [
+        0.1,
+        5.4,
+        -0.0
+      ]
+    },
+    {
+      "id": "tree.hemlock-windswept",
+      "variant": "living",
+      "species": "hemlock",
+      "form": "windswept",
+      "generator": "tools/make-forest-v3-assets.py",
+      "lods": [
+        {
+          "file": "trees/hemlock-windswept.glb",
+          "triangles": 1943,
+          "maxTriangles": 4000,
+          "bytes": 62124
+        },
+        {
+          "file": "trees/hemlock-windswept-lod1.glb",
+          "triangles": 908,
+          "maxTriangles": 2400,
+          "bytes": 32400
+        },
+        {
+          "file": "trees/hemlock-windswept-lod2.glb",
+          "triangles": 767,
+          "maxTriangles": 1200,
+          "bytes": 26148
+        }
+      ],
+      "anchorCrown": [
+        0.1,
+        11.16,
+        -0.0
+      ]
+    },
+    {
+      "id": "prop.nurse-log",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 1.4412,
+      "lods": [
+        {
+          "file": "props/nurse-log.glb",
+          "triangles": 258,
+          "maxTriangles": 2000,
+          "bytes": 18112
+        }
+      ]
+    },
+    {
+      "id": "prop.broken-log",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.822,
+      "lods": [
+        {
+          "file": "props/broken-log.glb",
+          "triangles": 94,
+          "maxTriangles": 2000,
+          "bytes": 5912
+        }
+      ]
+    },
+    {
+      "id": "prop.mossy-stump",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 1.419,
+      "lods": [
+        {
+          "file": "props/mossy-stump.glb",
+          "triangles": 265,
+          "maxTriangles": 2000,
+          "bytes": 17580
+        }
+      ]
+    },
+    {
+      "id": "prop.broken-snag",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 3.3315,
+      "lods": [
+        {
+          "file": "props/broken-snag.glb",
+          "triangles": 256,
+          "maxTriangles": 2000,
+          "bytes": 12584
+        }
+      ]
+    },
+    {
+      "id": "prop.fallen-branch",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.2703,
+      "lods": [
+        {
+          "file": "props/fallen-branch.glb",
+          "triangles": 78,
+          "maxTriangles": 2000,
+          "bytes": 3912
+        }
+      ]
+    },
+    {
+      "id": "prop.boulder-round",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 1.2627,
+      "lods": [
+        {
+          "file": "props/boulder-round.glb",
+          "triangles": 79,
+          "maxTriangles": 2000,
+          "bytes": 5692
+        }
+      ]
+    },
+    {
+      "id": "prop.boulder-slab",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.6893,
+      "lods": [
+        {
+          "file": "props/boulder-slab.glb",
+          "triangles": 79,
+          "maxTriangles": 2000,
+          "bytes": 5688
+        }
+      ]
+    },
+    {
+      "id": "prop.boulder-tall",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 1.8694,
+      "lods": [
+        {
+          "file": "props/boulder-tall.glb",
+          "triangles": 79,
+          "maxTriangles": 2000,
+          "bytes": 5688
+        }
+      ]
+    },
+    {
+      "id": "understory.bracken",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 1.2444,
+      "lods": [
+        {
+          "file": "understory/bracken.glb",
+          "triangles": 230,
+          "maxTriangles": 2000,
+          "bytes": 12088
+        }
+      ]
+    },
+    {
+      "id": "understory.lady-fern",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.8531,
+      "lods": [
+        {
+          "file": "understory/lady-fern.glb",
+          "triangles": 450,
+          "maxTriangles": 2000,
+          "bytes": 22152
+        }
+      ]
+    },
+    {
+      "id": "understory.berry-shrub",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.8744,
+      "lods": [
+        {
+          "file": "understory/berry-shrub.glb",
+          "triangles": 552,
+          "maxTriangles": 2000,
+          "bytes": 33716
+        }
+      ]
+    },
+    {
+      "id": "understory.hobblebush",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.8165,
+      "lods": [
+        {
+          "file": "understory/hobblebush.glb",
+          "triangles": 252,
+          "maxTriangles": 2000,
+          "bytes": 14160
+        }
+      ]
+    },
+    {
+      "id": "understory.trillium",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.43,
+      "lods": [
+        {
+          "file": "understory/trillium.glb",
+          "triangles": 80,
+          "maxTriangles": 2000,
+          "bytes": 6092
+        }
+      ]
+    },
+    {
+      "id": "understory.litter-autumn",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.1351,
+      "lods": [
+        {
+          "file": "understory/litter-autumn.glb",
+          "triangles": 368,
+          "maxTriangles": 2000,
+          "bytes": 22880
+        }
+      ]
+    },
+    {
+      "id": "understory.litter-summer",
+      "generator": "tools/make-forest-v3-assets.py",
+      "height": 0.1276,
+      "lods": [
+        {
+          "file": "understory/litter-summer.glb",
+          "triangles": 368,
+          "maxTriangles": 2000,
+          "bytes": 22896
+        }
+      ]
     }
   ]
 }

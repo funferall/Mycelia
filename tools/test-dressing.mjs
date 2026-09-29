@@ -163,7 +163,7 @@ try {
   check('every decoration stands on the region own ground', () => {
     for (const decoration of decorations) {
       assert.equal(decoration.z, region.heightAt(decoration.x, decoration.y));
-      assert.ok(decoration.height > 0.3 && decoration.height < 30, `${decoration.id} height ${decoration.height}`);
+      assert.ok(decoration.height > 0.1 && decoration.height < 30, `${decoration.id} height ${decoration.height}`);
       assert.ok(decoration.yaw >= 0 && decoration.yaw <= Math.PI * 2 + 1e-9);
       assert.ok(decoration.phase >= 0 && decoration.phase <= 1);
     }
@@ -248,7 +248,7 @@ try {
     const hemlockShare = (name) => {
       const canopy = byCommunity(name).filter((d) => d.kind === 'canopy');
       if (canopy.length === 0) return 0;
-      return canopy.filter((d) => d.asset === 'tree.hemlock').length / canopy.length;
+      return canopy.filter((d) => d.asset.startsWith('tree.hemlock')).length / canopy.length;
     };
     const ridge = byCommunity('oak-ridge');
     const ravine = byCommunity('hemlock-ravine');

@@ -14,6 +14,8 @@
     "test:flood": "node tools/test-flood.mjs",
     "test:underground-view": "npm run build && node tools/test-underground-view.mjs",
     "check:gpu": "npm run build && node tools/check-gpu.mjs",
+    "test:subclusters": "node tools/test-subclusters.mjs",
+    "test:subclusters-view": "npm run build && node tools/test-subclusters-view.mjs",
     "test:fruiting": "node tools/test-fruiting.mjs",
     "test:mushroom-view": "npm run build && node tools/test-mushroom-view.mjs",
     "test:evolution": "node tools/test-evolution.mjs",

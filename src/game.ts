@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ECON, GRID, SPECIES } from './sim/content';
-import { nearestNode } from './sim/network';
+import { groupResting, groupSummary, nearestNode, setGroupResting } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
 import { FruitingView, type FruitingSite } from './render/fruiting';
@@ -176,6 +176,15 @@ export class Game {
   private readonly droughtUI: DroughtUI;
   /** Presentation-eased drought severity, so cracks open and close smoothly. */
   private droughtShown = 0;
+  /**
+   * The subcluster the player's orders go to (0: the colony at large), and
+   * the press-and-hold circle that selects one. See `GrowthGroup`.
+   */
+  private selectedGroup = 0;
+  private lasso: { startedAt: number; clientX: number; clientY: number; gx: number; gy: number; radius: number; active: boolean } | null = null;
+  private lassoRing: THREE.Mesh | null = null;
+  private clusterBar: HTMLElement | null = null;
+  private clusterKey = '';
   /** The active stand's soil-side weather overlay; rebuilt with its groundwater view. */
   private undergroundWeather: UndergroundWeather | null = null;
   private readonly floodView: FloodView;
@@ -1609,6 +1618,8 @@ export class Game {
         : deriveJourney(this.sim);
     }
     this.ui.update(this.sim, dt, this.journey);
+    this.updateLasso();
+    this.syncClusterControls();
     this.stormUI.update(dt);
     this.fireUI.update(dt);
     this.droughtUI.update(dt);
@@ -1697,6 +1708,15 @@ export class Game {
     document.querySelector('#rest')!.addEventListener('click', () => {
       if (!this.prepareLocalAction()) return;
       if (this.sim.outcome !== 'playing') return;
+      const group = this.liveGroup();
+      if (group) {
+        // Rest and wake apply to the selected subcluster alone.
+        const resting = !groupResting(this.sim.player, group);
+        setGroupResting(this.sim.player, group, resting);
+        this.ui.setNote(resting ? `Subcluster ${group} rests. The rest of the colony keeps its orders.` : `Subcluster ${group} begins to grow again.`);
+        this.syncClusterControls(true);
+        return;
+      }
       this.sim.player.resting = !this.sim.player.resting;
       this.ui.setNote(this.sim.player.resting ? 'The frontier rests. Your trees keep trading.' : 'The frontier begins to grow again.');
     });
@@ -2062,6 +2082,8 @@ export class Game {
     this.groundwater = this.buildGroundwater();
     this.stage.scene.add(this.soil.group, this.forest.group, this.living.group, this.groundwater.group);
     this.playerMesh.reset();
+    // Subclusters belong to one stand's colony; a new view starts with the whole colony.
+    this.selectGroup(0);
     this.rivalMesh.reset();
     this.playerMotes.reset();
     this.rivalMotes.reset();
@@ -2261,6 +2283,12 @@ export class Game {
       this.lastX = event.clientX;
       this.lastY = event.clientY;
       this.shiftDown = event.shiftKey;
+      // Underground, holding still on the soil grows a selection circle.
+      this.lasso = null;
+      if (this.canSelectRegion() && !event.shiftKey) {
+        const point = this.gridAt(event.clientX, event.clientY);
+        if (point) this.lasso = { startedAt: performance.now(), clientX: event.clientX, clientY: event.clientY, gx: point.gx, gy: point.gy, radius: 0, active: false };
+      }
       // A capture that cannot be taken is not a reason to lose the press: the
       // drag ends at pointerup either way, and a synthetic or stale pointer id
       // would otherwise throw out of the handler and leave the press stuck.
@@ -2277,7 +2305,11 @@ export class Game {
       const dy = event.clientY - this.lastY;
       this.lastX = event.clientX;
       this.lastY = event.clientY;
+      // A growing selection circle holds the view still.
+      if (this.lasso?.active) return;
       this.pointerMoved += Math.abs(dx) + Math.abs(dy);
+      // Moving before the circle starts makes this a drag, not a selection.
+      if (this.pointerMoved >= 6) this.lasso = null;
 
       if (this.shiftDown) {
         // Shift-drag lifts the camera off the sheet, opening the soil's depth.
@@ -2298,6 +2330,14 @@ export class Game {
       } catch {
         /* capture already released */
       }
+      // A held press that grew a circle selects; it never also places an order.
+      const lasso = this.lasso;
+      this.lasso = null;
+      if (lasso?.active) {
+        this.finishLasso(lasso);
+        return;
+      }
+      this.hideLassoRing();
       // A drag is a camera move; a tap is an order.
       if (this.pointerMoved < 6 && !this.stage.rig.transitioning) {
         if (this.stage.rig.view === 'forest') {
@@ -2315,7 +2355,7 @@ export class Game {
       }
     };
     canvas.addEventListener('pointerup', release);
-    canvas.addEventListener('pointercancel', () => { this.pointerDown = false; });
+    canvas.addEventListener('pointercancel', () => { this.pointerDown = false; this.lasso = null; this.hideLassoRing(); });
 
     canvas.addEventListener(
       'wheel',
@@ -2345,6 +2385,9 @@ export class Game {
       if (event.key.toLowerCase() === 'h') document.querySelector<HTMLButtonElement>('#immersive')!.click();
       if (event.key.toLowerCase() === 's') { event.preventDefault(); this.survey.toggle(); if (this.survey.open) this.refreshSurvey(); }
       if (event.key === 'Escape' && this.survey.open) this.survey.hide();
+      // Escape returns orders to the whole colony; 1-6 pick a subcluster.
+      else if (event.key === 'Escape' && this.selectedGroup) this.selectGroup(0);
+      if (/^[1-6]$/.test(event.key) && this.sim.player.groups?.some((g) => g.id === Number(event.key))) this.selectGroup(Number(event.key));
       // Section keys do not steal input from an independent local colony below.
       if (this.spatial) {
         if (this.section || this.stage.rig.view === 'forest') {
@@ -2454,7 +2497,7 @@ export class Game {
     if (!point) return;
     const order = this.ui.order;
     if (order === 'grow') {
-      const result = this.sim.growTo(point.gx, point.gy);
+      const result = this.sim.growTo(point.gx, point.gy, this.liveGroup());
       if (result.ok) {
         this.living.acknowledge(point.gx, point.gy);
         this.sound.chime('grow');
@@ -2478,6 +2521,118 @@ export class Game {
     const result = this.sim.orderFruit(node?.gx ?? point.gx, node?.gy ?? point.gy);
     this.ui.setNote(result.message);
     if (result.ok) this.living.acknowledge(point.gx, point.gy);
+  }
+
+  // -------------------------------------------------------------------------
+  // Subclusters: press and hold underground to circle part of the colony, then
+  // steer it on its own. The simulation side is `GrowthGroup` in network.ts.
+  // -------------------------------------------------------------------------
+
+  /** Region selection works on the local transect, not in a section view. */
+  private canSelectRegion(): boolean {
+    return this.stage.rig.view === 'underground' && !this.stage.rig.transitioning && !this.section &&
+      this.awakened && this.sim.outcome === 'playing' && this.sim.hasColony;
+  }
+
+  /** The selected subcluster if it still exists, else the colony at large. */
+  private liveGroup(): number {
+    if (this.selectedGroup && !this.sim.player.groups?.some((g) => g.id === this.selectedGroup)) this.selectGroup(0);
+    return this.selectedGroup;
+  }
+
+  private selectGroup(id: number): void {
+    this.selectedGroup = id;
+    this.playerMesh.setHighlight(id);
+    this.syncClusterControls(true);
+  }
+
+  /** Grow the circle while the press is held still; draw it in the soil's frame. */
+  private updateLasso(): void {
+    const lasso = this.lasso;
+    if (!lasso || !this.pointerDown) { if (!lasso) this.hideLassoRing(); return; }
+    const held = performance.now() - lasso.startedAt;
+    if (!lasso.active) {
+      if (held < 280 || this.pointerMoved >= 6) return;
+      lasso.active = true;
+    }
+    // Starts small and widens steadily: a short hold picks a tuft, a long one a limb.
+    lasso.radius = Math.min(42, 2 + (held - 280) / 1000 * 14);
+    if (!this.lassoRing) {
+      this.lassoRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.93, 1, 72),
+        new THREE.MeshBasicMaterial({ color: '#9fe6ff', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, toneMapped: false }),
+      );
+      this.lassoRing.renderOrder = 20;
+      this.stage.scene.add(this.lassoRing);
+    }
+    this.lassoRing.visible = true;
+    this.lassoRing.position.set(lasso.gx - GRID.cols / 2, GRID.rows / 2 - lasso.gy, 3.5);
+    this.lassoRing.scale.setScalar(lasso.radius);
+  }
+
+  private hideLassoRing(): void {
+    if (this.lassoRing) this.lassoRing.visible = false;
+  }
+
+  private finishLasso(lasso: NonNullable<Game['lasso']>): void {
+    this.hideLassoRing();
+    const result = this.sim.splitAt(lasso.gx, lasso.gy, lasso.radius);
+    this.ui.setNote(result.message);
+    if (!result.ok || !result.id) return;
+    this.playerMesh.refreshColors();
+    this.selectGroup(result.id);
+    this.sound.chime('grow');
+  }
+
+  /**
+   * The subcluster bar under the growth choices: the colony and each
+   * subcluster with its strands and tips; select, or merge back. Also keeps the
+   * Rest button honest about whichever group is selected.
+   */
+  private syncClusterControls(force = false): void {
+    const net = this.sim.player;
+    const summary = groupSummary(net);
+    const key = `${this.selectedGroup}|${summary.map((g) => `${g.id}:${g.strands}:${g.tips}:${g.resting}`).join(',')}`;
+    const rest = document.querySelector<HTMLButtonElement>('#rest');
+    if (rest && this.selectedGroup) {
+      const resting = groupResting(net, this.selectedGroup);
+      rest.setAttribute('aria-pressed', String(resting));
+      rest.textContent = resting ? 'Wake' : 'Rest';
+    }
+    if (!force && key === this.clusterKey) return;
+    this.clusterKey = key;
+    if (!this.clusterBar) {
+      const bar = document.createElement('div');
+      bar.className = 'cluster-bar';
+      bar.setAttribute('role', 'group');
+      bar.setAttribute('aria-label', 'Subclusters');
+      const anchor = document.querySelector('.primary-intents') ?? document.querySelector('#rest');
+      if (!anchor) return;
+      anchor.after(bar);
+      this.clusterBar = bar;
+    }
+    const bar = this.clusterBar;
+    bar.hidden = summary.length <= 1;
+    bar.innerHTML = summary.map((g) => {
+      const label = g.id ? `Subcluster ${g.id}` : 'Colony';
+      const state = g.resting ? ' · resting' : '';
+      const merge = g.id ? `<button type="button" class="cluster-merge" data-merge="${g.id}" aria-label="Merge subcluster ${g.id} back into the colony">×</button>` : '';
+      return `<span class="cluster-chip${g.id === this.selectedGroup ? ' is-selected' : ''}">` +
+        `<button type="button" class="cluster-select" data-group="${g.id}" aria-pressed="${g.id === this.selectedGroup}">` +
+        `${label} <small>${g.strands} strands · ${g.tips} tips${state}</small></button>${merge}</span>`;
+    }).join('') + '<p class="cluster-hint">Hold on the soil to circle a subcluster. Esc: whole colony.</p>';
+    for (const button of bar.querySelectorAll<HTMLButtonElement>('.cluster-select')) {
+      button.addEventListener('click', () => this.selectGroup(Number(button.dataset.group)));
+    }
+    for (const button of bar.querySelectorAll<HTMLButtonElement>('.cluster-merge')) {
+      button.addEventListener('click', () => {
+        const id = Number(button.dataset.merge);
+        this.sim.mergeGroup(id);
+        this.playerMesh.refreshColors();
+        if (this.selectedGroup === id) this.selectGroup(0); else this.syncClusterControls(true);
+        this.ui.setNote(`Subcluster ${id} rejoins the colony and follows its orders.`);
+      });
+    }
   }
 
   private applyOrder(order: OrderId): void {

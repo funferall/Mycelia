@@ -16,6 +16,8 @@ import {
   holdsAnyBond,
   isPassable,
   orderWaypoint,
+  createGroup,
+  dissolveGroup,
   nearestNode,
   makeCord,
   startFruiting,
@@ -406,7 +408,7 @@ export class Simulation {
    * Returns the refusal's own words, so the sheet can distinguish stone from
    * the stream rather than printing one apology for both.
    */
-  growTo(gx: number, gy: number): { ok: boolean; message: string } {
+  growTo(gx: number, gy: number, group = 0): { ok: boolean; message: string } {
     if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
     if (!Number.isFinite(gx) || !Number.isFinite(gy)) {
       return { ok: false, message: 'Choose a point on the sheet.' };
@@ -428,8 +430,22 @@ export class Simulation {
       return { ok: false, message: 'The soil below the water table is saturated. Reach the soft upper fringe for water; hyphae cannot grow deeper.' };
     }
     if (regionalBlock) return { ok: false, message: 'Choose open soil inside the specimen. Stone cannot be crossed.' };
-    orderWaypoint(this.player, x, y, this.world);
-    return { ok: true, message: `Frontier directed to ${x} · −${y}cm` };
+    orderWaypoint(this.player, x, y, this.world, undefined, group);
+    return { ok: true, message: `${group ? `Subcluster ${group}` : 'Frontier'} directed to ${x} · −${y}cm` };
+  }
+
+  /**
+   * Split a subcluster out of the player's colony: the strands within `radius`
+   * cells of a point, steered separately from then on. See `GrowthGroup`.
+   */
+  splitAt(gx: number, gy: number, radius: number): { ok: boolean; message: string; id?: number } {
+    if (this.outcome !== 'playing') return { ok: false, message: 'This specimen is complete.' };
+    return createGroup(this.player, this.world, gx, gy, radius);
+  }
+
+  /** Return a subcluster to the colony at large. */
+  mergeGroup(id: number): boolean {
+    return dissolveGroup(this.player, this.world, id);
   }
 
   /** Direct growth as a yes or no, for callers that keep their own words. */

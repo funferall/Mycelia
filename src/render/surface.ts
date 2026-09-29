@@ -17,8 +17,16 @@ export const TILE_SIZE = GRID.cols;
 export const FOREST_DEPTH = TILE_SIZE;
 /** The season's foliage colour, shared with the background dressing. */
 export const SEASON_FOLIAGE: Record<SeasonId, string> = { spring: '#869b49', summer: '#55703b', autumn: '#bd7833', winter: '#796c4d' };
-/** Which authored model dresses each species. */
-const TREE_ASSET: Record<string, AssetId> = { oak: 'tree.oak', birch: 'tree.birch', hemlock: 'tree.hemlock' };
+/** Authored forms of each species; a tree's own seed picks its form. */
+const TREE_FORMS: Record<string, readonly AssetId[]> = {
+  oak: ['tree.oak-broad', 'tree.oak-tall', 'tree.oak-old'],
+  birch: ['tree.birch-single', 'tree.birch-twin', 'tree.birch-leaning'],
+  hemlock: ['tree.hemlock-full', 'tree.hemlock-young', 'tree.hemlock-windswept'],
+};
+function treeAsset(tree: { species: string; seed: number }): AssetId | undefined {
+  const forms = TREE_FORMS[tree.species];
+  return forms?.[(mulberry32(tree.seed ^ 0x3f0a)() * forms.length) | 0];
+}
 const DEAD_COLOR = new THREE.Color('#6c5840');
 /** Evergreen foliage keeps its own colour through every season. */
 export const HEMLOCK_LEAF = new THREE.Color('#496448');
@@ -353,7 +361,7 @@ export class SurfaceForest {
    */
   private dress(entry: StandingTree, tier = entry.lod): void {
     if (!this.assets) return;
-    const id = TREE_ASSET[entry.tree.species];
+    const id = treeAsset(entry.tree);
     if (!id) return;
     entry.assetId = id;
     // Resolve before cloning: a request that would fall back to the tier
@@ -413,7 +421,7 @@ export class SurfaceForest {
     camera.updateMatrixWorld();
     camera.getWorldPosition(this.lodCamera);
     for (const entry of this.trees) {
-      const id = entry.assetId ?? TREE_ASSET[entry.tree.species];
+      const id = entry.assetId ?? treeAsset(entry.tree);
       if (!id) continue;
       entry.assetId = id;
       const height = entry.tree.height * (0.7 + entry.tree.maturity * 0.5);

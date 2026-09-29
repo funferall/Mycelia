@@ -72,7 +72,39 @@ export interface HyphaNode {
    * once per cell, never once per tick.
    */
   paid: boolean;
+  /**
+   * The subcluster this strand belongs to (see `GrowthGroup`). Absent or 0 is
+   * the colony at large; new tips inherit their parent's group.
+   */
+  group?: number;
 }
+
+/**
+ * A subcluster the player has selected out of a large network and steers on
+ * its own. It is only a set of orders: its strands stay part of the one
+ * network, so while they are joined to the root they share carbon, water and
+ * minerals with everything else, and the colony's tip allowance is shared too.
+ * A group that is cut off starves like any other severed strand.
+ *
+ * Group 0 is the colony at large and keeps using `Network.waypoints` and
+ * `Network.resting`, so a network nobody has split behaves exactly as before.
+ */
+export interface GrowthGroup {
+  id: number;
+  waypoints: Array<{ gx: number; gy: number; lateral?: number }>;
+  resting: boolean;
+  /** Network age at which this group may next sprout a tip from its strands. */
+  sproutAt: number;
+}
+
+/** A colony must be at least this many living strands before it can be split. */
+export const MIN_SPLIT_STRANDS = 60;
+/** A selection must hold at least this many of the colony's living strands. */
+export const MIN_GROUP_STRANDS = 6;
+/** Subclusters beyond the colony at large. */
+export const MAX_GROUPS = 6;
+/** A group with an order grows from at least this many tips of its own. */
+const GROUP_MIN_TIPS = 2;
 
 export interface Fruiting {
   active: boolean;
@@ -155,8 +187,12 @@ export interface Network {
    */
   bounds: { cols: number; rows: number; minCol?: number };
   rng: Rng;
-  /** Waypoints the player has queued, oldest first. */
+  /** Waypoints the player has queued, oldest first (the colony at large, group 0). */
   waypoints: Array<{ gx: number; gy: number; lateral?: number }>;
+  /** Subclusters split out of the colony, each with its own orders. */
+  groups?: GrowthGroup[];
+  /** Sprouting state for the colony at large once it has been split. */
+  colonySprout?: GrowthGroup;
 }
 
 /** The growth frontier is capped so a match stays about expansion decisions. */
@@ -325,6 +361,7 @@ export function spawnTip(
     retargetAt: 0,
     paid: false,
   };
+  if (from.group) node.group = from.group;
   net.nodes.push(node);
   from.children.push(node.id);
   net.tipCount++;
@@ -352,14 +389,15 @@ function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rn
     chooseSpatialTarget(net, world, tip, rng);
     return;
   }
-  const wantOrder = net.waypoints.length > 0;
+  const waypoints = waypointsOf(net, tip.group);
+  const wantOrder = waypoints.length > 0;
   if (wantOrder) {
-    const wp = net.waypoints[0] as { gx: number; gy: number };
+    const wp = waypoints[0] as { gx: number; gy: number };
     const dx = wp.gx - tip.wx;
     const dy = wp.gy - tip.wy;
     const dist = Math.hypot(dx, dy);
     if (dist < 2.5) {
-      net.waypoints.shift();
+      waypoints.shift();
     } else {
       const step = 1.6;
       let tx = Math.round(tip.gx + (dx / dist) * step);
@@ -377,7 +415,7 @@ function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rn
         tip.paid = false;
         return;
       }
-      net.waypoints.shift();
+      waypoints.shift();
     }
   }
 
@@ -433,11 +471,12 @@ function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rn
 
 /** Score actual neighbouring voxels in all three axes of a regional body. */
 function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
-  let waypoint = net.waypoints[0];
+  const waypoints = waypointsOf(net, tip.group);
+  let waypoint = waypoints[0];
   if (waypoint && Math.hypot(waypoint.gx + 0.5 - tip.wx, waypoint.gy + 0.5 - tip.wy,
     (waypoint.lateral ?? tip.y) - tip.lateral) < 2.2) {
-    net.waypoints.shift();
-    waypoint = net.waypoints[0];
+    waypoints.shift();
+    waypoint = waypoints[0];
   }
   const parent = tip.parent >= 0 ? net.nodes[tip.parent] : null;
   const headingX = parent ? tip.gx - parent.gx : 0;
@@ -532,7 +571,14 @@ export function stepNetwork(net: Network, ctx: StepContext): void {
   harvest(net, world, ctx);
   transport(net, dt * (net.evolution.learned.includes('cord-memory') ? 1.25 : 1) * (net.evolution.active.pulse ? 2 : 1));
   respire(net);
-  if (!net.resting) extendTips(net, ctx);
+  // Each subcluster rests or grows on its own orders. Without any, this is the
+  // colony-wide rest it always was.
+  if (net.groups?.length) {
+    sproutGroups(net, ctx);
+    extendTips(net, ctx);
+  } else if (!net.resting) {
+    extendTips(net, ctx);
+  }
   thicken(net, world, dt);
   decay(net, world, dt);
   progressFruiting(net, ctx);
@@ -951,8 +997,10 @@ function extendTips(net: Network, ctx: StepContext): void {
 
   const speed = ECON.tipSpeedCm * (0.45 + ctx.warmth * 0.75);
 
+  const grouped = Boolean(net.groups?.length);
   for (const node of net.nodes) {
     if (!node.alive || !node.isTip) continue;
+    if (grouped && restingOf(net, node.group)) continue;
 
     // Recheck before committing as well as moving: a rising table may have
     // flooded a target since this tip paid for it. Existing strands persist,
@@ -1402,8 +1450,192 @@ export function payColonyFund(net: Network, cost: { carbon: number; water: numbe
 // Player orders
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Subclusters
+// ---------------------------------------------------------------------------
+
+function groupById(net: Network, id: number | undefined): GrowthGroup | null {
+  if (!id) return null;
+  return net.groups?.find((g) => g.id === id) ?? null;
+}
+
+/** The waypoint queue a strand of this group follows. */
+function waypointsOf(net: Network, id: number | undefined): Network['waypoints'] {
+  return groupById(net, id)?.waypoints ?? net.waypoints;
+}
+
+/** Whether the group this strand belongs to is resting. */
+function restingOf(net: Network, id: number | undefined): boolean {
+  const group = groupById(net, id);
+  return group ? group.resting : net.resting;
+}
+
+/**
+ * A group with somewhere to go grows out of its own strands. If it has fewer
+ * than a couple of tips (a region picked out of the network's interior has
+ * none), it sprouts one from the strand of its own nearest the destination,
+ * paid for like any fork, from the colony's shared tip allowance.
+ */
+function sproutGroups(net: Network, ctx: StepContext): void {
+  const groups = net.groups!;
+  // The colony at large (id 0) is steered like any subcluster: a circle that
+  // took all its tips must not leave it unable to grow.
+  net.colonySprout ??= { id: 0, waypoints: net.waypoints, resting: net.resting, sproutAt: 0 };
+  const colony = net.colonySprout;
+  colony.waypoints = net.waypoints;
+  colony.resting = net.resting;
+  for (let i = groups.length; i >= 0; i--) {
+    const group = i === groups.length ? colony : groups[i]!;
+    const member = (node: HyphaNode) => (group.id === 0 ? !groupById(net, node.group) : node.group === group.id);
+    let strands = 0, tips = 0;
+    for (const node of net.nodes) {
+      if (!node.alive || !member(node)) continue;
+      strands++;
+      if (node.isTip) tips++;
+    }
+    // A group whose strands have all died has nothing left to steer.
+    if (strands === 0) { if (group.id !== 0) groups.splice(i, 1); continue; }
+    const target = group.waypoints[0];
+    if (!target || group.resting || tips >= GROUP_MIN_TIPS || net.evolution.age < group.sproutAt) continue;
+    group.sproutAt = net.evolution.age + 1.5;
+    // The allowance is shared, not multiplied: when it is spent, the group with
+    // the most tips gives one up so the ordered subcluster can grow.
+    if (net.tipCount >= net.tipCeiling && !retireTipFor(net, group.id)) continue;
+    let best: HyphaNode | null = null, bestDistance = Infinity;
+    for (const node of net.nodes) {
+      if (!node.alive || !node.connected || node.isTip || !member(node)) continue;
+      if (node.carbon < ECON.parentReserveFloor + 0.5) continue;
+      const distance = Math.hypot(target.gx - node.gx, target.gy - node.gy);
+      if (distance < bestDistance) { best = node; bestDistance = distance; }
+    }
+    if (!best) continue;
+    const tip = spawnTip(net, best, Math.atan2(target.gy - best.gy, target.gx - best.gx), net.rng);
+    if (!tip) continue;
+    chooseTarget(net, ctx.world, tip, net.rng);
+    tip.retargetAt = nextRetarget(net);
+    best.pulse = 1;
+  }
+}
+
+/**
+ * Free one tip from the shared allowance for `forGroup`: the group (or the
+ * colony at large) with the most tips, keeping at least one, stops its
+ * youngest tip where it stands. Deterministic: ties go to the lower group id
+ * and the higher node id.
+ */
+function retireTipFor(net: Network, forGroup: number): boolean {
+  const counts = new Map<number, number>();
+  for (const node of net.nodes) {
+    if (!node.alive || !node.isTip) continue;
+    const id = groupById(net, node.group) ? node.group! : 0;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  let donor = -1, most = 1;
+  for (const [id, count] of [...counts.entries()].sort((a, b) => a[0] - b[0])) {
+    if (id !== forGroup && count > most) { donor = id; most = count; }
+  }
+  if (donor < 0) return false;
+  let youngest: HyphaNode | null = null;
+  for (const node of net.nodes) {
+    if (!node.alive || !node.isTip || (groupById(net, node.group) ? node.group! : 0) !== donor) continue;
+    if (!youngest || node.age <= youngest.age) youngest = node;
+  }
+  if (!youngest) return false;
+  // The strand ends here: it settles into the cell it stands in.
+  youngest.isTip = false;
+  youngest.wx = youngest.gx + 0.5;
+  youngest.wy = youngest.gy + 0.5;
+  youngest.targetGx = youngest.gx;
+  youngest.targetGy = youngest.gy;
+  youngest.ordered = false;
+  net.tipCount = Math.max(0, net.tipCount - 1);
+  return true;
+}
+
+export interface GroupSummary { id: number; strands: number; tips: number; resting: boolean; ordered: boolean }
+
+/** Every subcluster, and the colony at large as id 0, with its living strands and tips. */
+export function groupSummary(net: Network): GroupSummary[] {
+  const counts = new Map<number, { strands: number; tips: number }>();
+  for (const node of net.nodes) {
+    if (!node.alive) continue;
+    const id = groupById(net, node.group) ? node.group! : 0;
+    const c = counts.get(id) ?? { strands: 0, tips: 0 };
+    c.strands++;
+    if (node.isTip) c.tips++;
+    counts.set(id, c);
+  }
+  const colony = counts.get(0) ?? { strands: 0, tips: 0 };
+  return [
+    { id: 0, ...colony, resting: net.resting, ordered: net.waypoints.length > 0 },
+    ...(net.groups ?? []).map((g) => ({ id: g.id, ...(counts.get(g.id) ?? { strands: 0, tips: 0 }), resting: g.resting, ordered: g.waypoints.length > 0 })),
+  ];
+}
+
+/**
+ * Split a subcluster out of the colony: every living strand within `radius`
+ * of the point (grid cells) joins a new group with orders of its own. Strands
+ * already in another group move to the new one.
+ */
+export function createGroup(
+  net: Network, world: NetworkWorld, gx: number, gy: number, radius: number
+): { ok: boolean; message: string; id?: number; strands?: number; tips?: number } {
+  let living = 0;
+  for (const node of net.nodes) if (node.alive && node.connected) living++;
+  if (living < MIN_SPLIT_STRANDS) {
+    return { ok: false, message: `Grow the colony to ${MIN_SPLIT_STRANDS} strands before splitting it (${living} now).` };
+  }
+  net.groups ??= [];
+  const selected = net.nodes.filter((n) => n.alive && Math.hypot(n.gx + 0.5 - gx, n.gy + 0.5 - gy) <= radius);
+  if (selected.length < MIN_GROUP_STRANDS) {
+    return { ok: false, message: `Circle at least ${MIN_GROUP_STRANDS} of your strands to make a subcluster.` };
+  }
+  // Emptied groups make room before the cap is checked.
+  const kept = new Set(net.nodes.filter((n) => n.alive && n.group && !selected.includes(n)).map((n) => n.group));
+  net.groups = net.groups.filter((g) => kept.has(g.id));
+  if (net.groups.length >= MAX_GROUPS) {
+    return { ok: false, message: `At most ${MAX_GROUPS} subclusters. Merge one back into the colony first.` };
+  }
+  const id = Math.max(0, ...net.groups.map((g) => g.id)) + 1;
+  net.groups.push({ id, waypoints: [], resting: false, sproutAt: 0 });
+  let tips = 0;
+  for (const node of selected) {
+    node.group = id;
+    if (node.isTip) {
+      tips++;
+      // Released from the colony's orders: read the soil until told otherwise.
+      chooseTarget(net, world, node, net.rng);
+    }
+  }
+  return { ok: true, message: `Subcluster ${id}: ${selected.length} strands, ${tips} growing tips. Click the soil to steer it.`, id, strands: selected.length, tips };
+}
+
+/** Return a subcluster's strands to the colony at large, and its tips to the colony's orders. */
+export function dissolveGroup(net: Network, world: NetworkWorld, id: number): boolean {
+  if (!groupById(net, id)) return false;
+  net.groups = net.groups!.filter((g) => g.id !== id);
+  for (const node of net.nodes) {
+    if (node.group !== id) continue;
+    delete node.group;
+    if (node.alive && node.isTip) chooseTarget(net, world, node, net.rng);
+  }
+  return true;
+}
+
+/** Rest or wake one subcluster (0 is the colony at large). */
+export function setGroupResting(net: Network, id: number, resting: boolean): void {
+  const group = groupById(net, id);
+  if (group) group.resting = resting;
+  else net.resting = resting;
+}
+
+/** Whether a subcluster (0 is the colony at large) is resting. */
+export function groupResting(net: Network, id: number): boolean {
+  return restingOf(net, id);
+}
+
 /** Send the growth frontier toward a point. Ordered tips break off first. */
-export function orderWaypoint(net: Network, gx: number, gy: number, world?: NetworkWorld, lateral?: number): void {
+export function orderWaypoint(net: Network, gx: number, gy: number, world?: NetworkWorld, lateral?: number, groupId = 0): void {
   // The order has to land on the colony's own growth plane, not on one stand's
   // width: a strand that has crossed a boundary can be sent further into the
   // neighbouring square.
@@ -1417,13 +1649,27 @@ export function orderWaypoint(net: Network, gx: number, gy: number, world?: Netw
   ) {
     return;
   }
-  net.resting = false;
-  net.waypoints.length = 0;
-  net.waypoints.push({ gx, gy, lateral });
-  if (net.waypoints.length > 6) net.waypoints.shift();
+  // An order goes to one subcluster, or to the colony at large (group 0).
+  const group = groupById(net, groupId);
+  const queue = group ? group.waypoints : net.waypoints;
+  if (group) {
+    group.resting = false;
+    group.sproutAt = 0;
+  } else {
+    net.resting = false;
+    if (net.colonySprout) net.colonySprout.sproutAt = 0;
+  }
+  queue.length = 0;
+  queue.push({ gx, gy, lateral });
+  if (queue.length > 6) queue.shift();
   if (world) {
     // Retarget now, not after each strand has finished its previous journey.
-    for (const node of net.nodes) if (node.alive && node.isTip) chooseTarget(net, world, node, net.rng);
+    const id = group ? group.id : 0;
+    for (const node of net.nodes) {
+      if (!node.alive || !node.isTip) continue;
+      if ((groupById(net, node.group) ? node.group : 0) !== id) continue;
+      chooseTarget(net, world, node, net.rng);
+    }
   }
 }
 

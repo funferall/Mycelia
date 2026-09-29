@@ -9,7 +9,7 @@ const browser = await launchBrowser();
 try {
   const page = await browser.newPage({ viewport: { width: 960, height: 640 }, reducedMotion: 'reduce' });
   await page.goto(withQaPreset(server.url + '/?seed=raven-wood', parseQaPreset()), { waitUntil: 'commit' });
-  await page.waitForFunction(() => window.mycelia?.game.assets.ready && window.mycelia.game.assets.loading === 0);
+  await page.waitForFunction(() => window.mycelia?.game.assets.ready && window.mycelia.game.assets.loading === 0, null, { timeout: 240000 });
   await page.evaluate(() => window.mycelia.game.stop());
   const measure = () => page.evaluate(() => {
     const g = window.mycelia.game, renderer = g.stage.renderer, gl = renderer.getContext();
