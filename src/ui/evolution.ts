@@ -2,6 +2,58 @@ import { ECON } from '../sim/content';
 import { ADAPTATIONS, POWERS, adaptationState, powerState, learnAdaptation, invokePower } from '../sim/evolution';
 import type { Simulation } from '../sim/sim';
 
+/** Authored icon for an adaptation or power, by id (`public/assets/icons`). */
+export const techIcon = (id: string): string => `${import.meta.env.BASE_URL}assets/icons/${id}.webp`;
+
+/**
+ * One floating card for the tech tree and the powers: the words live here, on
+ * hover or keyboard focus, so the tree itself can be pictures and names.
+ */
+class TechPopover {
+  readonly element = document.createElement('div');
+  constructor(host: HTMLElement) {
+    this.element.className = 'tech-popover';
+    this.element.setAttribute('role', 'tooltip');
+    this.element.hidden = true;
+    host.append(this.element);
+  }
+
+  /** Attach to a control; `content` is read fresh each time it opens. */
+  bind(target: HTMLElement, content: () => { title: string; body: string; foot: string }): void {
+    const id = `tip-${Math.random().toString(36).slice(2, 9)}`;
+    const show = () => {
+      const { title, body, foot } = content();
+      this.element.id = id;
+      this.element.innerHTML = `<strong>${title}</strong><span>${body}</span>${foot ? `<em>${foot}</em>` : ''}`;
+      this.element.hidden = false;
+      target.setAttribute('aria-describedby', id);
+      // Beside the control, so the card never covers the next one in the tree:
+      // to the right if it fits, else to the left, else below.
+      const box = (target.querySelector('.tech-icon, img') ?? target).getBoundingClientRect();
+      const card = this.element.getBoundingClientRect();
+      const top = Math.min(window.innerHeight - card.height - 12, Math.max(12, box.top + box.height / 2 - card.height / 2));
+      let left: number;
+      let y = top;
+      if (box.right + 14 + card.width < window.innerWidth - 12) left = box.right + 14;
+      else if (box.left - 14 - card.width > 12) left = box.left - 14 - card.width;
+      else {
+        left = Math.min(window.innerWidth - card.width - 12, Math.max(12, box.left + box.width / 2 - card.width / 2));
+        y = box.bottom + 10;
+      }
+      this.element.style.left = `${left}px`;
+      this.element.style.top = `${y}px`;
+    };
+    const hide = () => {
+      this.element.hidden = true;
+      target.removeAttribute('aria-describedby');
+    };
+    target.addEventListener('pointerenter', show);
+    target.addEventListener('focus', show);
+    target.addEventListener('pointerleave', () => { if (document.activeElement !== target) hide(); });
+    target.addEventListener('blur', hide);
+  }
+}
+
 /** The forest owns the viewport; an unfilled ring expresses reserve health, never capacity. */
 export class EvolutionUI {
   private sim?: Simulation;
@@ -12,6 +64,8 @@ export class EvolutionUI {
   private powerButtons = new Map<string, HTMLButtonElement>();
   private message = document.createElement('p');
   private openButton = document.createElement('button');
+  private techStates = new Map<string, string>();
+  private powerStates = new Map<string, string>();
 
   constructor() {
     const sheet = document.querySelector('#sheet')!;
@@ -60,10 +114,14 @@ export class EvolutionUI {
     powers.className = 'earned-powers';
     powers.setAttribute('aria-label', 'Milestone powers');
     panel.append(powers);
+    const panelTips = new TechPopover(document.body);
     for (const power of POWERS) {
       const button = document.createElement('button');
       button.type = 'button';
       button.hidden = true;
+      button.className = 'power-chip';
+      button.innerHTML = `<img src="${techIcon(power.id)}" alt="" width="40" height="40" loading="lazy" /><span class="power-name">${power.name}</span><span class="power-state"></span>`;
+      panelTips.bind(button, () => ({ title: power.name, body: power.effect, foot: this.powerStates.get(power.id) ?? '' }));
       button.addEventListener('click', () => {
         if (!this.sim || this.sim.outcome !== 'playing' || !this.sim.hasColony) return;
         this.message.textContent = invokePower(this.sim.player, power.id);
@@ -82,9 +140,10 @@ export class EvolutionUI {
 
     this.dialog.className = 'evolution-dialog';
     this.dialog.setAttribute('aria-labelledby', 'evolution-title');
-    this.dialog.innerHTML = `<header><div><p>One body. Many ways to grow.</p><h2 id="evolution-title">The living tree</h2></div><button type="button" class="close-evolution" aria-label="Close tech tree">Close ×</button></header>
-      <p class="evolution-intro">Experience opens each adaptation. Learn it when its milestone is met. All three branches can grow together.</p>
-      <div class="evolution-branches"></div><p class="power-explanation">After your first fruiting, each completed branch offers a power. Invoke it when the forest needs it: twenty seconds of activity, two minutes between uses.</p>`;
+    this.dialog.innerHTML = `<header><div><p>One lineage. Many ways to grow.</p><h2 id="evolution-title">The living tree</h2></div><button type="button" class="close-evolution" aria-label="Close tech tree">Close ×</button></header>
+      <p class="evolution-intro">Hover or focus an adaptation to read it. A glowing one is ready to learn.</p>
+      <div class="evolution-branches"></div>`;
+    const tips = new TechPopover(this.dialog);
     this.dialog.querySelector('.close-evolution')!.addEventListener('click', () => this.dialog.close());
     // Modal keys never issue orders in the world behind it; Escape retains native behavior.
     this.dialog.addEventListener('keydown', e => e.stopPropagation());
@@ -95,7 +154,9 @@ export class EvolutionUI {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'adaptation';
-        button.innerHTML = `<span class="tech-bud" aria-hidden="true"></span><strong>${tech.name}</strong><span>${tech.effect}</span><em></em>`;
+        button.dataset.crown = String(tech.id.endsWith('-crown'));
+        button.innerHTML = `<span class="tech-icon"><img src="${techIcon(tech.id)}" alt="" loading="lazy" /></span><strong>${tech.name}</strong>`;
+        tips.bind(button, () => ({ title: tech.name, body: tech.effect, foot: this.techStates.get(tech.id) === 'Learned' ? 'Learned' : `${this.techStates.get(tech.id) ?? ''}` }));
         button.addEventListener('click', () => {
           if (this.sim?.outcome === 'playing' && this.sim.hasColony) this.message.textContent = learnAdaptation(this.sim.player, tech.id);
           this.refresh();
@@ -104,9 +165,12 @@ export class EvolutionUI {
         this.techButtons.set(tech.id, button);
       }
       const power = POWERS.find(p => ADAPTATIONS.some(t => t.branch === branch && t.id === p.tech))!;
-      const description = document.createElement('p');
+      const description = document.createElement('button');
+      description.type = 'button';
       description.className = 'branch-power';
-      description.innerHTML = `<strong>${power.name}</strong><span>${power.effect}</span><em>${power.need}</em>`;
+      description.setAttribute('aria-label', `Power: ${power.name}`);
+      description.innerHTML = `<img src="${techIcon(power.id)}" alt="" loading="lazy" /><span><small>Power</small>${power.name}</span>`;
+      tips.bind(description, () => ({ title: power.name, body: power.effect, foot: `${power.need}. Twenty seconds active, two minutes to recover.` }));
       column.append(description);
       this.dialog.querySelector('.evolution-branches')!.append(column);
     }
@@ -153,15 +217,20 @@ export class EvolutionUI {
       const state = !this.sim.hasColony ? 'Found a colony here first.' : this.sim.outcome !== 'playing' ? 'This colony’s journey has ended.' : adaptationState(net, tech.id);
       button.setAttribute('aria-disabled', String(state !== 'Ready to learn'));
       button.dataset.state = state === 'Learned' ? 'learned' : state === 'Ready to learn' ? 'ready' : 'locked';
-      button.querySelector('em')!.textContent = state;
+      button.setAttribute('aria-label', `${tech.name}. ${state}`);
+      this.techStates.set(tech.id, state);
     }
     for (const power of POWERS) {
       const button = this.powerButtons.get(power.id)!;
       button.hidden = net.fruited < 1 || !net.evolution.learned.includes(power.tech);
       const state = !this.sim.hasColony ? 'Found a colony here first.' : this.sim.outcome !== 'playing' ? 'This colony’s journey has ended.' : powerState(net, power.id);
       button.disabled = state !== 'Ready to invoke';
-      button.textContent = `${power.name} · ${state === 'Ready to invoke' ? 'Invoke' : state}`;
-      button.title = power.effect;
+      const short = state === 'Ready to invoke' ? 'Invoke' : state;
+      button.setAttribute('aria-label', `${power.name} · ${short}`);
+      // Only a live timer shows in the panel; the full reason is in the popover.
+      button.querySelector('.power-state')!.textContent = /Active|Recovering/.test(state) ? state.replace(/^\S+ · /, '') : state === 'Ready to invoke' ? 'Invoke' : '';
+      button.dataset.state = state === 'Ready to invoke' ? 'ready' : /Active/.test(state) ? 'active' : 'waiting';
+      this.powerStates.set(power.id, state);
     }
   }
 }

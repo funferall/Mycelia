@@ -1,4 +1,5 @@
 import { STORM, type RegionalMatch } from '../sim/match';
+import { techIcon } from './evolution';
 
 /** Extend the forest-dusk instrument with a shared forecast and a real map.
  * Wind is always named by its destination. The warning owns attention only
@@ -24,7 +25,7 @@ export class StormUI {
     this.watch.innerHTML = '<span class="storm-arrow" aria-hidden="true">➜</span><div><strong></strong><p></p></div>';
     panel.querySelector('.living-heading')!.after(this.watch);
     this.controls.className = 'forest-disclosure storm-controls';
-    this.controls.innerHTML = `<summary>Summon storm</summary>
+    this.controls.innerHTML = `<summary><img class="power-summary-icon" src="${techIcon('storm-crown')}" alt="" />Summon storm</summary>
       <p class="storm-intro">One wind for every colony. Raise fruiting bodies before it arrives.</p>
       <label for="storm-bearing">Wind blows toward</label>
       <select id="storm-bearing">

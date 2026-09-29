@@ -1,5 +1,6 @@
 import type { RegionalMatch } from '../sim/match';
 import { FIRE } from '../sim/wildfire';
+import { techIcon } from './evolution';
 
 const NAMES = ['East', 'Northeast', 'North', 'Northwest', 'West', 'Southwest', 'South', 'Southeast'];
 
@@ -28,7 +29,7 @@ export class FireUI {
     this.watch.innerHTML = '<span class="fire-arrow" aria-hidden="true">➜</span><div><strong></strong><p></p></div>';
     panel.querySelector('.living-heading')!.after(this.watch);
     this.controls.className = 'forest-disclosure fire-controls';
-    this.controls.innerHTML = `<summary>Kindle wildfire</summary>
+    this.controls.innerHTML = `<summary><img class="power-summary-icon" src="${techIcon('ember-crown')}" alt="" />Kindle wildfire</summary>
       <p class="fire-intro">One front across the whole region. Go deep before it arrives.</p>
       <label for="fire-bearing">Fire runs toward</label>
       <select id="fire-bearing">

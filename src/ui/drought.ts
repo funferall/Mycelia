@@ -1,6 +1,7 @@
 import type { RegionalMatch } from '../sim/match';
 import { DROUGHT } from '../sim/drought';
 import { GRID } from '../sim/content';
+import { techIcon } from './evolution';
 
 /**
  * The drought's place in the forest-dusk instrument. It has no compass: the
@@ -25,7 +26,7 @@ export class DroughtUI {
     this.watch.innerHTML = '<span class="drought-sun" aria-hidden="true">☀</span><div><strong></strong><p></p></div>';
     panel.querySelector('.living-heading')!.after(this.watch);
     this.controls.className = 'forest-disclosure drought-controls';
-    this.controls.innerHTML = `<summary>Call drought</summary>
+    this.controls.innerHTML = `<summary><img class="power-summary-icon" src="${techIcon('parch-crown')}" alt="" />Call drought</summary>
       <p class="drought-intro">The rain stops everywhere. Water decides who lasts.</p>
       <svg class="drought-map" role="img" aria-label="Where water will hold"></svg>
       <p class="drought-map-key">Share of each tile's ground on a stream bank, where soil stays damp · outline: your colonies</p>
