@@ -79,7 +79,20 @@ export interface Tree {
    * what it left: a charred snag standing, or a charred log where it fell.
    * `biomass` is what the remains hold for the soil (wildfire v2, W2).
    */
-  burned?: { at: number; remains?: 'snag' | 'log'; biomass?: number };
+  burned?: {
+    at: number;
+    /** What stands or lies there: a charred snag, a fallen log, or at last a stump. */
+    remains?: 'snag' | 'log' | 'stump';
+    biomass?: number;
+    /**
+     * Nutrients the remains still hold, and what they started with (W2).
+     * They decay into the soil around the tree; see `stepRemains`.
+     */
+    nitrogen?: number;
+    organic?: number;
+    nitrogen0?: number;
+    organic0?: number;
+  };
   /** Set when a ground fire passed without killing the tree: a scarred trunk. */
   scorched?: { at: number };
   /**
@@ -209,6 +222,84 @@ export const rowAtDepthCm = (cm: number): number =>
 export const WATER_FRINGE_CM = 8;
 
 /** Shared by soil colour and growth: the upper fringe is reachable. */
+/**
+ * Charred remains (wildfire v2, W2). A burned tree holds nitrogen and organic
+ * matter in proportion to its biomass and gives them to the soil around it as
+ * it decays: a snag over about five minutes, a log over eight. A colony with
+ * the decomposer trait whose strands reach the remains doubles the pace, so
+ * what the fire leaves is a race: nothing is created, whoever's strands are
+ * in that soil takes it up.
+ */
+export const REMAINS = {
+  snagSeconds: 300,
+  logSeconds: 480,
+  decomposerSpeed: 2,
+  /** Soil columns either side of the trunk that receive the release. */
+  reachCols: 3,
+  /** Soil rows (centimetres) that receive the release. */
+  rows: 12,
+  nitrogenPerBiomass: 0.03,
+  organicPerBiomass: 0.04,
+} as const;
+
+/** Fruiting bodies on burned ground mature this much faster through the fire's aftermath. */
+export const ASH_FRUIT_SPEED = 1.3;
+
+/** Give a burned tree its store of nutrients, once. */
+export function charRemains(tree: Tree): void {
+  const burned = tree.burned;
+  if (!burned || burned.nitrogen0 !== undefined) return;
+  const biomass = burned.biomass ?? tree.height * (0.5 + tree.maturity);
+  burned.biomass = biomass;
+  burned.nitrogen0 = burned.nitrogen = biomass * REMAINS.nitrogenPerBiomass;
+  burned.organic0 = burned.organic = biomass * REMAINS.organicPerBiomass;
+}
+
+/**
+ * Release one step of every burned tree's remains into the soil around it.
+ * `speed` gives the decay pace per tree (1, or faster where a decomposer
+ * reaches it). Conserving: a cell already full takes less, and what it could
+ * not take stays in the remains. Spent remains become a charred stump.
+ */
+export function stepRemains(world: World, dt: number, speed: (tree: Tree) => number): void {
+  for (const tree of world.trees) {
+    const burned = tree.burned;
+    if (!burned || burned.nitrogen0 === undefined || burned.remains === 'stump') continue;
+    const seconds = burned.remains === 'log' ? REMAINS.logSeconds : REMAINS.snagSeconds;
+    const rate = (dt / seconds) * speed(tree);
+    const wantN = Math.min(burned.nitrogen ?? 0, (burned.nitrogen0 ?? 0) * rate);
+    const wantO = Math.min(burned.organic ?? 0, (burned.organic0 ?? 0) * rate);
+    // Shares across the soil around the trunk, nearest and shallowest first.
+    const cells: Array<{ cell: SoilCell; weight: number }> = [];
+    let total = 0;
+    for (let dx = -REMAINS.reachCols; dx <= REMAINS.reachCols; dx++) {
+      const gx = tree.gx + dx;
+      if (gx < 0 || gx >= GRID.cols) continue;
+      for (let gy = 0; gy < REMAINS.rows; gy++) {
+        const cell = world.cells[idx(gx, gy)];
+        if (!cell || cell.stream) continue;
+        const weight = (1 - Math.abs(dx) / (REMAINS.reachCols + 1)) * (1 - gy / REMAINS.rows);
+        cells.push({ cell, weight });
+        total += weight;
+      }
+    }
+    if (total <= 0) continue;
+    let givenN = 0;
+    let givenO = 0;
+    for (const { cell, weight } of cells) {
+      const n = Math.min(wantN * (weight / total), Math.max(0, 1 - cell.nitrogen));
+      const o = Math.min(wantO * (weight / total), Math.max(0, 1 - cell.organic));
+      cell.nitrogen += n;
+      cell.organic += o;
+      givenN += n;
+      givenO += o;
+    }
+    burned.nitrogen = Math.max(0, (burned.nitrogen ?? 0) - givenN);
+    burned.organic = Math.max(0, (burned.organic ?? 0) - givenO);
+    if ((burned.nitrogen ?? 0) < 1e-6 && (burned.organic ?? 0) < 1e-6) burned.remains = 'stump';
+  }
+}
+
 /** Seconds over which a tree's hydration follows its supply. */
 export const HYDRATION_SECONDS = 40;
 

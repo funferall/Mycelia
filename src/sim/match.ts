@@ -7,7 +7,7 @@ import { SoilVolume, seasonalWaterTableOffsetCm } from './soil-volume';
 import { hashString, mulberry32 } from './rng';
 import { bindStandToSharedSoil } from './shared-soil';
 import { elevationAtDepthCm, standFrameOf, standIdAt } from './spatial';
-import { Wildfire } from './wildfire';
+import { FIRE, Wildfire } from './wildfire';
 import { Drought } from './drought';
 import { Flood } from './flood';
 
@@ -532,6 +532,8 @@ export class RegionalMatch {
         initialSeasonIndex: this.seasonIndex,
         initialSeasonClock: this.seasonClock,
     });
+    // Burned ground fruits in any weather, and faster, for every colony.
+    spatial.ashFlush = (standId) => this.fire.ashFlush(standId);
     this.spatialColonies.set(origin, spatial);
     return spatial;
   }
@@ -600,7 +602,7 @@ export class RegionalMatch {
       stand.sim.regionalWeather = window
         ? { rainfall, fruiting: true }
         : droughtRain !== null ? { rainfall, fruiting: false }
-          : this.fire.ashFlush(stand.site.id) ? { rainfall: season.rain, fruiting: true } : null;
+          : this.fire.ashFlush(stand.site.id) ? { rainfall: season.rain, fruiting: true, fruitSpeed: FIRE.ashFruitSpeed } : null;
       if (stand.sim.hasColony || stand.rivalPresent) {
         const managed = this.spatialColonies.has(stand.site.id) || this.spatialOnly(stand);
         stand.sim.step(dt, managed || !stand.sim.hasColony, this.sharedStands.has(stand.site.id));
@@ -1059,6 +1061,7 @@ export class RegionalMatch {
     this.ensureSharedSoil(target.site.id);
     target.sim.rival = createNetwork('rival','Storm-born decomposer',old.gx,old.gy,mulberry32(hashString(`${this.seedText}:rival:${target.site.id}:${this.storm.sequence}`)),cost.carbon,{water:cost.water,nitrogen:cost.nitrogen});
     target.sim.rival.colonyId = `rival@${this.seedText}:stand-${target.site.id}`;
+    target.sim.rival.traits = { decomposer: true };
     this.shareLineage(target);
     target.rivalPresent = true;
     target.sim.rivalEnabled = true;

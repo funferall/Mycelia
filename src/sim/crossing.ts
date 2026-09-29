@@ -47,6 +47,7 @@ import {
   type Network,
 } from './network';
 import {
+  ASH_FRUIT_SPEED,
   createStandWorld,
   entryCostFor,
   rowAtDepthCm,
@@ -991,6 +992,9 @@ export class CrossingMatch {
     }
   }
 
+  /** Set by the match: whether burned ground in a stand is in its post-fire flush. */
+  ashFlush: ((standId: StandId) => boolean) | null = null;
+
   step(dt: number, advanceSoil = true, stormRainfall?: number): void {
     this.advanceClock(dt);
     const season = this.season;
@@ -1005,11 +1009,16 @@ export class CrossingMatch {
     for (const colony of this.colonies) {
       markConnectivity(colony.net);
       this.tradeTrees(colony, dt);
+      // A body rising from burned ground in its flush fruits in any weather, faster.
+      const fruit = colony.net.fruit;
+      const fruitStand = fruit.active && fruit.spatial ? standIdAt(this.region, fruit.spatial.x, fruit.spatial.y) : null;
+      const ash = fruitStand !== null && this.ashFlush?.(fruitStand) === true;
       stepNetwork(colony.net, {
         world: colony.view,
         light: season.light,
         warmth: season.warmth,
-        fruitingWeather: stormRainfall !== undefined,
+        fruitingWeather: stormRainfall !== undefined || ash,
+        fruitSpeed: ash ? ASH_FRUIT_SPEED : 1,
         rival: null,
         time: this.time,
         log: (text) => this.log(text),

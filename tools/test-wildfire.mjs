@@ -134,7 +134,7 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   assert.equal(m.fire.phase, 'aftermath');
   assert(rival.nodes.filter(n => n.alive).length < alive, 'the rival burns too');
   m.step(0.5);
-  assert.deepEqual(from.sim.regionalWeather, { rainfall: from.sim.season.rain, fruiting: true }, 'burned ground fruits in any weather');
+  assert.deepEqual(from.sim.regionalWeather, { rainfall: from.sim.season.rain, fruiting: true, fruitSpeed: FIRE.ashFruitSpeed }, 'burned ground fruits in any weather, and faster');
   const unburned = m.stands.find(s => !m.fire.burnedStands.has(s.site.id));
   if (unburned) assert.equal(unburned.sim.regionalWeather, null);
   m.step(FIRE.aftermath);
@@ -227,4 +227,93 @@ const { FLAMMABILITY } = await load('wildfire');
   const behindBelt = m.fire.treeOdds(world, tree, 100).burn;
   assert(behindBelt < open * 0.6, `a green belt is a firebreak (${behindBelt.toFixed(2)} behind it, ${open.toFixed(2)} in the open)`);
   console.log(`PASS species and firebreak: oak ${odds('oak').toFixed(2)} < birch ${odds('birch').toFixed(2)} < hemlock ${odds('hemlock').toFixed(2)}; a watered belt cuts ${open.toFixed(2)} to ${behindBelt.toFixed(2)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Wildfire v2, W2: charred remains are a nutrient race.
+// ---------------------------------------------------------------------------
+const { REMAINS, charRemains, stepRemains, ASH_FRUIT_SPEED } = await load('world');
+const { createNetwork, startFruiting, stepNetwork } = await load('network');
+const { createWorld } = await load('world');
+const { mulberry32 } = await load('rng');
+{
+  // Burned trees hold a store, and the fire gives every burned tree one.
+  const { m, id, from } = fixture('ember-remains');
+  for (const s of m.stands) for (const t of s.sim.world.trees) if (!t.dead) t.hydration = 0;
+  m.kindleFire(id, 0);
+  m.step(FIRE.warning + FIRE.burn + 1);
+  const burned = m.stands.flatMap(s => s.sim.world.trees).filter(t => t.burned);
+  assert(burned.length > 0 && burned.every(t => t.burned.nitrogen0 > 0 && t.burned.organic0 > 0 && t.burned.nitrogen === t.burned.nitrogen0),
+    'every burned tree holds nitrogen and organic matter in proportion to its biomass');
+  assert(burned.every(t => Math.abs(t.burned.nitrogen0 - t.burned.biomass * REMAINS.nitrogenPerBiomass) < 1e-9));
+  void from;
+  console.log(`PASS remains: ${burned.length} burned trees hold ${burned.reduce((v, t) => v + t.burned.nitrogen0, 0).toFixed(1)} nitrogen for the soil`);
+}
+{
+  // Decay gives the store to the soil around the trunk, conserving it, and leaves a stump.
+  const { from } = fixture('ember-decay');
+  const world = from.sim.world;
+  for (const c of world.cells) { c.nitrogen = 0.2; c.organic = 0.1; }
+  const tree = world.trees.find(t => !t.dead && t.gx > 5 && t.gx < 130);
+  tree.dead = true; tree.burned = { at: 0, remains: 'snag', biomass: 30 };
+  charRemains(tree);
+  const around = () => {
+    let n = 0, o = 0;
+    for (let dx = -REMAINS.reachCols; dx <= REMAINS.reachCols; dx++) for (let gy = 0; gy < REMAINS.rows; gy++) {
+      const c = world.cells[gy * GRID.cols + tree.gx + dx];
+      n += c.nitrogen; o += c.organic;
+    }
+    return { n, o };
+  };
+  const start = around();
+  const total = (a) => ({ n: a.n + tree.burned.nitrogen, o: a.o + tree.burned.organic });
+  const before = total(start);
+  for (let i = 0; i < 100; i++) stepRemains(world, 1, () => 1);
+  const mid = total(around());
+  assert(Math.abs(mid.n - before.n) < 1e-9 && Math.abs(mid.o - before.o) < 1e-9, 'nothing is created or lost');
+  assert(tree.burned.nitrogen < tree.burned.nitrogen0 && tree.burned.remains === 'snag', 'a third of the way through, still a snag');
+  for (let i = 0; i < REMAINS.snagSeconds; i++) stepRemains(world, 1, () => 1);
+  assert.equal(tree.burned.remains, 'stump', 'spent remains leave a charred stump');
+  const after = around();
+  assert(after.n - start.n > tree.burned.nitrogen0 * 0.99, 'the soil around it received the store');
+  console.log(`PASS decay: ${tree.burned.nitrogen0.toFixed(2)} nitrogen moved into the soil around the trunk, conserved, then a stump`);
+}
+{
+  // A decomposer's strands double the pace; the trait is the placeholder rival's.
+  const { m, from } = fixture('ember-decomposer');
+  const world = from.sim.world;
+  for (const c of world.cells) { c.nitrogen = 0; c.organic = 0; }
+  const [a, b] = world.trees.filter(t => !t.dead && t.gx > 5 && t.gx < 130);
+  for (const t of [a, b]) { t.dead = true; t.burned = { at: 0, remains: 'log', biomass: 30 }; charRemains(t); }
+  for (let i = 0; i < 60; i++) stepRemains(world, 1, (t) => (t === a ? REMAINS.decomposerSpeed : 1));
+  const spentA = a.burned.nitrogen0 - a.burned.nitrogen;
+  const spentB = b.burned.nitrogen0 - b.burned.nitrogen;
+  assert(Math.abs(spentA / spentB - 2) < 0.05, `a decomposer doubles decay (${(spentA / spentB).toFixed(2)}x)`);
+  assert.equal(from.sim.rival.traits?.decomposer, true, 'the placeholder opponent is a decomposer by trait');
+  assert.notEqual(from.sim.player.traits?.decomposer, true, 'the player colony is not');
+  void m;
+  console.log(`PASS decomposers: ${spentA.toFixed(3)} against ${spentB.toFixed(3)} nitrogen released in a minute; a trait, not a side`);
+}
+{
+  // Burned ground in its flush matures fruiting bodies faster, at the same cost.
+  const grow = (speed) => {
+    const net = createNetwork('player', 't', 30, 8, mulberry32(12), 220);
+    net.surplus = ECON.fruitThreshold;
+    const root = net.nodes[0]; root.gy = 2; root.wy = 2.5; root.water = 60; root.nitrogen = 30;
+    startFruiting(net, () => true, root.gx, root.gy);
+    const world = createWorld(44); world.rainfall = 1;
+    let t = 0;
+    while (net.fruit.active && t < 400) {
+      root.water = 60; root.nitrogen = 30;
+      stepNetwork(net, { world, dt: 0.25, time: t, warmth: 1, light: 1, fruitingWeather: true, fruitSpeed: speed, rival: null, log() {} });
+      t += 0.25;
+    }
+    return { t, fruited: net.fruited };
+  };
+  const { ECON } = await load('content');
+  const plain = grow(1);
+  const ash = grow(ASH_FRUIT_SPEED);
+  assert(plain.fruited === 1 && ash.fruited === 1, 'both bodies complete');
+  assert(ash.t < plain.t * 0.85, `ash fruiting is faster (${ash.t}s against ${plain.t}s)`);
+  console.log(`PASS ash flush: a body on burned ground matures in ${ash.t}s against ${plain.t}s, for the same reserve`);
 }

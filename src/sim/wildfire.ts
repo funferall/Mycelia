@@ -1,7 +1,7 @@
 import { GRID } from './content';
 import { STAND_SIZE, type Region } from './region';
 import { burnNode, markConnectivity, payColonyFund, updateTotals, type Network } from './network';
-import { treeHydration, type NetworkWorld, type Tree, type World } from './world';
+import { ASH_FRUIT_SPEED, charRemains, treeHydration, type NetworkWorld, type Tree, type World } from './world';
 import { hashString, mulberry32 } from './rng';
 import { standFrameOf, treeSpatialPosition } from './spatial';
 import type { CrossingMatch } from './crossing';
@@ -49,6 +49,8 @@ export const FIRE = {
   dryBelow: 0.35,
   /** Soil rows the fire turns to ash as it passes. */
   ashRows: 5,
+  /** Fruiting bodies on burned ground mature this much faster through the aftermath. */
+  ashFruitSpeed: ASH_FRUIT_SPEED,
   /** How far behind the front well-watered trees still weaken it, region units. */
   breakReach: 20,
   /** A torched tree's chance never reaches certainty. */
@@ -438,6 +440,8 @@ export class Wildfire {
     tree.dead = true;
     tree.health = 0;
     tree.burned = { at, remains, biomass: tree.height * (0.5 + tree.maturity) };
+    // What it holds for the soil, released as it decays (W2).
+    charRemains(tree);
     for (const tip of tree.rootTips) {
       if (tip.bondedTo === null) continue;
       const id = tip.bondedColonyId ?? null;

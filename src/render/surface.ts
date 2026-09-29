@@ -23,7 +23,9 @@ const TREE_FORMS: Record<string, readonly AssetId[]> = {
   birch: ['tree.birch-single', 'tree.birch-twin', 'tree.birch-leaning'],
   hemlock: ['tree.hemlock-full', 'tree.hemlock-young', 'tree.hemlock-windswept'],
 };
-function treeAsset(tree: { species: string; seed: number; burned?: unknown }): AssetId | undefined {
+function treeAsset(tree: { species: string; seed: number; burned?: { remains?: string } }): AssetId | undefined {
+  // Burned remains that have given everything to the soil leave a stump.
+  if (tree.burned?.remains === 'stump') return 'prop.charred-stump';
   // A tree the fire killed stands as its species' charred snag.
   if (tree.burned && TREE_FORMS[tree.species]) return `tree.${tree.species}-charred` as AssetId;
   const forms = TREE_FORMS[tree.species];
@@ -413,7 +415,9 @@ export class SurfaceForest {
     const available = this.assets.resolveTier(id, tier);
     if (available === null) return;
     if (entry.model && entry.model.tier === available && !swapped) return;
-    const model = this.assets.instance(id, entry.tree.height * (0.7 + entry.tree.maturity * 0.5), available);
+    // A stump is its own size, not the tree's.
+    const height = id === 'prop.charred-stump' ? 1.3 : entry.tree.height * (0.7 + entry.tree.maturity * 0.5);
+    const model = this.assets.instance(id, height, available);
     if (!model) return;
     // A tier swap changes geometry only: the placed copy keeps the exact
     // ground contact, scale and rotation it already had, so refining a tree
@@ -606,7 +610,7 @@ export class SurfaceForest {
       // Only the forest view leans or topples: the folded underground view keeps
       // its trees upright over the roots they belong to.
       const unfold = THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
-      if (v.tree.fallen) {
+      if (v.tree.fallen && v.tree.burned?.remains !== 'stump') {
         v.fallClock = (v.fallClock ?? 0) + (reduced ? FALL_SECONDS : dt);
         // Slow at first, then gathering speed as it goes over.
         const f = Math.min(1, v.fallClock / FALL_SECONDS);
@@ -618,8 +622,8 @@ export class SurfaceForest {
       }
       const dim = 0.48 + blend * 0.52;
       // The fire's kill: swap to the charred snag the moment it is recorded.
-      if (v.tree.burned && v.assetId && !v.assetId.endsWith('-charred')) this.dress(v, v.lod);
-      const charred = v.assetId?.endsWith('-charred') ?? false;
+      if (v.tree.burned && v.assetId && v.assetId !== treeAsset(v.tree)) this.dress(v, v.lod);
+      const charred = (v.assetId?.endsWith('-charred') || v.assetId === 'prop.charred-stump') ?? false;
       if (v.model) {
         // Authored foliage takes the season's colour; bark keeps the artist's
         // and only browns as the tree's health falls.

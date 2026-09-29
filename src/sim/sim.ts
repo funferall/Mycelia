@@ -30,7 +30,7 @@ import {
 } from './network';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
-import { belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, stepHydration, updateMoisture, updateSoil, type Tree, type World } from './world';
+import { REMAINS, belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, stepHydration, stepRemains, updateMoisture, updateSoil, type Tree, type World } from './world';
 
 /** What a founding spore brings with it when it starts a colony. */
 export interface FoundingKit {
@@ -64,7 +64,7 @@ export class Simulation {
   rivalEnabled = true;
   /** Explicit continuation beyond the introductory two-bloom victory. */
   regionalContinuation = false;
-  regionalWeather: { rainfall: number; fruiting: boolean } | null = null;
+  regionalWeather: { rainfall: number; fruiting: boolean; fruitSpeed?: number } | null = null;
   /** Where each node was last projected into the regional volume (wx, wy, stand). */
   private readonly synced = new WeakMap<object, [number, number, number]>();
   readonly seed: number;
@@ -133,6 +133,8 @@ export class Simulation {
       mulberry32(seed ^ 0x55aa77),
       40
     );
+    // Today's placeholder opponent is a saprotroph: a decomposer by trait.
+    this.rival.traits = { decomposer: true };
 
     this.log(
       site
@@ -229,6 +231,7 @@ export class Simulation {
       light: season.light,
       warmth: season.warmth,
       fruitingWeather: this.regionalWeather?.fruiting ?? false,
+      fruitSpeed: this.regionalWeather?.fruitSpeed ?? 1,
       rival: this.rival,
       time: this.time,
       log: (text: string) => this.log(text),
@@ -241,8 +244,21 @@ export class Simulation {
     this.syncRegionalPositions(!playerManagedByRegion);
 
     this.stepTrees(dt, playerManagedByRegion);
+    // Charred remains decay into the soil; a decomposer's strands nearby double the pace.
+    stepRemains(this.world, dt, (tree) => (this.decomposerNear(tree) ? REMAINS.decomposerSpeed : 1));
     if (this.rivalEnabled) this.stepRivalDrama(dt);
     if (!playerManagedByRegion) this.checkOutcome();
+  }
+
+  /** True when a living strand of a decomposer colony here reaches this tree's remains. */
+  private decomposerNear(tree: Tree): boolean {
+    for (const net of [this.player, this.rival]) {
+      if (!net.traits?.decomposer || net.extinct) continue;
+      for (const node of net.nodes) {
+        if (node.alive && node.gy < REMAINS.rows && Math.abs(node.gx - tree.gx) <= REMAINS.reachCols) return true;
+      }
+    }
+    return false;
   }
 
   private advanceSeason(dt: number): void {

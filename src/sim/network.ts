@@ -133,6 +133,12 @@ export interface Bloom {
 }
 
 export interface Network {
+  /**
+   * What kind of fungus this colony is, as traits rather than sides, so any
+   * owner (a person, an agent, a faction) can play any kind. A decomposer
+   * speeds the decay of dead and burned wood its strands reach.
+   */
+  traits?: { decomposer?: boolean };
   evolution: { learned: string[]; age: number; active: Record<string, number>; cooldown: Record<string, number> };
   owner: Owner;
   /** Stable regional identity; separate spores must never inherit a parent's graph. */
@@ -526,6 +532,8 @@ function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, 
 export interface StepContext {
   /** A summoned warm rain front permits fruiting even during seasonal frost. */
   fruitingWeather?: boolean;
+  /** Maturation pace for a fruiting body (the ash flush after a fire is faster). */
+  fruitSpeed?: number;
   world: NetworkWorld;
   /** Photosynthesis multiplier for the current season. */
   light: number;
@@ -1307,7 +1315,7 @@ function progressFruiting(net: Network, ctx: StepContext): void {
   const kindSky = ctx.fruitingWeather || (ctx.warmth > 0.3 && ctx.world.rainfall > 0.45);
   if (!kindSky) return;
 
-  const step = ctx.dt / ECON.fruitSeconds * (net.evolution.learned.includes('spore-memory') ? 1.15 : 1) * (net.evolution.active.bloom ? 2 : 1);
+  const step = ctx.dt / ECON.fruitSeconds * (net.evolution.learned.includes('spore-memory') ? 1.15 : 1) * (net.evolution.active.bloom ? 2 : 1) * (ctx.fruitSpeed ?? 1);
   const spend = Math.min(fruit.store, ECON.fruitThreshold * step);
   setFruitStore(net, fruit.store - spend);
 

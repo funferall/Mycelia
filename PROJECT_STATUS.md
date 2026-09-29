@@ -831,9 +831,48 @@ choices from the match seed so `MAP-13` replay stays exact, and keep `MAP-09`'s
 reachability and water-in-reach guarantees for whatever stand is drawn.
 Recorded as `MAP-16` (Planned); no implementation exists yet.
 
-### Major plan: wildfire v2, fire that reads the network (written 29 September; W4 and W1 done 29 September)
+### Major plan: wildfire v2, fire that reads the network (written 29 September; W4, W1 and W2 done 29 September)
 
 **Progress, 29 September:**
+
+- **User direction, 29 September: owner-agnostic rules.** The opponent is a
+  placeholder. Future opponents will be people or LLM agents, possibly
+  playing different starting factions or species groups. Rules are therefore
+  owner-agnostic, and species differences sit behind traits.
+- **W2, remains and nutrient release (done).**
+  - **Where remains live.** They are part of the burned tree:
+    `Tree.burned.{nitrogen,organic}` and their starting values.
+    `charRemains` gives a store of 0.03 nitrogen and 0.04 organic matter per
+    unit of biomass.
+  - **Decay.** `stepRemains` in `src/sim/world.ts`, run in `Simulation.step`,
+    releases the store into the soil within 3 columns and 12 cm of the trunk,
+    over 300 s for a snag and 480 s for a log. A cell that is already full
+    takes less, and what it cannot take stays in the remains, so the total is
+    conserved. Spent remains become `stump` and render as
+    `prop.charred-stump`.
+  - **Change from the plan: no direct transfer.** A new network trait,
+    `Network.traits.decomposer`, doubles the decay pace where that colony's
+    strands reach the remains. The placeholder rival has the trait; the
+    player does not. Nothing is handed to a side directly: whoever's strands
+    are in that soil takes it up through normal uptake.
+  - **Change from the plan: faster, not cheaper.** A cheaper fruiting body
+    would have created energy, because the body's store is fixed. Instead,
+    fruiting on burned ground matures 1.3x faster (`ASH_FRUIT_SPEED`, through
+    `StepContext.fruitSpeed`), at the same cost.
+  - **Gap closed:** the ash flush now reaches regional bodies too
+    (`CrossingMatch.ashFlush`). They previously got no post-fire flush.
+  - **Verification, 29 September (W2 tree, before concurrent fire-render
+    work):** `node tools/test-wildfire.mjs` passed 14 checks, including four
+    W2 checks: 67 burned trees held 52.4 nitrogen; decay moved 0.90 nitrogen,
+    conserved, then left a stump; a decomposer released 0.225 against 0.112
+    in a minute; ash fruiting matured in 26.25 s against 34 s. Replay
+    fingerprints without fire were unchanged (raven-wood `8e90afcc63ba88f4`,
+    storm-race `45160dc3472d0e23`). `test-sim` and `test-region` passed;
+    `test-wildfire-view` and `test-underground-view` passed on a build that
+    also held uncommitted fire-render edits by another agent. The rest of the
+    headless suite was stopped before it finished and has not been run on
+    this commit. The snag, the fallen log and the stump were checked by eye on
+    the GPU.
 
 - **W1, hydration and new ignition (done).**
   - `Tree.hydration` (`stepHydration` in `src/sim/world.ts`, run in
@@ -863,9 +902,11 @@ Recorded as `MAP-16` (Planned); no implementation exists yet.
 - **In the game.** A playable tree the fire kills now swaps to its species'
   charred snag (`treeAsset` / `dress` in `src/render/surface.ts`).
 - **Still to do:**
-  - the logs, stump, ember bed, fireweed and ash bed are registered but not
-    yet placed: they arrive with W2 remains and W5 effects;
-  - W2, W3, W5 and W6 have not started.
+  - the charred stump is now placed (spent remains); the separate charred
+    logs, ember bed, fireweed and ash bed are registered but not yet placed.
+    They arrive with W5 effects. A felled tree is drawn as its charred snag
+    lying where it fell;
+  - W3, W5 and W6 have not started.
 
 
 A self-contained plan to deepen the existing Ember crown wildfire (`TECH-06`).
