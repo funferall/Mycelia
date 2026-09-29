@@ -1959,7 +1959,7 @@ either foundation.
     - `test-evolution-view`
     - `test-mushroom-view`
     - `test-sections-view` (27 checks)
-  - `test-view` had not finished when this was committed.
+  - `test-view` finished after the commit and fails only the long-standing refused-order check.
 
 ### 29 September 2026: held trees glow in the forest (`VIEW-02`)
 
