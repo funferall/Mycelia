@@ -101,6 +101,18 @@ interface StandingTree {
   fallClock?: number;
   /** True once a burned or parched crown has had its foliage removed. */
   crownBurned?: boolean;
+  /** The soft glow a tree wears while the player's mycelium holds a bond with it. */
+  glow: THREE.Sprite[];
+}
+
+/**
+ * True while the player holds a living bond with this tree: one of its root
+ * tips is bonded, and not to a rival colony. These are the trees that count
+ * toward holding a stand.
+ */
+export function playerHolds(tree: Tree): boolean {
+  if (tree.dead) return false;
+  return tree.rootTips.some((tip) => tip.bondedTo !== null && !(tip.bondedColonyId ?? '').startsWith('rival'));
 }
 
 /** A tree the wildfire took: blackened bark and a few scorched leaves. */
@@ -143,6 +155,19 @@ export class SurfaceForest {
   /** Baked tree shadows, kept in one group so the QA preset can omit them. */
   private readonly shadows = new THREE.Group();
   private readonly shadowTexture = makeGlowTexture(64);
+  /**
+   * The bonded-tree glow: one warm halo in the crown and a fainter warmth at
+   * the foot, shared by every held tree so it breathes as one network.
+   */
+  private readonly haloMaterial = new THREE.SpriteMaterial({
+    map: makeGlowTexture(64), color: '#ffc46e', transparent: true, opacity: 0.18,
+    // Seen through its own leaves: the glow belongs to the whole crown.
+    blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false,
+  });
+  private readonly footMaterial = new THREE.SpriteMaterial({
+    map: makeGlowTexture(64), color: '#ffb04a', transparent: true, opacity: 0.22,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+  });
   private weather = 0;
   private propsPlaced = false;
   selectedId: number | null = null;
@@ -316,6 +341,19 @@ export class SurfaceForest {
     pick.userData.standId = this.tile?.id ?? 0;
     group.add(pick);
     this.pickTargets.push(pick);
+    // Hidden until the player bonds with this tree.
+    const halo = new THREE.Sprite(this.haloMaterial);
+    halo.position.y = h * 0.7;
+    halo.scale.set(h * 0.9, h * 0.8, 1);
+    const foot = new THREE.Sprite(this.footMaterial);
+    foot.position.y = h * 0.04;
+    foot.scale.set(h * 0.42, h * 0.16, 1);
+    for (const sprite of [halo, foot]) {
+      sprite.visible = false;
+      sprite.renderOrder = 2;
+      sprite.raycast = () => {};
+      group.add(sprite);
+    }
     this.group.add(group);
     const entry: StandingTree = {
       tree,
@@ -329,6 +367,7 @@ export class SurfaceForest {
       leafCount: leaves.count,
       home,
       initialMaturity: tree.maturity,
+      glow: [halo, foot],
     };
     this.trees.push(entry);
     // If art is already loaded, the stand opens with it rather than swapping a
@@ -599,6 +638,15 @@ export class SurfaceForest {
         v.material.color.multiplyScalar(dim);
         v.leaves.count = Math.floor(v.leafCount * (v.tree.species === 'hemlock' ? 0.95 : density) * health);
       }
+    }
+    // The held trees glow above ground only, and breathe slowly together.
+    const shown = blend > 0.3;
+    const breath = reduced ? 0.5 : 0.5 + 0.5 * Math.sin(t * 1.1);
+    this.haloMaterial.opacity = (0.2 + 0.1 * breath) * THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
+    this.footMaterial.opacity = (0.3 + 0.12 * breath) * THREE.MathUtils.smoothstep(blend, 0.3, 0.9);
+    for (const v of this.trees) {
+      const held = shown && !v.tree.fallen && playerHolds(v.tree);
+      for (const sprite of v.glow) sprite.visible = held;
     }
     const selected = this.trees.find(v => v.tree.id === this.selectedId);
     this.selection.visible = !!selected && blend > 0.8;

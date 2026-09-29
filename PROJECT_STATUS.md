@@ -277,7 +277,7 @@ and equivalent useful details have been accounted for, then remove it.
 | ID | Status | Feature | Evidence and remaining work |
 |---|---|---|---|
 | VIEW-01 | Implemented, unverified | Bird's-eye 3D forest | Every stand in the 3Ã—3 region now draws its own ground and its own trees, laid out as one continuous forest, and each tree wears an authored model when one is loaded and the procedural body when one is not. Understory, litter, seeded props, wind, rain and seasonal colour are present. Verify: mature and dead stands, and the portrait framing of the whole region, still need a look. |
-| VIEW-02 | Implemented, unverified | Surface tree identity and selection | Crowns and selector options use simulation tree IDs; status reflects health, death, and bonds. Add automated crown-selection and tree/root round-trip checks. |
+| VIEW-02 | Implemented, unverified | Surface tree identity and selection | Crowns and selector options use simulation tree IDs; status reflects health, death, and bonds. Add automated crown-selection and tree/root round-trip checks. Held trees glow (29 September): a tree the player holds a living bond with (`playerHolds`: a bonded root tip not owned by a rival, the same trees that count toward holding a stand) wears a soft amber halo, seen through its own leaves, and a warm glow at its foot, in the forest view only. Both breathe together (steady under reduced motion), fade in with the rise, and never take clicks. |
 | VIEW-03 | Verified | Seamless forest ↔ underground journey | View buttons, `V`, zoom threshold, remembered player framing, selected-root descent, and reduced-motion snapping exist. The crossing is now driven by a wall-clock timeline (`CROSSING_SECONDS`), so a 30fps rise and a 4fps rise both take 1.50s; it reverses at any point with a duration proportional to the distance left, and the soil's contents dissolve from their own opacities instead of being switched off at a blend threshold. `npm run test:view` covers both frame rates, a half-way reversal, a rapid double reversal, endpoint exactness, reduced motion, and crown-to-root round trips. Remaining: the crossing is still one camera rising through one scene rather than a blend of two rendered views. |
 | VIEW-04 | Partial | Camera navigation | Forest pan/orbit/zoom, underground pan/tilt/zoom, keyboard pan/zoom, and `F` framing exist. A viewport change now re-derives the active view's default framing, and the forest framing fits the whole stand at any aspect instead of cropping its ends on a portrait window. `npm run test:view` projects the specimen corners and every crown at 1600×1000, 1366×768, and 390×844. Remaining: interrupted transitions during a drag, and the 1180px breakpoint band, have not been exercised. |
 | VIEW-05 | Verified | Safe input separation | Forest clicks select trees; underground clicks issue orders; input is suppressed during transitions. `npm run test:view` now covers the cases the row was waiting on: a drag pans instead of ordering while a tap on soil orders, a refused order is refused out loud and changes nothing, a cancelled pointer issues nothing and leaves the canvas still able to pan, a click during a crossing issues nothing, one wheel notch does not cross while six do, a key typed into the tree selector does not reach the sheet, the canvas answers `V`, `1-4`, the arrows and Space, and a burst of five view changes lands in the view asked for last with input still live afterwards. |
@@ -1927,6 +1927,12 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: held trees glow in the forest (`VIEW-02`)
+
+- Changed: `src/render/surface.ts`. `playerHolds`; two shared additive sprite materials (a crown halo drawn through its own leaves, and a foot glow); two sprites per tree, shown while the player holds it.
+- Browser: `test-sections-view` (27 checks, crown picking unchanged), `test-colonies-view` and `test-regional-mature-view` pass. `npm run typecheck`: pass.
+- GPU screenshot (`raven-wood`, three trees bonded by fixture): each carries a soft warm halo and foot glow, and the rest of the stand is unchanged.
 
 ### 29 September 2026: colonies through the floor and colony tiles (`VIEW-07`, `MAP-08`)
 
