@@ -1568,6 +1568,8 @@ export class Game {
       progress: this.sim.seasonClock / this.sim.season.seconds,
       reduced: !this.ambientMotion,
       storm: storm.phase === 'idle' ? undefined : { direction: storm.direction, strength: stormLean },
+      // Underground, the forest behind the active stand's section stays as backdrop.
+      cut: this.surfaces[this.match.activeStandId]?.group.position.z,
     });
     this.dressing.refine(this.stage.rig.camera, dt);
     // The reward above ground: bodies stand only where the simulation recorded

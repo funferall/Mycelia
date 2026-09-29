@@ -42,6 +42,7 @@
     "test:crossing": "node tools/test-crossing.mjs",
     "test:regional-spatial": "npm run build && node tools/test-regional-spatial-view.mjs",
     "test:regional-mature": "npm run build && node tools/test-regional-mature-view.mjs",
+    "test:roots": "node tools/test-roots.mjs",
     "test:dressing": "node tools/test-dressing.mjs",
     "test:sections": "node tools/test-sections.mjs",
     "test:reveal": "node tools/test-reveal.mjs"

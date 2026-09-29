@@ -12,6 +12,8 @@ import { makePaperTexture, makeSkyTexture } from './textures';
 /** Half-width and half-height of the mount, in world units. */
 export const MOUNT_HALF_W = GRID.cols / 2;
 export const MOUNT_HALF_H = GRID.rows / 2;
+/** How far behind the section the dusk glow hangs, behind the backdrop forest. */
+const SKY_DEPTH = 900;
 
 /**
  * The sheet.
@@ -48,6 +50,8 @@ export class Stage {
   /** Where the specimen and the sheet live, so callers can add to either. */
   readonly world = new THREE.Group();
   private readonly paper: THREE.Mesh;
+  /** The dusk glow, placed far behind the backdrop forest every frame. */
+  private readonly sky: THREE.Mesh;
   private readonly decor = new THREE.Group();
   private readonly backing: THREE.Mesh;
   private readonly key: THREE.DirectionalLight;
@@ -96,12 +100,15 @@ export class Stage {
       })
     );
     this.paper.position.z = -14;
+    // The sheet ends at the soil line: above it, the forest behind the section
+    // recedes into the dusk instead of stopping at the paper.
+    this.paper.position.y = MOUNT_HALF_H - 500;
     this.decor.add(this.paper);
 
     // The one band of light in the world that the network did not make: a low
     // warm glow above the soil line, so the trunks read as silhouettes against
     // the canopy rather than vanishing into black paper.
-    const sky = new THREE.Mesh(
+    const sky = this.sky = new THREE.Mesh(
       new THREE.PlaneGeometry(240, 98),
       new THREE.MeshBasicMaterial({
         map: makeSkyTexture(),
@@ -217,6 +224,20 @@ export class Stage {
   render(dt: number): void {
     const blend = this.rig.surfaceBlend;
     this.decor.visible = blend < 0.99;
+    // The glow is authored as if 12.6 units behind the section, which would put
+    // it in front of the backdrop forest. Push it far back and scale it about the
+    // camera so it covers the same part of the picture, now behind every tree.
+    const camera = this.rig.camera;
+    const near = camera.position.z + 12.6;
+    const far = camera.position.z + SKY_DEPTH;
+    const k = far / Math.max(1, near);
+    this.sky.position.set(
+      camera.position.x * (1 - k),
+      camera.position.y + (MOUNT_HALF_H + 34 - camera.position.y) * k,
+      -SKY_DEPTH
+    );
+    // Wider than authored, so its ends never show beside the specimen.
+    this.sky.scale.set(k * 12, k, 1);
     this.decor.traverse(object => {
       if (object instanceof THREE.Mesh) object.material.opacity = object.material.userData.baseOpacity * (1 - blend);
     });

@@ -3,6 +3,7 @@ import { GRID, SPECIES, type SeasonId } from '../sim/content';
 import { mulberry32 } from '../sim/rng';
 import type { Tree, World } from '../sim/world';
 import { makeGlowTexture } from './textures';
+import { rootSystem } from './root-architecture';
 
 /**
  * Everything above the soil line, plus the roots that reach down into it.
@@ -41,6 +42,9 @@ export class ForestView {
   private readonly trunkMesh: THREE.InstancedMesh;
   private readonly foliageMesh: THREE.InstancedMesh;
   private readonly rootLines: THREE.LineSegments;
+  private readonly rootRibbons: THREE.Mesh;
+  /** Root tips drawn into the current root geometry; a new tip rebuilds it. */
+  private rootTipsDrawn = -1;
   private readonly tipPoints: THREE.Points;
   private readonly tipCapacity: number;
   private readonly rng: () => number;
@@ -78,8 +82,6 @@ export class ForestView {
 
     this.group.add(this.trunkMesh, this.foliageMesh);
 
-    // Roots: polylines from each trunk base down to every root tip.
-    const rootSegments: number[] = [];
     let tipTotal = 0;
     for (const tree of trees) tipTotal += tree.rootTips.length;
 
@@ -126,24 +128,6 @@ export class ForestView {
         this.foliageMesh.setMatrixAt(slot, this.dummy.matrix);
       }
 
-      // Root polylines, wobbling as they descend.
-      for (const tip of tree.rootTips) {
-        const tipX = tip.gx - GRID.cols / 2 + 0.5;
-        const tipY = -(tip.gy + 0.5) + GRID.rows / 2;
-        const steps = 5;
-        let px = baseX;
-        let py = baseY;
-        for (let s = 1; s <= steps; s++) {
-          const t = s / steps;
-          const wobble = Math.sin(t * Math.PI) * (this.rng() - 0.5) * 3.2;
-          const nx = baseX + (tipX - baseX) * t + wobble;
-          const ny = baseY + (tipY - baseY) * t;
-          rootSegments.push(px, py, 0, nx, ny, 0);
-          px = nx;
-          py = ny;
-        }
-      }
-
       this.visuals.push({ tree, trunk: this.trunkMesh, base, blobs });
       void spec;
     }
@@ -154,23 +138,33 @@ export class ForestView {
     this.foliageMesh.visible = false; // Fine botanical foliage is supplied by Canopy.
     this.foliageMesh.instanceMatrix.needsUpdate = true;
 
-    const rootGeometry = new THREE.BufferGeometry();
-    rootGeometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array(rootSegments), 3)
-    );
-    this.rootLines = new THREE.LineSegments(
-      rootGeometry,
-      new THREE.LineBasicMaterial({
-        color: '#88734f',
+    // Roots: each species' own architecture (see root-architecture.ts), as
+    // tapered ribbons for the structure and hairlines for the fine roots.
+    this.rootRibbons = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.68,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    this.rootRibbons.frustumCulled = false;
+    this.rootLines = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({
+        color: '#9a855f',
+        transparent: true,
+        opacity: 0.42,
         depthWrite: false,
         depthTest: false,
       })
     );
     this.rootLines.frustumCulled = false;
-    this.group.add(this.rootLines);
+    this.group.add(this.rootRibbons, this.rootLines);
+    this.buildRoots();
 
     // Root tips: the only places a symbiosis can form.
     // Trees extend new root tips as they mature, so the buffer is sized for
@@ -273,6 +267,69 @@ export class ForestView {
     if (this.refreshAccumulator < 0.4) return;
     this.refreshAccumulator = 0;
     this.refresh();
+    // Trees extend new tips as they mature; the root that reaches one is drawn then.
+    if (this.world.trees.reduce((n, t) => n + t.rootTips.length, 0) !== this.rootTipsDrawn) this.buildRoots();
+  }
+
+  /**
+   * Draw every tree's root system. Deterministic per tree, so a rebuild for one
+   * new tip leaves every existing root exactly where it was.
+   */
+  private buildRoots(): void {
+    const positions: number[] = [];
+    const colours: number[] = [];
+    const indices: number[] = [];
+    const lines: number[] = [];
+    const thick = new THREE.Color('#6b573a');
+    const thin = new THREE.Color('#9d8864');
+    const colour = new THREE.Color();
+    const toX = (x: number) => x - GRID.cols / 2;
+    const toY = (depth: number) => GRID.rows / 2 - depth;
+    let tips = 0;
+    for (const tree of this.world.trees) {
+      tips += tree.rootTips.length;
+      const system = rootSystem(tree, GRID.cols, GRID.rows);
+      for (const ribbon of system.ribbons) {
+        const start = positions.length / 3;
+        for (let i = 0; i < ribbon.length; i++) {
+          const p = ribbon[i]!;
+          const a = ribbon[Math.max(0, i - 1)]!;
+          const b = ribbon[Math.min(ribbon.length - 1, i + 1)]!;
+          // Perpendicular to the local direction, in the section plane.
+          let nx = -(toY(b.depth) - toY(a.depth));
+          let ny = toX(b.x) - toX(a.x);
+          const length = Math.hypot(nx, ny) || 1;
+          const half = Math.max(0.06, p.width * 0.5);
+          nx = (nx / length) * half;
+          ny = (ny / length) * half;
+          positions.push(toX(p.x) + nx, toY(p.depth) + ny, 0, toX(p.x) - nx, toY(p.depth) - ny, 0);
+          colour.copy(thin).lerp(thick, Math.min(1, p.width / 1.2));
+          colours.push(colour.r, colour.g, colour.b, colour.r, colour.g, colour.b);
+          if (i > 0) {
+            const v = start + i * 2;
+            indices.push(v - 2, v - 1, v, v - 1, v + 1, v);
+          }
+        }
+      }
+      for (const fine of system.fines) {
+        for (let i = 1; i < fine.length; i++) {
+          const [ax, ad] = fine[i - 1]!;
+          const [bx, bd] = fine[i]!;
+          lines.push(toX(ax), toY(ad), 0, toX(bx), toY(bd), 0);
+        }
+      }
+    }
+    const ribbons = new THREE.BufferGeometry();
+    ribbons.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    ribbons.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+    ribbons.setIndex(indices);
+    this.rootRibbons.geometry.dispose();
+    this.rootRibbons.geometry = ribbons;
+    const fines = new THREE.BufferGeometry();
+    fines.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
+    this.rootLines.geometry.dispose();
+    this.rootLines.geometry = fines;
+    this.rootTipsDrawn = tips;
   }
 
   private refreshAccumulator = 0;

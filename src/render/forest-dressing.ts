@@ -65,6 +65,11 @@ export interface ForestDressingView {
   readonly reduced: boolean;
   /** A summoned storm: regional radians it blows toward, and 0..1 strength. */
   readonly storm?: { readonly direction: number; readonly strength: number };
+  /**
+   * Scene z of the soil view's section plane. When given, the dressing stays
+   * underground as the forest behind the cut instead of leaving with the floor.
+   */
+  readonly cut?: number;
 }
 
 /** Kinds drawn as batched authored models in this changeset. */
@@ -111,6 +116,7 @@ export class ForestDressing {
   private readonly time = { value: 0 };
   /** Scene-space storm heading (x, z) and 0..1 strength, shared by both materials. */
   private readonly storm: StormUniforms = { dir: { value: new THREE.Vector2(1, 0) }, strength: { value: 0 } };
+  private readonly backdrop: BackdropUniforms = { on: { value: 0 }, cut: { value: 0 }, haze: { value: new THREE.Color('#241b12') } };
   private readonly cameraPoint = new THREE.Vector3();
   private readonly tint = new THREE.Color('#ffffff');
   private season: SeasonId = 'spring';
@@ -260,8 +266,13 @@ export class ForestDressing {
       this.tint.copy(colour);
       this.applyTint();
     }
+    // In the forest the dressing appears once the floor has mostly unfolded.
+    // Underground it stays, as the forest standing behind the section.
+    const backdrop = view.blend <= FADE_BLEND && view.cut !== undefined;
+    this.backdrop.on.value = backdrop ? 1 : 0;
+    if (view.cut !== undefined) this.backdrop.cut.value = view.cut;
     for (const mesh of this.meshes) {
-      mesh.visible = this.shown && view.blend > FADE_BLEND;
+      mesh.visible = this.shown && (view.blend > FADE_BLEND || backdrop);
     }
   }
 
@@ -485,6 +496,7 @@ export class ForestDressing {
       metalness: 0,
     });
     if (!rigid) attachWind(material, this.time, this.storm, category === 'foliage');
+    attachBackdrop(material, this.backdrop);
     this.materials.set(key, material);
     return material;
   }
@@ -680,6 +692,40 @@ const DROUGHT_VERTEX_GLSL = /* glsl */ `
  }
  #endif
 `;
+
+/** The underground backdrop: which side of the cut is kept, and its haze. */
+export interface BackdropUniforms {
+  /** 1 while the soil view shows the forest behind the section, else 0. */
+  on: { value: number };
+  /** Scene z of the section plane; trees at larger z stand in front of it. */
+  cut: { value: number };
+  haze: { value: THREE.Color };
+}
+
+/**
+ * Seen from underground, the regional forest stands behind the cut: any tree
+ * rooted in front of the section plane is dropped whole, and the rest fade into
+ * the dark with distance, so the section stays the subject and the forest
+ * reads as depth rather than as clutter.
+ */
+function attachBackdrop(material: THREE.MeshStandardMaterial, backdrop: BackdropUniforms): void {
+  const previous = material.onBeforeCompile.bind(material);
+  const previousKey = material.customProgramCacheKey.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    Object.assign(shader.uniforms, { backdropOn: backdrop.on, backdropCut: backdrop.cut, backdropHaze: backdrop.haze });
+    shader.vertexShader = `uniform float backdropCut;\nvarying float vBackdropDepth;\n${shader.vertexShader}`.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\n#ifdef USE_INSTANCING\n vBackdropDepth = backdropCut - (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).z;\n#else\n vBackdropDepth = 1e4;\n#endif\n'
+    );
+    shader.fragmentShader = `uniform float backdropOn;\nuniform vec3 backdropHaze;\nvarying float vBackdropDepth;\n${shader.fragmentShader}`.replace(
+      '#include <opaque_fragment>',
+      '#include <opaque_fragment>\n if (backdropOn > 0.5) {\n   if (vBackdropDepth < 6.0) discard;\n' +
+        '   gl_FragColor.rgb = mix(gl_FragColor.rgb, backdropHaze, 0.84 + 0.13 * smoothstep(0.0, 220.0, vBackdropDepth));\n }\n'
+    );
+  };
+  material.customProgramCacheKey = () => `${previousKey()}-backdrop`;
+}
 
 function attachWind(material: THREE.MeshStandardMaterial, time: { value: number }, storm: StormUniforms, sway: boolean): void {
   material.userData.windTime = time;
