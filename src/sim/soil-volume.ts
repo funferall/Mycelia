@@ -449,14 +449,21 @@ export class SoilVolume {
     return visits;
   }
 
+  /**
+   * Changed cells in canonical key order. Changes are only ever added, so the
+   * sorted list is rebuilt when the count grows rather than on every beat.
+   */
   private sortedChanges(): ChangedCell[] {
+    if (this.sorted.length === this.changes.size) return this.sorted;
     const entries = [...this.changes.values()];
     entries.sort(
       (a, b) =>
         a.key.ix - b.key.ix || a.key.iy - b.key.iy || a.key.iz - b.key.iz
     );
+    this.sorted = entries;
     return entries;
   }
+  private sorted: ChangedCell[] = [];
 
   /** A stable digest of everything the simulation has changed. */
   hash(): string {

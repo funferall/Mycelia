@@ -254,7 +254,9 @@ export class Drought {
         const cell = cells[gy * GRID.cols + gx];
         if (!cell || cell.stream) continue;
         const shelter = Math.min(1, cell.streamNear / DROUGHT.bank);
-        cell.water = Math.max(0.03, cell.water - dt * 0.014 * severity * depth * (1 - shelter));
+        const next = Math.max(0.03, cell.water - dt * 0.014 * severity * depth * (1 - shelter));
+        // Guarded: on shared soil a write materializes a voxel.
+        if (next < cell.water) cell.water = next;
       }
     }
   }

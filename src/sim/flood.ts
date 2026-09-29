@@ -123,8 +123,9 @@ export class Flood {
         for (let gy = 0; gy < drownRows; gy++) {
           const cell = cells[gy * GRID.cols + gx];
           if (!cell || cell.stream) continue;
-          cell.flooded = under;
-          if (under) cell.water = 1;
+          // Guarded: on shared soil a write materializes a voxel, so only real changes are written.
+          if ((cell.flooded ?? false) !== under) cell.flooded = under;
+          if (under && cell.water !== 1) cell.water = 1;
         }
       }
       for (const tree of stand.sim.world.trees) if (cols.has(tree.gx)) this.waterlog(stand, tree, level, dt);
@@ -187,7 +188,7 @@ export class Flood {
     this.wet = false;
     for (const stand of this.host.stands) {
       const cells = stand.sim.world.cells;
-      for (const cell of cells) cell.flooded = false;
+      for (const cell of cells) if (cell.flooded) cell.flooded = false;
       for (const gx of this.peak.get(stand.site.id) ?? []) {
         for (let gy = 0; gy < 4; gy++) {
           const cell = cells[gy * GRID.cols + gx];

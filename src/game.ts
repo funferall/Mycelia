@@ -319,6 +319,7 @@ export class Game {
 
     ui.buildRail(this.sim);
     this.frameSheet();
+    this.warnIfSoftwareRendering();
     this.stage.rig.reducedMotion = this.reducedMotion;
     if (new URLSearchParams(location.search).get('view') !== 'underground') this.stage.rig.setView('forest', true);
     this.syncViewUI();
@@ -372,6 +373,27 @@ export class Game {
   /** The region's surfaces, in stand order. Used by the browser checks. */
   get regionSurfaces(): SurfaceForest[] {
     return this.surfaces;
+  }
+
+  /**
+   * A player whose browser has fallen back to software WebGL (hardware
+   * acceleration off, a blocklisted driver, a remote desktop) is told so and
+   * how to fix it: the game is built for a GPU and is slow without one.
+   * Automated browsers use software rendering on purpose and are not told.
+   */
+  private warnIfSoftwareRendering(): void {
+    const { software, backend } = this.stage.qualityReport();
+    if (!software || navigator.webdriver) return;
+    const notice = document.createElement('aside');
+    notice.className = 'gpu-notice';
+    notice.setAttribute('role', 'status');
+    notice.innerHTML = `<p><strong>Mycelia is running without your graphics card.</strong>
+      Your browser is drawing in software (${backend.replace(/[<>&]/g, '')}), so the forest will be slow.
+      Turn on <em>Use graphics acceleration when available</em> in your browser's settings and restart it.
+      On a laptop with two GPUs, you can also set your browser to "High performance" in Windows graphics settings.</p>
+      <button type="button">Dismiss</button>`;
+    notice.querySelector('button')!.addEventListener('click', () => notice.remove());
+    document.body.append(notice);
   }
 
   /** The active stand's channel and water table, rebuilt like the local views. */

@@ -1134,3 +1134,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .drought-mine { stroke: #ffca76; stroke-width: 2 !important; }
 .drought-invoke { border-color: #b5a06a; background: #2f2a18; color: #f3e2b0; }
 .drought-invoke:not(:disabled):hover { background: #4a4122; }
+/* Shown only when the browser renders WebGL in software (no GPU). */
+.gpu-notice { position: fixed; left: 24px; bottom: 24px; z-index: 50; max-width: 460px; padding: 16px 18px; background: #1d1810; border: 1px solid #b99e65; color: #f1e1c1; font: 15px/1.5 var(--serif); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.gpu-notice p { margin: 0 0 12px; }
+.gpu-notice button { min-height: 36px; padding: 0 16px; border: 1px solid #b99e65; background: #302817; color: #ffe0a3; font: 16px var(--serif); cursor: pointer; }
+.gpu-notice button:focus-visible { outline: 2px solid #d8be81; outline-offset: 3px; }

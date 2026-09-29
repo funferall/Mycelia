@@ -589,13 +589,16 @@ export function markConnectivity(net: Network): void {
  */
 function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
   const { dt } = ctx;
+  // Adaptations are per network, not per node: look them up once per step.
+  const deepDrink = net.evolution.learned.includes('deep-drink') ? 1.2 : 1;
+  const mineralWeave = net.evolution.learned.includes('mineral-weave') ? 1.2 : 1;
   for (const node of net.nodes) {
     if (!node.alive || !node.connected) continue;
     const cell = world.cellOf(node);
     if (!cell) continue;
 
     // Water: drawn from the soil, replenished by rain and the water table.
-    const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2) * (net.evolution.learned.includes('deep-drink') ? 1.2 : 1);
+    const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2) * deepDrink;
     const got = Math.min(draw, cell.water);
     cell.water -= got * 0.06;
     node.water = Math.min(ECON.nodeWaterCap, node.water + got);
@@ -604,7 +607,7 @@ function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
     // horizon holds a finite standing stock and rebuilds it slowly, so a pocket
     // that has been worked over goes quiet until either the network grows on or
     // the soil has had time to mineralise again.
-    const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness) * (net.evolution.learned.includes('mineral-weave') ? 1.2 : 1));
+    const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness) * mineralWeave);
     cell.nitrogen = Math.max(0, cell.nitrogen - uptake * ECON.nitrogenSoilCost);
     node.nitrogen = Math.min(ECON.nodeNitrogenCap, node.nitrogen + uptake);
 
@@ -668,25 +671,38 @@ function carbonPerSecond(species: string): number {
 function transport(net: Network, dt: number): void {
   const nodes = net.nodes;
   const order = traversalOrder(net);
+  const buffers = transportBuffers(nodes.length);
+  const { pipe, reserve, fill, keep } = buffers;
+
+  // Nothing a sweep reads about a node's shape changes during transport, so
+  // each edge's throughput is worked out once rather than once per resource.
+  for (const id of order) {
+    const node = nodes[id]!;
+    pipe[id] = (1.2 + node.thickness * 9) * (node.reinforced ? ECON.cordThroughput : 1) * dt;
+  }
 
   // Carbon travels up from strands holding more than they need, and back down
   // to any node below its working reserve. A growing tip needs real fuel, so
   // the frontier is topped up rather than merely rescued; only what nobody
   // needs reaches the root, and only what the root cannot use becomes surplus.
-  moveResource(nodes, order, 'carbon',
-    node => carbonReserve(node),
-    node => carbonReserve(node),
-    dt,
-    true);
+  for (const id of order) {
+    const node = nodes[id]!;
+    const r = carbonReserve(node);
+    reserve[id] = r;
+    fill[id] = r;
+    keep[id] = r * (node.parent < 0 ? 3 : 0.35);
+  }
+  moveResource(nodes, order, 'carbon', buffers);
 
   // Mark the strands that stand between the root and a tree. A partner is an
   // obligation rather than an option, so these are the routes that get fed.
-  const supplyPath = new Set<number>();
+  const supply = buffers.supply;
+  for (const id of order) supply[id] = 0;
   for (let i = order.length - 1; i >= 0; i--) {
-    const node = nodes[order[i] as number];
-    if (node.bondedTree >= 0 || supplyPath.has(node.id)) {
-      supplyPath.add(node.id);
-      if (node.parent >= 0) supplyPath.add(node.parent);
+    const node = nodes[order[i] as number]!;
+    if (node.bondedTree >= 0 || supply[node.id]) {
+      supply[node.id] = 1;
+      if (node.parent >= 0) supply[node.parent] = 1;
     }
   }
 
@@ -704,15 +720,49 @@ function transport(net: Network, dt: number): void {
 
   for (const key of ['water', 'nitrogen'] as const) {
     const cap = key === 'water' ? ECON.nodeWaterCap : ECON.nodeNitrogenCap;
-    moveResource(nodes, order, key,
-      node => standingReserve(node, key, thirsty),
+    for (const id of order) {
+      const node = nodes[id]!;
+      const r = standingReserve(node, key, thirsty);
+      reserve[id] = r;
       // A junction is filled to its whole capacity, and so is every strand on
       // the route to it: a strut is a pipe, not a cistern, and it passes what it
       // receives straight on to the tree.
-      node => (node.bondedTree >= 0 || supplyPath.has(node.id) ? cap : standingReserve(node, key, thirsty)),
-      dt,
-      node => !supplyPath.has(node.id));
+      fill[id] = node.bondedTree >= 0 || supply[id] ? cap : r;
+      // A strand carrying a partner's supply keeps nothing back for itself.
+      keep[id] = supply[id] ? 0 : r * 0.35;
+    }
+    moveResource(nodes, order, key, buffers);
   }
+}
+
+interface TransportBuffers {
+  pipe: Float64Array;
+  reserve: Float64Array;
+  fill: Float64Array;
+  keep: Float64Array;
+  /** The resource being moved, and carbon's flow, during one `moveResource`. */
+  value: Float64Array;
+  flow: Float64Array;
+  supply: Uint8Array;
+}
+
+let sharedBuffers: TransportBuffers | null = null;
+
+/** Scratch arrays indexed by node id, reused across networks and steps. */
+function transportBuffers(size: number): TransportBuffers {
+  if (!sharedBuffers || sharedBuffers.pipe.length < size) {
+    const capacity = Math.max(size, (sharedBuffers?.pipe.length ?? 0) * 2, 1024);
+    sharedBuffers = {
+      pipe: new Float64Array(capacity),
+      reserve: new Float64Array(capacity),
+      fill: new Float64Array(capacity),
+      keep: new Float64Array(capacity),
+      value: new Float64Array(capacity),
+      flow: new Float64Array(capacity),
+      supply: new Uint8Array(capacity),
+    };
+  }
+  return sharedBuffers;
 }
 
 type ResourceKey = 'carbon' | 'water' | 'nitrogen';
@@ -803,54 +853,74 @@ function moveResource(
   nodes: HyphaNode[],
   order: number[],
   key: ResourceKey,
-  surplusAbove: (node: HyphaNode) => number,
-  fillTo: (node: HyphaNode) => number,
-  dt: number,
-  holdsBack: boolean | ((node: HyphaNode) => boolean)
+  buffers: TransportBuffers
 ): void {
-  const pipe = (node: HyphaNode): number => (1.2 + node.thickness * 9) * (node.reinforced ? ECON.cordThroughput : 1) * dt;
+  // Per-node inputs, precomputed by `transport`: edge throughput, the reserve a
+  // node holds before shipping inward, the level it fills a child to, and what
+  // it keeps back on the outward sweep.
+  const { pipe, reserve, fill, keep, value, flow } = buffers;
   const isCarbon = key === 'carbon';
-  const holds = typeof holdsBack === 'function' ? holdsBack : () => holdsBack;
+  const count = order.length;
 
-  for (let i = order.length - 1; i >= 0; i--) {
-    const node = nodes[order[i] as number];
-    if (!node || !node.alive || node.parent < 0) continue;
-    const surplus = node[key] - surplusAbove(node);
+  // The amounts live in typed arrays for the two sweeps: a keyed property
+  // (`node[key]`) is the slow path in the hottest loop of the simulation. Every
+  // node in `order` is alive and so is its parent; each amount is read once and
+  // written back once, and the arithmetic is the same, in the same order.
+  for (let i = 0; i < count; i++) {
+    const id = order[i]!;
+    const node = nodes[id]!;
+    value[id] = node[key];
+    if (isCarbon) flow[id] = node.flow;
+  }
+
+  for (let i = count - 1; i >= 0; i--) {
+    const id = order[i]!;
+    const parentId = nodes[id]!.parent;
+    if (parentId < 0) continue;
+    const surplus = value[id]! - reserve[id]!;
     if (surplus <= 0) continue;
-    const parent = nodes[node.parent];
-    if (!parent || !parent.alive) continue;
-    const moved = Math.min(surplus, pipe(node));
-    node[key] -= moved;
-    parent[key] += moved;
+    const moved = Math.min(surplus, pipe[id]!);
+    value[id] = value[id]! - moved;
+    value[parentId] = value[parentId]! + moved;
     if (isCarbon) {
-      node.flow -= moved;
-      parent.flow += moved;
+      flow[id] = flow[id]! - moved;
+      flow[parentId] = flow[parentId]! + moved;
     }
   }
 
-  for (const id of order) {
-    const node = nodes[id];
-    if (!node || !node.alive || node.children.length === 0) continue;
-    for (const childId of node.children) {
+  for (let i = 0; i < count; i++) {
+    const id = order[i]!;
+    const children = nodes[id]!.children;
+    if (children.length === 0) continue;
+    // A parent must keep strictly less than the level it fills its children
+    // to, or a node sitting exactly at its reserve could never be topped up
+    // and would slowly die of upkeep. The root keeps more than everyone else,
+    // so supply flows outward down a gradient instead of pooling at the base.
+    const kept = keep[id]!;
+    const edge = pipe[id]!;
+    for (let c = 0; c < children.length; c++) {
+      const childId = children[c]!;
       const child = nodes[childId];
       if (!child || !child.alive) continue;
-      const deficit = fillTo(child) - child[key];
+      const deficit = fill[childId]! - value[childId]!;
       if (deficit <= 0) continue;
-      // A parent must keep strictly less than the level it fills its children
-      // to, or a node sitting exactly at its reserve could never be topped up
-      // and would slowly die of upkeep. The root keeps more than everyone else,
-      // so supply flows outward down a gradient instead of pooling at the base.
-      const keep = holds(node) ? surplusAbove(node) * (isCarbon && node.parent < 0 ? 3 : 0.35) : 0;
-      const movable = Math.max(0, node[key] - keep);
-      const moved = Math.min(deficit, movable, pipe(node));
+      const movable = Math.max(0, value[id]! - kept);
+      const moved = Math.min(deficit, movable, edge);
       if (moved <= 0) continue;
-      node[key] -= moved;
-      child[key] += moved;
+      value[id] = value[id]! - moved;
+      value[childId] = value[childId]! + moved;
       if (isCarbon) {
-        node.flow -= moved;
-        child.flow += moved;
+        flow[id] = flow[id]! - moved;
+        flow[childId] = flow[childId]! + moved;
       }
     }
+  }
+
+  for (let i = 0; i < count; i++) {
+    const id = order[i]!;
+    const node = nodes[id]!;
+    node[key] = value[id]!;
+    if (isCarbon) node.flow = flow[id]!;
   }
 }
 

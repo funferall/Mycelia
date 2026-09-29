@@ -63,6 +63,8 @@ export class Simulation {
   /** Explicit continuation beyond the introductory two-bloom victory. */
   regionalContinuation = false;
   regionalWeather: { rainfall: number; fruiting: boolean } | null = null;
+  /** Where each node was last projected into the regional volume (wx, wy, stand). */
+  private readonly synced = new WeakMap<object, [number, number, number]>();
   readonly seed: number;
   readonly events: SimEvent[] = [];
   readonly runStartedAt = Date.now();
@@ -173,6 +175,11 @@ export class Simulation {
     const projection = this.world.regionalSoil;
     if (!projection) return;
     for (const net of includePlayer ? [this.player, this.rival] : [this.rival]) for (const node of net.nodes) {
+      // Only growing tips move. A node already synced where it stands keeps its
+      // point: the projection is pure, so recomputing it would change nothing.
+      const last = this.synced.get(node);
+      if (last && last[0] === node.wx && last[1] === node.wy && last[2] === projection.standId) continue;
+      this.synced.set(node, [node.wx, node.wy, projection.standId]);
       const point = projection.pointAt(node.wx - 0.5, node.wy - 0.5);
       if (point) {
         node.spatial = point;

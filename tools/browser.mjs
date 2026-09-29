@@ -1,9 +1,11 @@
 /**
  * Shared headless-browser plumbing for the visual QA tools.
  *
- * Every check runs against a software WebGL backend on purpose. It is slow, and
- * slow is the interesting case here: the game has to stay coherent when it is
- * nowhere near sixty frames per second.
+ * Checks run against a software WebGL backend by default. It is slow, and slow
+ * is the interesting case for coherence: the game has to hold together when it
+ * is nowhere near sixty frames per second. Its timings say nothing about real
+ * hardware, so pass `--gpu` (or set `MYCELIA_GPU=1`) to run on the machine's
+ * own GPU, and `npm run check:gpu` to confirm which one is in use.
  */
 import { chromium } from 'playwright';
 import { existsSync, readdirSync } from 'node:fs';
@@ -81,18 +83,30 @@ export function findChromium() {
   return undefined;
 }
 
-export function launchBrowser() {
+/**
+ * Whether this run should use the machine's real GPU: `--gpu` on the command
+ * line or `MYCELIA_GPU=1` in the environment. Software stays the default, so
+ * screenshots and checks are the same on every machine.
+ */
+export function wantsGpu(args = process.argv.slice(2)) {
+  return args.includes('--gpu') || process.env.MYCELIA_GPU === '1';
+}
+
+/** Software WebGL (SwiftShader): identical everywhere, slow, CPU-only. */
+const SOFTWARE_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'];
+/**
+ * The real GPU through Direct3D 11 (Windows; ANGLE picks the platform default
+ * elsewhere). `--force_high_performance_gpu` matters on laptops: without it
+ * Chromium takes the integrated GPU (Intel UHD here) over the discrete one.
+ */
+const GPU_ARGS = ['--use-gl=angle', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : []), '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--force_high_performance_gpu'];
+
+export function launchBrowser({ gpu = wantsGpu() } = {}) {
   return chromium.launch({
     // The bundled browser revision rarely matches whatever playwright expects,
     // so reuse whichever Chromium is already on the machine.
     executablePath: findChromium(),
-    args: [
-      '--use-gl=angle',
-      '--use-angle=swiftshader',
-      '--enable-unsafe-swiftshader',
-      '--ignore-gpu-blocklist',
-      '--enable-webgl',
-    ],
+    args: gpu ? GPU_ARGS : SOFTWARE_ARGS,
   });
 }
 

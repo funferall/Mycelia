@@ -511,7 +511,7 @@ Ecological references supporting this direction:
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Current evolution browser checks verify modal focus return, world-shortcut isolation, native Space on disclosures without awakening/pausing, and resource details on focus. Remaining: complete-game focus order, canvas alternatives, and color-independent world-state cues. |
 | PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960×640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles. A current fast SwiftShader browser sample advanced 30 seconds of a two-colony 3D simulation in 5.61 seconds without rendering those ticks. Remaining: hardware-GPU measurements, a real rendered 4× mature-match budget, network-ceiling budgets and byte-accurate GPU memory. |
 | PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 783.73 kB (209.03 kB gzip), plus the opt-in 1.14 kB test bench with the Vite chunk-size warning. The botanical living trees cost 1,568–1,596 triangles at LOD0, 800–810 at LOD1 and 266–298 at LOD2; triangle counts alone are not a frame-time budget. |
-| PERF-03 | Planned | Optimization pass alongside new tech and UI scope | Requested 27 September: treat performance as required work for the tech-tree growth (`TECH-04/05`), randomized starts (`MAP-16`) and continuing surface scope, not as a later rescue. Do a measured pass before and after each of those lands: capture hardware-GPU frame time (not only SwiftShader), a rendered 4× mature-match budget, draw calls, triangles and renderer resource counts, and close the existing `PERF-01/02` gaps. Keep the tech-tree view out of the per-frame budget while closed, prefer one overlay plus a shared icon atlas over many textures or draw calls, watch UI DOM/CSS cost, and re-check the fast QA preset and production bundle size. `PERF-01/02` evidence describes the pre-change tree; `PERF-03` requires fresh measurements. |
+| PERF-03 | Partial | Optimization pass alongside new tech and UI scope | Requested 27 September: treat performance as required work for the tech-tree growth (`TECH-04/05`), randomized starts (`MAP-16`) and continuing surface scope, not as a later rescue. Do a measured pass before and after each of those lands: capture hardware-GPU frame time (not only SwiftShader), a rendered 4× mature-match budget, draw calls, triangles and renderer resource counts, and close the existing `PERF-01/02` gaps. Keep the tech-tree view out of the per-frame budget while closed, prefer one overlay plus a shared icon atlas over many textures or draw calls, watch UI DOM/CSS cost, and re-check the fast QA preset and production bundle size. `PERF-01/02` evidence describes the pre-change tree; `PERF-03` requires fresh measurements. **28 September:** simulation 2.8x faster at ~4,400 nodes (800 to 282 CPU-ms per simulated second, interleaved A/B), bit-identical results. Changes: shared-soil cell views resolve their voxel once and are replaced by the plain record, integer-cell elevations are memoized, and passability checks its cache first; unmoved nodes skip regional re-projection; the soil volume re-sorts changed cells only when new ones appear; transport precomputes per-node inputs into reusable typed arrays and runs its sweeps on arrays; flood and drought write only real changes. Real-GPU testing now exists: `--gpu`/`MYCELIA_GPU=1` for any browser tool, and `npm run check:gpu` prints the WebGL renderer and real frame rates (it forces the discrete GPU on laptops). RTX 4060 Laptop: 60 fps in both views with 72 or 4,923 strands at 1x; at 4x with 4,923 strands, 21 fps forest and 4.7 fps underground. That 4x case is the remaining bottleneck (CPU per frame multiplied by speed), not the GPU. Players on software WebGL now see a notice explaining how to enable hardware acceleration. |
 | QA-01 | Partial | Feature testing and direct scene fixtures | The crossing suite covers address-preserving promotion, free 3D lateral steering, a perpendicular stand-edge arrival, natural seam arrival and an independent paid spore daughter on shared soil. The regional-spatial and regional-mature browser smokes cover section orders, empty and daughter tile access, switching, reveal, forest return, rebinding to the founding colony and a 30-second two-colony pacing sample. Remaining: direct browser-click QA of transverse growth, repeated long-match rebase/input paths, contested same-tile contact, other broad-suite subdivision and hardware measurements. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
@@ -1629,6 +1629,35 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 28 September 2026: simulation performance and real-GPU testing (`PERF-01`, `PERF-03`)
+
+- Profiled a growing match headless (`--cpu-prof`) and inside the built game
+  (Chrome DevTools protocol). Before this change, `harvest` took 46% of
+  simulation time, mostly the shared-soil cell proxy. The transport sweeps
+  took most of the rest, and terrain noise ran on every cell-position lookup.
+- Result: 800 to 282 CPU-ms per simulated second at ~4,400 nodes (best of 5,
+  interleaved against the committed code). A 90 s fingerprint of every node,
+  tree and soil voxel is bit-identical to the committed code on `raven-wood`
+  and `storm-race`.
+- One micro-optimization was measured, found slower (270 ms against 139 ms)
+  and reverted. Wall-clock timings on this laptop varied up to 2x between
+  runs, so only interleaved CPU-time comparisons were used for decisions.
+- Software-WebGL frame timings were shown to be dominated by one-time
+  SwiftShader shader compilation (seconds per program). No program is created
+  in steady frames (0 in 10 frames in each view), so those timings are not a
+  hardware budget.
+- `npm run check:gpu`: renderer `ANGLE (NVIDIA GeForce RTX 4060 Laptop GPU,
+  Direct3D11)`. 60 fps and 16.8 ms p95 in both views at 72 and 4,923
+  strands at 1x. At 4x with 4,923 strands: 20.7 fps forest, 4.7 fps
+  underground. Without `--force_high_performance_gpu`, Chromium used the
+  Intel UHD integrated GPU.
+- Software-rendering notice checked in the built game: shown on SwiftShader
+  with the automation flag masked, absent on the GPU
+  (`design/shots/gpu-notice.png` inspected).
+- `npm run typecheck`: pass. Headless and browser suites were not rerun
+  after these changes; the fingerprint equality stands in for the simulation
+  suites.
 
 ### 28 September 2026: flood and underground effects (`TECH-03`, `TECH-06`)
 
