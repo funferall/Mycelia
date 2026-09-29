@@ -83,7 +83,8 @@ for (const asset of manifest.assets) {
     assert(triangles < previousTriangles, `${tier.file}: decreasing LOD cost`);
     previousTriangles = triangles;
     assert.equal(data.length, tier.bytes, `${tier.file}: byte count`);
-    if (asset.variant === 'dead-hollow') assert.equal(foliage, 0, `${tier.file}: dead tree has no foliage`);
+    // A dead or burned tree has no leaves left.
+    if (asset.variant === 'dead-hollow' || asset.variant === 'charred') assert.equal(foliage, 0, `${tier.file}: dead or charred tree has no foliage`);
     else if (asset.anchorCrown) assert(foliage > 0, `${tier.file}: living tree retains foliage`);
     files++;
     bytes += data.length;

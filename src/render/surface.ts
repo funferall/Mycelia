@@ -23,7 +23,9 @@ const TREE_FORMS: Record<string, readonly AssetId[]> = {
   birch: ['tree.birch-single', 'tree.birch-twin', 'tree.birch-leaning'],
   hemlock: ['tree.hemlock-full', 'tree.hemlock-young', 'tree.hemlock-windswept'],
 };
-function treeAsset(tree: { species: string; seed: number }): AssetId | undefined {
+function treeAsset(tree: { species: string; seed: number; burned?: unknown }): AssetId | undefined {
+  // A tree the fire killed stands as its species' charred snag.
+  if (tree.burned && TREE_FORMS[tree.species]) return `tree.${tree.species}-charred` as AssetId;
   const forms = TREE_FORMS[tree.species];
   return forms?.[(mulberry32(tree.seed ^ 0x3f0a)() * forms.length) | 0];
 }
@@ -402,12 +404,15 @@ export class SurfaceForest {
     if (!this.assets) return;
     const id = treeAsset(entry.tree);
     if (!id) return;
+    // A different model (a burned tree becoming its charred snag), not just a
+    // different tier of the same one.
+    const swapped = entry.assetId !== null && entry.assetId !== id;
     entry.assetId = id;
     // Resolve before cloning: a request that would fall back to the tier
     // already on screen must not build and throw away a copy of it.
     const available = this.assets.resolveTier(id, tier);
     if (available === null) return;
-    if (entry.model && entry.model.tier === available) return;
+    if (entry.model && entry.model.tier === available && !swapped) return;
     const model = this.assets.instance(id, entry.tree.height * (0.7 + entry.tree.maturity * 0.5), available);
     if (!model) return;
     // A tier swap changes geometry only: the placed copy keeps the exact
@@ -415,9 +420,13 @@ export class SurfaceForest {
     // never moves it or pops its roots out of the soil.
     const previous = entry.model;
     if (previous) {
-      model.object.position.copy(previous.object.position);
-      model.object.quaternion.copy(previous.object.quaternion);
-      model.object.scale.copy(previous.object.scale);
+      // A new model keeps its own fit to the tree; only a tier swap of the
+      // same model copies the placed transform.
+      if (!swapped) {
+        model.object.position.copy(previous.object.position);
+        model.object.quaternion.copy(previous.object.quaternion);
+        model.object.scale.copy(previous.object.scale);
+      }
       entry.group.remove(previous.object);
       releaseInstance(previous);
     } else {
@@ -608,6 +617,9 @@ export class SurfaceForest {
         leanToward(v.group, wind.direction, wind.storm * (0.1 + buffet) * unfold);
       }
       const dim = 0.48 + blend * 0.52;
+      // The fire's kill: swap to the charred snag the moment it is recorded.
+      if (v.tree.burned && v.assetId && !v.assetId.endsWith('-charred')) this.dress(v, v.lod);
+      const charred = v.assetId?.endsWith('-charred') ?? false;
       if (v.model) {
         // Authored foliage takes the season's colour; bark keeps the artist's
         // and only browns as the tree's health falls.
@@ -627,7 +639,9 @@ export class SurfaceForest {
           else tint.material.color.copy(leaf).lerp(DEAD_COLOR, 1 - health).multiplyScalar(dim);
         }
         for (const tint of v.model.wood) {
-          if (v.tree.burned) tint.material.color.copy(CHAR_WOOD).multiplyScalar(dim);
+          // A charred model carries its own char, scorch and ember colours.
+          if (charred) tint.material.color.copy(tint.base).multiplyScalar(dim);
+          else if (v.tree.burned) tint.material.color.copy(CHAR_WOOD).multiplyScalar(dim);
           else if (v.tree.parched) tint.material.color.copy(tint.base).lerp(BLEACHED_WOOD, 0.75).multiplyScalar(dim);
           else tint.material.color.copy(tint.base).lerp(DEAD_COLOR, (1 - health) * 0.7).multiplyScalar(dim);
         }

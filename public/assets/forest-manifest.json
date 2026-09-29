@@ -967,6 +967,180 @@
           "bytes": 22896
         }
       ]
+    },
+    {
+      "id": "tree.oak-charred",
+      "variant": "charred",
+      "species": "oak",
+      "form": "charred",
+      "generator": "tools/make-fire-assets.py",
+      "lods": [
+        {
+          "file": "trees/oak-charred.glb",
+          "triangles": 851,
+          "maxTriangles": 4000,
+          "bytes": 50544
+        },
+        {
+          "file": "trees/oak-charred-lod1.glb",
+          "triangles": 478,
+          "maxTriangles": 2400,
+          "bytes": 30480
+        },
+        {
+          "file": "trees/oak-charred-lod2.glb",
+          "triangles": 296,
+          "maxTriangles": 1200,
+          "bytes": 19628
+        }
+      ],
+      "anchorCrown": [
+        -0.39649,
+        8.1,
+        -0.08705
+      ]
+    },
+    {
+      "id": "tree.birch-charred",
+      "variant": "charred",
+      "species": "birch",
+      "form": "charred",
+      "generator": "tools/make-fire-assets.py",
+      "lods": [
+        {
+          "file": "trees/birch-charred.glb",
+          "triangles": 954,
+          "maxTriangles": 4000,
+          "bytes": 56204
+        },
+        {
+          "file": "trees/birch-charred-lod1.glb",
+          "triangles": 552,
+          "maxTriangles": 2400,
+          "bytes": 34296
+        },
+        {
+          "file": "trees/birch-charred-lod2.glb",
+          "triangles": 313,
+          "maxTriangles": 1200,
+          "bytes": 20228
+        }
+      ],
+      "anchorCrown": [
+        0.75937,
+        9.45,
+        1.35178
+      ]
+    },
+    {
+      "id": "tree.hemlock-charred",
+      "variant": "charred",
+      "species": "hemlock",
+      "form": "charred",
+      "generator": "tools/make-fire-assets.py",
+      "lods": [
+        {
+          "file": "trees/hemlock-charred.glb",
+          "triangles": 1338,
+          "maxTriangles": 4000,
+          "bytes": 74844
+        },
+        {
+          "file": "trees/hemlock-charred-lod1.glb",
+          "triangles": 604,
+          "maxTriangles": 2400,
+          "bytes": 37928
+        },
+        {
+          "file": "trees/hemlock-charred-lod2.glb",
+          "triangles": 424,
+          "maxTriangles": 1200,
+          "bytes": 26704
+        }
+      ],
+      "anchorCrown": [
+        0.0,
+        9.1,
+        -0.0
+      ]
+    },
+    {
+      "id": "prop.charred-log-a",
+      "generator": "tools/make-fire-assets.py",
+      "height": 0.9511,
+      "lods": [
+        {
+          "file": "props/charred-log-a.glb",
+          "triangles": 416,
+          "maxTriangles": 2000,
+          "bytes": 23620
+        }
+      ]
+    },
+    {
+      "id": "prop.charred-log-b",
+      "generator": "tools/make-fire-assets.py",
+      "height": 1.2817,
+      "lods": [
+        {
+          "file": "props/charred-log-b.glb",
+          "triangles": 414,
+          "maxTriangles": 2000,
+          "bytes": 24836
+        }
+      ]
+    },
+    {
+      "id": "prop.charred-stump",
+      "generator": "tools/make-fire-assets.py",
+      "height": 1.2714,
+      "lods": [
+        {
+          "file": "props/charred-stump.glb",
+          "triangles": 250,
+          "maxTriangles": 2000,
+          "bytes": 16256
+        }
+      ]
+    },
+    {
+      "id": "prop.ember-bed",
+      "generator": "tools/make-fire-assets.py",
+      "height": 0.2503,
+      "lods": [
+        {
+          "file": "props/ember-bed.glb",
+          "triangles": 518,
+          "maxTriangles": 2000,
+          "bytes": 39632
+        }
+      ]
+    },
+    {
+      "id": "understory.fireweed",
+      "generator": "tools/make-fire-assets.py",
+      "height": 1.3605,
+      "lods": [
+        {
+          "file": "understory/fireweed.glb",
+          "triangles": 600,
+          "maxTriangles": 2000,
+          "bytes": 29672
+        }
+      ]
+    },
+    {
+      "id": "understory.ash-bed",
+      "generator": "tools/make-fire-assets.py",
+      "height": 0.06,
+      "lods": [
+        {
+          "file": "understory/ash-bed.glb",
+          "triangles": 174,
+          "maxTriangles": 2000,
+          "bytes": 12756
+        }
+      ]
     }
   ]
 }

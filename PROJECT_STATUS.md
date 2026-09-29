@@ -507,7 +507,7 @@ Ecological references supporting this direction:
 | TECH-03 | Partial | Summon storm: shared fruiting race and directional colonization | Implemented 28 September: `storm-crown` capstone (Fruiting branch; 300s age, a completed fruiting, Mineral weave, two bonds); region-owned idle/warning/active/recovery lifecycle in `RegionalMatch` (60s warning, 45s storm, 180s recovery; 80C/12W/6N cost), direction locked at announcement; warning blooms are held and released on arrival (dead parents forfeit them); each storm bloom funds up to three paid, independent downwind daughters; the rival banks, fruits and colonizes on the same wind; warm storm rain permits fruiting through frost; "Continue growing" replaces the two-bloom stop. UI: `src/ui/storm.ts` picker with "wind blows toward", map preview, countdown and live-region announcements. Graphics: `src/render/storm.ts` (delegated to Sonnet 5.5, extended by Claude) slate front, cloud bands, a differential-rotation spiral vortex shader over the summoning colony, heavy slanted rain, forked lightning ribbons with a stage-light flash (none under reduced motion), and amber spore trails, at most six draws. Playable trees lean and buffet downwind; background trees bend in the vertex shader (stone and logs stay rigid). Windfall: during the active storm each mature tree has a seeded chance to be thrown down (`STORM.fallRate` 0.0012/s, scaled by maturity and weakness; at most two per stand per storm); it dies, topples downwind in view and draws a strike; every bond it held is torn and the bonded junction loses its stored carbon, water and nitrogen and is left damaged (health 0.35, mendable). **Flood (the storm's water half) implemented 28 September**, `src/sim/flood.ts`: the level rises through the active storm (peak after 30 s) and drains over 40 s of recovery. Every stand the stream crosses floods to 18 columns beyond the channel's edge; stands with no stream are high ground. Flooded soil (top 40 cm) is waterlogged and closed to growth (`SoilCell.flooded` in `passableAt`). Thin surface strands under 8 cm wash away; others drown; reinforced/thick cords hold and the root holds on. Trees are waterlogged by species (oak worst, birch barely; `Tree.drowned`). The peak's reach is silted as it drains (organic and nitrogen up). No rolls. Graphics: floor shader floodwater with foam edge and a fading silt stain, a swollen stream ribbon, and debris and foam carried downstream (`src/render/flood.ts`); the storm watch reports the flood and your drowned strands. Underground (`src/render/underground-weather.ts`, one plane per active stand): storm wetting front, percolation fingers and falling droplets; standing floodwater above flooded columns and airless soil with bubbles below. Gaps: nothing visible in the sky during the first half of the warning (distant strikes begin past 55%); flood does not carry spores or daughters downstream; spatial colonies' voxel soil is not flooded (only their stands' transect cells); the flood's floor water uses distance to the drawn course while the simulation uses distance to the transect channel, so edges can disagree slightly; no audio or camera response; flood/water half absent; balance untuned; hardware-GPU cost unmeasured; browser loop uses a synthetic late-game fixture. |
 | TECH-04 | Planned | Deeper tech tree: more branches, tiers and real choices | Requested 27 September: flesh out the six-adaptation tree into a branching path worth planning around. Grow each branch from two adaptations to three or more tiers, add forks and optional picks so two matches can research differently, add cross-branch synergies and branch capstones (the three existing powers become the first capstones; the region-scale ecological superpowers of `TECH-06` are the final ones), and decide whether learning stays free milestone-earned or gains an explicit research currency. Every new node needs a distinct ecological effect, a prerequisite rule, an icon and balance coverage; state must stay deterministic and survive promotion/spore founding exactly as the six current adaptations do. The opponent must be able to research the same tree (`MAP-16`, `ADV-05`). No new adaptation content exists yet; the plan is specified below. |
 | TECH-05 | Partial | Organic tech-tree presentation: a real fungal network | Requested 27 September. **Done 29 September:** twelve user-supplied icons, one per adaptation and power (`public/assets/icons/<id>.webp`, 256 px WebP resized from 1024 px transparent PNG masters kept outside the repository, 392 KB in total). The dialog is now icon tiles with names, joined by stems in three branch columns. Crown adaptations are drawn larger. State is shown by the tile: locked is dimmed grey, ready glows amber (still under reduced motion), learned is full colour with a green rim. Each branch ends in a power chip. The effect, requirement and state live in a single popover (`TechPopover` in `src/ui/evolution.ts`) shown on hover or keyboard focus, placed beside the icon; the tile's accessible name carries the state. Side-panel powers are icon chips showing only Invoke or a live timer, with the same popover. The storm, wildfire and drought panel headings carry their crown icons. Remaining: the branching fungal-network drawing (the colony body as root, hyphae to nodes, powers as fruiting bodies) and exact effect numbers in the popover. |
-| TECH-06 | Partial | Ecological superpowers: flood/storm, drought and wildfire | Storm is `TECH-03`. All three powers now exist. **Drought implemented 28 September**: `parch-crown` capstone (Exchange, after Mineral weave; 300 s age, three living bonds, 60 water banked). `src/sim/drought.ts`: 70 C + 6 N; 40 s heat warning, 90 s without rain (full severity after 25 s), 60 s recovery with relief rain, 150 s cooldown; no direction and no rolls, water decides. Rainfall falls to 0.03 region-wide (water table drops through the ordinary moisture model) and an explicit 0.25 s-beat drying pass parches topsoil away from the stream; banks stay damp. Unfed trees lose health by dryness, species root depth (hemlock worst, oak best), maturity and a per-tree seed; bonded trees drink from their junction and hold; stream-side roots are safe; dead trees stand bleached (`Tree.parched`). Shallow strands in parched soil lose water and wither unless resupplied; deep, banked and root survive. No fruiting without rain. Storm and drought exclude each other; a fire may be kindled into a drought and burns hotter because it judges soil moisture. Graphics: Voronoi cracked, bleached floor away from water; wilting/sagging/thinning background crowns; bleached leafless dead trees; the stream narrows to 25% width; pale glare and dust haze; `src/render/drought.ts` dust motes and three dust devils (1 draw). UI: `src/ui/drought.ts` refuge map, countdown, fed/lost/withered watch. **Wildfire implemented 28 September** (user-requested as the third). `ember-crown` capstone (Resilience, after Cord memory; 300 s age and 30 connected strands deeper than 16 cm). `src/sim/wildfire.ts`: 90 C + 8 N; 45 s warning, 70 s burn, 120 s aftermath, 150 s cooldown; one straight front crosses the whole region toward the chosen direction; storm and fire exclude each other. Everything is judged once, when the front reaches it, from the fire's own seed, and stamped with the exact arrival time. Crowns burn with odds by relative soil dampness (25-100%; stream banks and soil at 0.62+ are refuges); snags always burn unless soaked; burned trees die, bonds end, ash enriches the soil. Strands under 6 cm burn unless damp, reinforced/thick or the root; under 16 cm they are singed (health, half carbon); deeper are untouched. Fruiting bodies in the path burn with their reserve. The rival burns by the same rules. Topsoil along each transect turns to ash (organic x0.35, nitrogen up); burned stands fruit in any weather through the aftermath. Graphics: floor shader char/ember band/ash/green flush from the simulation's own front; background trees char, drop leaves in clumps and glow in the band; playable burned trees go black and lose their crowns; `src/render/wildfire.ts` flames, smoke and embers (3 draws); amber stage light. UI: `src/ui/wildfire.ts` picker with arrival-time map, countdown and loss watch. Underground (all powers, `src/render/underground-weather.ts`): fire heat glowing up to 20 cm under the passing front with an ash crust behind it; drought a pale dry front sinking up to 24 cm, sparing stream banks, with cracks opening into it. Gaps (drought): the rival does not respond; spatial colonies dry only through the soil volume's rainfall, not the explicit pass; unstepped stands rewet toward the moisture model's equilibrium, which is drier than their generated start; no sound. Gaps (all): flood implemented as the storm's water half (see `TECH-03`); no sound; the rival does not respond to the warning; spatial-colony stands get no ash flush and no voxel-soil ash; background-tree burn is a presentation hash (~70%), not the simulation's roll; balance untuned; hardware-GPU cost unmeasured. |
+| TECH-06 | Partial | Ecological superpowers: flood/storm, drought and wildfire | Storm is `TECH-03`. All three powers now exist. **Drought implemented 28 September**: `parch-crown` capstone (Exchange, after Mineral weave; 300 s age, three living bonds, 60 water banked). `src/sim/drought.ts`: 70 C + 6 N; 40 s heat warning, 90 s without rain (full severity after 25 s), 60 s recovery with relief rain, 150 s cooldown; no direction and no rolls, water decides. Rainfall falls to 0.03 region-wide (water table drops through the ordinary moisture model) and an explicit 0.25 s-beat drying pass parches topsoil away from the stream; banks stay damp. Unfed trees lose health by dryness, species root depth (hemlock worst, oak best), maturity and a per-tree seed; bonded trees drink from their junction and hold; stream-side roots are safe; dead trees stand bleached (`Tree.parched`). Shallow strands in parched soil lose water and wither unless resupplied; deep, banked and root survive. No fruiting without rain. Storm and drought exclude each other; a fire may be kindled into a drought and burns hotter because it judges soil moisture. Graphics: Voronoi cracked, bleached floor away from water; wilting/sagging/thinning background crowns; bleached leafless dead trees; the stream narrows to 25% width; pale glare and dust haze; `src/render/drought.ts` dust motes and three dust devils (1 draw). UI: `src/ui/drought.ts` refuge map, countdown, fed/lost/withered watch. **Wildfire implemented 28 September** (user-requested as the third). `ember-crown` capstone (Resilience, after Cord memory; 300 s age and 30 connected strands deeper than 16 cm). `src/sim/wildfire.ts`: 90 C + 8 N; 45 s warning, 70 s burn, 120 s aftermath, 150 s cooldown; one straight front crosses the whole region toward the chosen direction; storm and fire exclude each other. Everything is judged once, when the front reaches it, from the fire's own seed, and stamped with the exact arrival time. Crowns burn with odds by relative soil dampness (25-100%; stream banks and soil at 0.62+ are refuges); snags always burn unless soaked; burned trees die, bonds end, ash enriches the soil. Strands under 6 cm burn unless damp, reinforced/thick or the root; under 16 cm they are singed (health, half carbon); deeper are untouched. Fruiting bodies in the path burn with their reserve. The rival burns by the same rules. Topsoil along each transect turns to ash (organic x0.35, nitrogen up); burned stands fruit in any weather through the aftermath. Graphics: floor shader char/ember band/ash/green flush from the simulation's own front; background trees char, drop leaves in clumps and glow in the band; playable burned trees go black and lose their crowns; `src/render/wildfire.ts` flames, smoke and embers (3 draws); amber stage light. UI: `src/ui/wildfire.ts` picker with arrival-time map, countdown and loss watch. Underground (all powers, `src/render/underground-weather.ts`): fire heat glowing up to 20 cm under the passing front with an ash crust behind it; drought a pale dry front sinking up to 24 cm, sparing stream banks, with cracks opening into it. Gaps (drought): the rival does not respond; spatial colonies dry only through the soil volume's rainfall, not the explicit pass; unstepped stands rewet toward the moisture model's equilibrium, which is drier than their generated start; no sound. Gaps (all): flood implemented as the storm's water half (see `TECH-03`); no sound; the rival does not respond to the warning; spatial-colony stands get no ash flush and no voxel-soil ash; background-tree burn is a presentation hash (~70%), not the simulation's roll; balance untuned; hardware-GPU cost unmeasured. Next: "Major plan: wildfire v2, fire that reads the network" under Current priorities (hydration-based ignition from mycorrhizal water, charred snags and logs as a nutrient race, tree fires in sizes, a Soak order and risk overlay). |
 | AUDIO-01 | Partial | Generative soundscape and power themes | `src/audio/soundscape.ts` is a generative score in harmonic-series tuning on A1 (55 Hz): a breathing pad crossfading through five root fields every 36–56 s, sparse FM glass bells, formant "breath", a bond-driven heartbeat pulse, a 7 s synthetic hall, wind, thunder after lightning and fire crackle. It is muffled underground and changes with season, bonds, storm, fire and drought. Cues (grow, bond, fruit) are retuned into the score. `src/audio/themes.ts` gives the storm, wildfire and drought their own themes in the same tuning. Each theme's bus follows its power's intensity (about a 10 s fade); the regular score ducks to 30% beneath it; held voices stop once a theme has faded. `sound.preview(id)` plays a theme without the power, for listening. The user listened to the regular score in game and accepted it; the themes have not yet been heard. Remaining: run `test:score-view` and `tools/record-score.mjs`, listen to each theme, a volume control, and verify suspension, restart and audio failures on speakers and headphones. |
 | A11Y-01 | Partial | Reduced motion and keyboard access | Direct view snapping, ambient-motion control, focus outlines, keyboard view/pan/zoom/orders, pause, and notes controls exist. Current evolution browser checks verify modal focus return, world-shortcut isolation, native Space on disclosures without awakening/pausing, and resource details on focus. Remaining: complete-game focus order, canvas alternatives, and color-independent world-state cues. |
 | PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960×640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles. A current fast SwiftShader browser sample advanced 30 seconds of a two-colony 3D simulation in 5.61 seconds without rendering those ticks. Remaining: hardware-GPU measurements, a real rendered 4× mature-match budget, network-ceiling budgets and byte-accurate GPU memory. |
@@ -830,6 +830,301 @@ opponent mycelium in a different starting stand than the player. Derive both
 choices from the match seed so `MAP-13` replay stays exact, and keep `MAP-09`'s
 reachability and water-in-reach guarantees for whatever stand is drawn.
 Recorded as `MAP-16` (Planned); no implementation exists yet.
+
+### Major plan: wildfire v2, fire that reads the network (written 29 September; W4 assets done 29 September)
+
+**Progress, 29 September:**
+
+- **W4 assets (done).** `tools/make-fire-assets.py` builds nine assets with
+  gentle LODs:
+  - charred oak, birch and hemlock (variant `charred`, no foliage);
+  - two charred logs, a charred stump and an ember bed;
+  - fireweed and an ash bed.
+- **In the game.** A playable tree the fire kills now swaps to its species'
+  charred snag (`treeAsset` / `dress` in `src/render/surface.ts`).
+- **Still to do:**
+  - the logs, stump, ember bed, fireweed and ash bed are registered but not
+    yet placed: they arrive with W2 remains and W5 effects;
+  - W1 to W3, W5 and W6 have not started.
+
+
+A self-contained plan to deepen the existing Ember crown wildfire (`TECH-06`).
+It is an upgrade, not a first build: v1 has been playable since
+28 September. Update `TECH-06` as each phase lands.
+
+#### What v1 does today
+
+- **Front.** `src/sim/wildfire.ts` runs one straight front across the region
+  in the kindler's direction. Timings: 45 s warning, 70 s burn (`FIRE.band`
+  24 units), 120 s aftermath, 150 s cooldown. Cost is 90 carbon and 8
+  nitrogen. Everything is judged once, from the fire's seed, when the front
+  reaches it.
+- **Which trees burn.** `burnTree` rolls a crown against the soil moisture at
+  the tree's roots only. The chance runs from 25% to 100%. Stream banks and
+  soil at 0.62 or wetter are refuges, and snags always burn unless soaked.
+- **Tree outcome.** A burned tree becomes `dead` with `burned: { at }`. Its
+  bonds end, and ash adds organic matter and nitrogen to its cell.
+- **Network.** Strands shallower than 6 cm burn, those shallower than 16 cm
+  are singed, and cords and the root survive. Fruiting bodies in the path
+  burn.
+- **Aftermath.** The topsoil turns to ash, and burned stands may fruit in any
+  weather through the aftermath.
+- **Graphics.**
+  - The floor chars and glows.
+  - Background crowns char through a presentation hash of about 70%.
+  - A playable burned tree keeps its living model, recoloured black, with its
+    foliage collapsed.
+  - `src/render/wildfire.ts` draws one flame wall, smoke and embers (3 draws).
+- **Gaps this plan closes:**
+  1. Whether a tree burns ignores the mycorrhizal network. The player's water
+     supply to a tree (`tree.waterReceived`, set in `drawTreeDemand`) plays no
+     part, so fire cannot reward caring for partners.
+  2. Burned trees leave no remains: no charred snag, no fallen charred log,
+     and no slow nutrient release to fight over.
+  3. There is one kind of flame. There are no torching trees, ground fires or
+     smouldering remains, and fires have no sizes.
+  4. The player has no preparation or counterplay during the warning beyond
+     growing deep. Fire is a coin flip, not a plan.
+
+#### Design goals
+
+- **Water is fire armour.** A tree the network keeps well watered resists
+  fire. A tree nobody feeds is dry kindling. The strongest defence is the
+  mycorrhizal bond itself.
+- **Fire leaves resources, not just loss.** Charred snags and logs are
+  nutrient banks that decay over minutes. Whoever reaches them profits: the
+  player's hyphae through uptake, the saprotroph rival by decomposing.
+- **The kindler plans and the world answers.** Choosing direction and
+  timing, hydrating the trees you want to keep, and letting the fire clear
+  rival-held and unsupplied stands should be a real strategy with real risk.
+- **Deterministic and conserving.** As now, every outcome is judged once, at
+  the front's arrival, from the fire's seed. Nutrients released from remains
+  come from the burned tree's recorded biomass, not from nothing.
+
+#### Mechanics
+
+**M1. Tree hydration (new state, simulation-owned).**
+
+- **The state.** `Tree.hydration`, from 0 to 1, is a smoothed measure of how
+  well watered the tree is. Update it each tree step as an exponential moving
+  average with a time constant of about 40 s, so a last-second watering does
+  not fully armour a tree.
+- **The blend:** `hydration = 0.6 * bondWater + 0.4 * rootSoil`.
+  - `bondWater` is the averaged `tree.waterReceived` from all its bonds. It is
+    0 when unbonded, and a severed or starving bond decays it.
+  - `rootSoil` is soil water at the tree's rooting depth (not only 6 cm), plus
+    `streamNear * 0.5`.
+- **Drought feeds it.** Drought lowers `rootSoil`, and a parched tree is
+  `hydration` 0 (a drought then a fire is the deadly combination, as now).
+- **Readable in both views.** The tree record shows it, and the risk overlay
+  (U1) shows it during the warning.
+
+**M2. Fire intensity at the tree.**
+
+- **Formula:** `intensity = baseIntensity * fuel * dryness * wind`.
+  - `fuel`: dead trees and snags within 12 units, fallen logs, and litter or
+    organic matter in the top 5 soil rows.
+  - `dryness`: 1 minus the averaged `rootSoil` of the stand, with a bonus
+    under drought.
+  - `wind`: aligned with the front direction.
+- **Firebreaks.** Intensity falls where the front has just crossed
+  well-hydrated trees (the mean hydration of trees crossed in the last 20
+  units). This makes a green belt of watered trees a real firebreak
+  downstream: fire weakens as it crosses cared-for ground.
+
+**M3. The outcome for each tree**, rolled once, at arrival, from the seed.
+
+- **Species flammability** (bark and crown):
+  - hemlock 1.25: thin bark and low branches, it torches.
+  - birch 1.1: papery bark.
+  - oak 0.7: thick bark.
+  - Maturity lowers it a little (thicker bark); low health raises it.
+- **Burn chance:** `p = clamp(speciesFlam * intensity * (1 - hydration)^1.6, 0, 0.97)`.
+  Refuges (stream banks, soaked soil) stay at 0.
+- **Four outcomes:**
+  - **Spared** (no mark).
+  - **Scorched:** the ground fire passes. The tree loses 0.2 to 0.4 health,
+    gains a bark scar (`Tree.scorched`), keeps its bonds and recovers if
+    supplied.
+  - **Torched:** a crown fire. The tree dies as a charred snag, its bonds end,
+    and `Tree.burned = { at, remains: 'snag', biomass }`.
+  - **Torched and felled:** at high intensity with low hydration, the snag
+    falls within 20 to 60 s as a charred log, oriented downwind
+    (`remains: 'log'`).
+- **Existing dead trees and snags** always burn unless soaked, and become
+  charred logs or ash (as now).
+
+**M4. Charred remains as a resource (new state).**
+
+- **The ledger.** `World.remains` holds each charred snag or log:
+  `{ id, gx, kind, biomass, nutrient, decay }`. `biomass` comes from the
+  tree's height and maturity. Remains decay over 4 to 8 minutes.
+- **Release.** Each second they release organic matter and nitrogen into the
+  soil cells around them, down to 12 cm. This is a slow pulse, larger for
+  logs, and it is conserved: the total released equals the stored nutrient.
+- **The race.** Player hyphae in those cells take the nitrogen up normally.
+  The saprotroph rival decomposes remains 2x faster where its strands touch
+  them and gets the whole remaining pulse, so the fire creates a race for the
+  logs.
+- **Fruiting.** Fungal fruiting on ash beds costs about 25% less surplus in
+  the aftermath. This is the pyrophilous flush, a real-world morel analogue,
+  and it extends the existing any-weather rule.
+- **Stands.** Remains count as deadwood for the stand's community look.
+  Snags stand until they fall or decay; logs lie until decayed, then leave a
+  low charred stump (`remains: 'stump'`) as a marker.
+
+**M5. Network damage (keep v1, tune).**
+
+- **Unchanged:** strands shallower than 6 cm burn, and those shallower than
+  16 cm are singed.
+- **Now scaled by intensity:** a low-intensity pass singes rather than kills.
+- **Firebreak strands:** strands on a watered route (the `supply` flag in
+  transport) carry water and resist like damp soil, a small bonus.
+- **The kindler:** gets no immunity, as now.
+
+**M6. Spotting (optional, phase W5).**
+
+- At high intensity the front throws embers up to 30 units ahead. These are
+  seeded spot fires that may ignite dry fuel early (a dead tree or a dry
+  unfed tree). They make the fire less predictable, but only where the
+  ground is dry.
+- Hydrated trees are immune to spotting.
+
+#### Strategy the player should find
+
+- **Protect.**
+  - During the 45 s warning, the new order **Soak** (U2) directs water along
+    routes to chosen bonded trees, raising their hydration.
+  - Deep cords survive regardless.
+  - A well-watered stand stays green, and its trees keep counting toward the
+    regional hold (`CORE-05`).
+- **Clear.**
+  - Aim the front through stands where the rival dominates, or where trees
+    are unsupplied.
+  - Burned trees end the rival's claims (once the rival has a domination
+    measure, `MAP-16` and `ADV-05`), and unfed trees clear into logs.
+  - The player then races the rival for the remains.
+- **Harvest.**
+  - Place strands near expected logs before the fire.
+  - Fruit cheaply on ash in the aftermath.
+  - Send spores from the flush.
+- **Risk.**
+  - Unsupplied bonded trees and shallow networks burn.
+  - A hold can break (`CORE-05`).
+  - Fire in a drought is far worse.
+  - The fire is shared with every colony.
+- **Rival response (ADV).** The rival AI should retreat shallow strands and
+  prioritise nearby logs. This can be minimal at first.
+
+#### Interface
+
+- **U1. Risk overlay during the warning (forest view).**
+  - Each playable tree shows a ring at its foot:
+    - green: likely spared or scorched;
+    - amber: at risk;
+    - red: likely torched.
+  - The ring comes from the same hydration, intensity and flammability terms,
+    evaluated without the random roll.
+  - The tree popover shows its hydration percentage and "fed by your network".
+  - The picker's arrival map shades the stands by expected loss.
+- **U2. The Soak order.**
+  - Available during the warning, and costs water. It marks up to 3 bonded
+    trees. Transport treats their routes as supply routes with fill to
+    capacity, as `supply` does now. Hydration rises over about 40 s, so
+    early action matters.
+  - Shown in the fire panel as "Soak partners (n/3)". A click on a crown in
+    the forest adds or removes it.
+- **U3. The loss watch.**
+  - Extend the existing watch with: trees torched, scorched and spared;
+    remains created; and the nutrients waiting in remains.
+  - Remains glow faintly in the forest when the colonies reveal is on.
+
+#### Art and effects (Blender, generous budgets)
+
+- **Charred trees**, one per species, each with 3 LODs, drawn after
+  `tools/make-forest-v3-assets.py`:
+  - `tree.oak-charred`: a blackened trunk with broken crown stubs and a
+    split, glowing seam;
+  - `tree.birch-charred`: peeled bark curls burned to black, with pale char
+    streaks;
+  - `tree.hemlock-charred`: a spike with scorched branch stubs.
+  - Manifest variant `charred`, with no foliage. The `check-forest-assets`
+    rule for `dead-hollow` extends to `charred`.
+- **Remains:** `prop.charred-log-a` and `prop.charred-log-b` (fissured, with
+  alligator-skin char), `prop.charred-stump`, and `prop.ember-bed` (glowing
+  coals, used during smouldering).
+- **Scorched living trees:** no new model. The bark takes a scar tint and the
+  lower trunk a char band (a shader on the existing tree materials).
+- **Aftermath:** `understory.fireweed` (pink spikes) and `understory.ash-bed`
+  (a pale grey patch), which appear on burned ground through the aftermath
+  and a season after.
+- **Fire effects, in sizes:**
+  - **Ground fire:** low flickering flame sheets along litter, for scorch and
+    spare outcomes.
+  - **Torching tree:** a column of flame up the crown, seconds long, then
+    smoke. Size scales with tree height and intensity.
+  - **Crown run:** the existing flame wall, modulated by `intensity` so weak
+    fronts are patchy.
+  - **Smouldering remains:** ember glow and a thin smoke plume on snags and
+    logs for 30 to 60 s.
+  - **Spot fires:** small points ahead of the front (M6).
+  - Pooled instanced sprites, ideally 2 draws for all tree fires and 1 for
+    smoulder. Budget checked with `npm run check:gpu`.
+- **Surface integration.**
+  - A torched tree swaps to its charred asset through `treeAsset`, at the
+    moment of the burn.
+  - A felled one animates over using the storm's fall code (`fallen`), then
+    swaps to a charred log.
+  - Background dressing keeps its shader char. It can optionally swap
+    decorations to charred variants by the same presentation hash.
+- **Audio:** a per-tree torch roar layer in the fire theme, and crackle
+  proportional to live burning trees.
+
+#### Phases (each ends green and committed)
+
+- **W1. Hydration and new ignition.**
+  - Add `Tree.hydration` and its update, M2 intensity and M3 outcomes.
+  - Headless tests:
+    - a fed tree with high hydration survives more often;
+    - scorched trees keep their bonds;
+    - determinism;
+    - refuges hold.
+  - Re-record the fire fixtures on purpose.
+- **W2. Remains and nutrient release.** Add `World.remains`, decay and
+  release (with a conservation test), felling to a log, the rival decomposing
+  faster, and the ash fruiting discount.
+- **W3. Strategy interface.** The U1 overlay, the U2 Soak order with tests
+  that it raises hydration, and the U3 watch.
+- **W4. Assets.** Charred trees (3 LODs), logs, stump, ember bed, fireweed
+  and ash bed, with `test:assets`, and the swap in `surface.ts`.
+- **W5. Effects.** Tree fires in sizes, smoulder, intensity-modulated flame
+  wall, and optional spotting (M6). Measure with `check:gpu`.
+- **W6. Balance and browser.** A played fire from the Ember crown in a
+  browser test (`test-wildfire-view` extended): kindle, soak, burn, remains,
+  flush. Then tune hydration weights and flammability so a well-fed network
+  keeps most of its partners and an unfed stand mostly burns.
+
+#### Constraints
+
+- **Deterministic:** fixed order, and one roll per tree per fire from the
+  fire seed. Hydration is state and is updated in step order.
+- **Conserving:** released nutrients equal each tree's stored biomass.
+- **Coexists with the existing powers:** storm and fire exclude each other;
+  drought makes fire worse.
+- **Tests:** follow the headless-module rules (no TypeScript parameter
+  properties, and add new modules to the hard-coded test lists).
+- **Budget:** fire effects must stay within `check:gpu` at 60 fps.
+
+#### Open questions (ask before the phase that needs them)
+
+- **Soak (W3):** cost and the partner limit (3?). Is it only during the
+  warning, or also during the burn?
+- **Fire under your own feet:** should the player's own well-fed trees ever
+  burn at full intensity, or is hydration a hard floor?
+- **Rival and remains (W2):** should the rival gain from remains strongly
+  enough to make fire risky to use near it?
+- **Background trees (W4):** should they also leave charred remains, or only
+  the playable ones?
 
 ### Tech effects: implemented behavior and remaining work
 
@@ -1927,6 +2222,41 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: wildfire v2 assets (`TECH-06`, `ASSET-02`)
+
+- **New generator:** `tools/make-fire-assets.py` (Blender 4.2). It imports the
+  v3 forest helpers and adds `char_trunk` (alligator checks),
+  `broken_limb` (splintered ends), `ember_seam`, `alligator_log`,
+  `glowing_end` and `lump`.
+- **Assets, triangles by LOD:**
+
+  | Asset | LOD0 / LOD1 / LOD2 |
+  |---|---|
+  | `tree.oak-charred` | 851 / 478 / 296 |
+  | `tree.birch-charred` | 954 / 552 / 313 |
+  | `tree.hemlock-charred` | 1,338 / 604 / 424 |
+  | `prop.charred-log-a` | 416 |
+  | `prop.charred-log-b` | 414 |
+  | `prop.charred-stump` | 250 |
+  | `prop.ember-bed` | 518 |
+  | `understory.fireweed` | 600 |
+  | `understory.ash-bed` | 174 |
+
+- **Contract:** opaque, non-emissive materials. The ember orange is a colour;
+  glow is left to the renderer.
+- **Checker:** `check-forest-assets` now treats `charred` like `dead-hollow`
+  (no foliage).
+- **Registry:** the ids are added to the `AssetId` union and `ASSETS`.
+- **Preview:** Cycles sheets rendered on the RTX 4060 were reviewed and
+  iterated once: the first pass had capped limb ends, floating birch strips,
+  checkerboard logs and bright ash.
+- `npm run test:assets`: pass, 59 assets and 101 GLBs, 3,544.6 KiB.
+- `npm run typecheck`: pass.
+- **GPU in-game capture** (`raven-wood`, four trees burned by a fixture): the
+  trees swap from `tree.oak-tall` / `tree.hemlock-young` to
+  `tree.oak-charred` / `tree.hemlock-charred`, standing in place among
+  living trees, with no browser errors.
 
 ### 29 September 2026: random starts, fresh forests, visible spore clouds, 4x pacing (`MAP-16`, `MAP-10`, `PERF-03`)
 

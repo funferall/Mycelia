@@ -66,6 +66,16 @@ export type AssetId =
   | 'understory.trillium'
   | 'understory.litter-autumn'
   | 'understory.litter-summer'
+  /** Wildfire v2: what a fire leaves, and what grows back. */
+  | 'tree.oak-charred'
+  | 'tree.birch-charred'
+  | 'tree.hemlock-charred'
+  | 'prop.charred-log-a'
+  | 'prop.charred-log-b'
+  | 'prop.charred-stump'
+  | 'prop.ember-bed'
+  | 'understory.fireweed'
+  | 'understory.ash-bed'
   /**
    * Reproductive bodies. The ids match `forest-manifest.json` exactly, so the
    * manifest's own tiers and triangle counts apply to them rather than being
@@ -137,6 +147,15 @@ export const ASSETS: readonly AssetSpec[] = [
   { id: 'understory.trillium', file: 'understory/trillium.glb', use: 'trillium patch' },
   { id: 'understory.litter-autumn', file: 'understory/litter-autumn.glb', use: 'autumn leaf litter' },
   { id: 'understory.litter-summer', file: 'understory/litter-summer.glb', use: 'summer leaf litter' },
+  { id: 'tree.oak-charred', file: 'trees/oak-charred.glb', use: 'oak killed standing by fire' },
+  { id: 'tree.birch-charred', file: 'trees/birch-charred.glb', use: 'birch killed standing by fire' },
+  { id: 'tree.hemlock-charred', file: 'trees/hemlock-charred.glb', use: 'hemlock killed standing by fire' },
+  { id: 'prop.charred-log-a', file: 'props/charred-log-a.glb', use: 'fallen charred log' },
+  { id: 'prop.charred-log-b', file: 'props/charred-log-b.glb', use: 'snapped charred log' },
+  { id: 'prop.charred-stump', file: 'props/charred-stump.glb', use: 'charred stump' },
+  { id: 'prop.ember-bed', file: 'props/ember-bed.glb', use: 'smouldering coals on ash' },
+  { id: 'understory.fireweed', file: 'understory/fireweed.glb', use: 'fireweed on burned ground' },
+  { id: 'understory.ash-bed', file: 'understory/ash-bed.glb', use: 'ash bed' },
   { id: 'fungus.spore-body', file: 'fungi/spore-body.glb', use: 'erupting primordium' },
   { id: 'fungus.fruitingBody', file: 'fungi/fruiting-body.glb', use: 'a rising fruiting body' },
   { id: 'fungus.fruiting-cluster', file: 'fungi/fruiting-cluster.glb', use: 'a bloom that has released its spores' },
