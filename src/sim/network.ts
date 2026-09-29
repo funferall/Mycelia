@@ -1203,6 +1203,11 @@ export function burnNode(net: Network, world: NetworkWorld, node: HyphaNode): vo
   killNode(net, world, node, 1);
 }
 
+/** A strand lysed in a fight with another network; see `src/sim/contact.ts`. */
+export function lyseNode(net: Network, world: NetworkWorld, node: HyphaNode): void {
+  killNode(net, world, node, 0.5);
+}
+
 /** Remove a node, converting its body into soil organic matter. */
 function killNode(net: Network, world: NetworkWorld, node: HyphaNode, organicReturn: number): void {
   node.alive = false;

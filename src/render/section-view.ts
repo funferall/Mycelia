@@ -12,7 +12,7 @@
  * is, and a rebase moves both together.
  */
 import * as THREE from 'three';
-import { GRID, PLAYER_PALETTE } from '../sim/content';
+import { GRID, PLAYER_PALETTE, RIVAL_PALETTE } from '../sim/content';
 import type { Vec3 } from '../sim/spatial';
 import type { ClippedEdge, SectionClip, SectionSpec } from './sections';
 import { soilColour, type SoilLook } from './soil';
@@ -20,6 +20,9 @@ import { soilColour, type SoilLook } from './soil';
 /** Amber for the living section, dimmer brown for a severed remnant. */
 const LIVE = new THREE.Color(PLAYER_PALETTE.core[0], PLAYER_PALETTE.core[1], PLAYER_PALETTE.core[2]);
 const SEVERED = new THREE.Color(0.62, 0.44, 0.22);
+/** Another owner's strands, drawn so a front reads at a glance (contact war). */
+const ENEMY = new THREE.Color(RIVAL_PALETTE.core[0], RIVAL_PALETTE.core[1], RIVAL_PALETTE.core[2]);
+const ENEMY_SEVERED = new THREE.Color(0.42, 0.5, 0.4);
 const FRAME = new THREE.Color(0.72, 0.65, 0.48);
 const MARK = new THREE.Color(PLAYER_PALETTE.glow[0], PLAYER_PALETTE.glow[1], PLAYER_PALETTE.glow[2]);
 /** How far a continuation mark reaches beyond the slab, in region units. */
@@ -103,13 +106,15 @@ export class SectionView {
   }
 
   /** The clipped strands of the current section. */
-  sync(clip: SectionClip): void {
+  sync(clip: SectionClip, enemy?: SectionClip): void {
     const positions: number[] = [];
     const colours: number[] = [];
-    for (const edge of clip.visible) {
+    const theirs = new Set(enemy?.visible ?? []);
+    const all = enemy ? [...clip.visible, ...enemy.visible] : clip.visible;
+    for (const edge of all) {
       const from = this.toScene(edge.from);
       const to = this.toScene(edge.to);
-      const colour = edge.connected ? LIVE : SEVERED;
+      const colour = theirs.has(edge) ? (edge.connected ? ENEMY : ENEMY_SEVERED) : edge.connected ? LIVE : SEVERED;
       // A severed remnant is a double line, so "this piece is cut off" is
       // legible without depending on colour alone.
       const offsets = edge.connected ? [0] : [-0.4, 0.4];
@@ -133,8 +138,8 @@ export class SectionView {
     // the simulation's own; the dots are a drawing of them, not new state.
     const nodePositions: number[] = [];
     const nodeColours: number[] = [];
-    for (const edge of clip.visible) {
-      const colour = edge.connected ? LIVE : SEVERED;
+    for (const edge of all) {
+      const colour = theirs.has(edge) ? (edge.connected ? ENEMY : ENEMY_SEVERED) : edge.connected ? LIVE : SEVERED;
       for (const point of [edge.from, edge.to]) {
         const scene = this.toScene(point);
         nodePositions.push(scene.x, scene.y, scene.z);

@@ -49,6 +49,10 @@ import { StormUI } from './ui/storm';
 import { StormView } from './render/storm';
 import { FireView } from './render/wildfire';
 import { FireUI } from './ui/wildfire';
+import { ContactBar } from './ui/contact';
+import { ContactEffects } from './render/contact';
+import { CHEMICALS, type Chemical } from './sim/contact';
+import { regionNetworks } from './sim/wildfire';
 import { FLOOR_DROUGHT, FLOOR_FIRE, FLOOR_FLOOD } from './render/forest-floor';
 import { DroughtView } from './render/drought';
 import { DroughtUI } from './ui/drought';
@@ -202,6 +206,11 @@ export class Game {
   private readonly stormView: StormView;
   private readonly fireView: FireView;
   private readonly fireUI: FireUI;
+  /** Contact war: the chemical hotbar, the soil effects, and where the cursor rests. */
+  private readonly contactBar: ContactBar;
+  private readonly contactFx = new ContactEffects();
+  private readonly hover = { x: -1, y: -1 };
+  private standPlane: { standId: number; alongIsX: boolean; offset: number; fixed: number } | null = null;
   private readonly droughtView: DroughtView;
   private readonly droughtUI: DroughtUI;
   /** Presentation-eased drought severity, so cracks open and close smoothly. */
@@ -327,6 +336,8 @@ export class Game {
     this.stormView.group.position.copy(this.regionToScenePoint({x:stormWidth/2,y:stormDepth/2,z:this.region.heightAt(stormWidth/2,stormDepth/2)}));
     this.stage.scene.add(this.stormView.group);
     this.fireUI = new FireUI(this.match, text => this.ui.setNote(text));
+    this.contactBar = new ContactBar(() => this.jumpToFront());
+    this.stage.scene.add(this.contactFx.group);
     this.fireView = new FireView(stormWidth, stormDepth,
       (x, y) => this.regionToScenePoint({ x, y, z: this.region.heightAt(x, y) }),
       this.stage.quality.id === 'fast');
@@ -1052,8 +1063,9 @@ export class Game {
   private refreshSectionClip(): void {
     if (!this.spatial || !this.sectionView || !this.section) return;
     const clip = clipEdges(this.spatial.region, this.section.spec, this.spatial.colonyEdges() as RevealEdge[]);
+    const enemy = clipEdges(this.spatial.region, this.section.spec, this.enemyEdges());
     this.sectionView.setSection(this.section.spec);
-    this.sectionView.sync(clip);
+    this.sectionView.sync(clip, enemy);
     this.reveal?.setSlice(this.section.spec);
   }
 
@@ -1971,6 +1983,7 @@ export class Game {
     this.syncClusterControls();
     this.stormUI.update(dt);
     this.fireUI.update(dt);
+    this.updateContact(dt);
     this.droughtUI.update(dt);
     // An outcome takes the sheet; the survey is a page of it, not a rival.
     if (this.sim.outcome !== 'playing') this.survey.dismiss();
@@ -2693,6 +2706,8 @@ export class Game {
       }
     });
 
+    // Chemicals are aimed wherever the cursor rests, pressed or not.
+    canvas.addEventListener('pointermove', (event) => { this.hover.x = event.clientX; this.hover.y = event.clientY; });
     canvas.addEventListener('pointermove', (event) => {
       if (!this.pointerDown) return;
       const dx = event.clientX - this.lastX;
@@ -2763,6 +2778,10 @@ export class Game {
 
     window.addEventListener('keydown', (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      // Contact war: one key per chemical, aimed at the cursor; Z jumps to the front.
+      const chemical = ContactBar.chemicalFor(event.key);
+      if (chemical && !event.shiftKey && this.stage.rig.view === 'underground') { event.preventDefault(); this.castAtCursor(chemical); return; }
+      if (event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); this.jumpToFront(); return; }
       if (event.key.toLowerCase() === 'v') { event.preventDefault(); if (this.stage.rig.view === 'forest') this.descend(); else this.setView('forest'); }
       if (event.target === canvas && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
@@ -2834,6 +2853,101 @@ export class Game {
     this.raycaster.setFromCamera(this.pointer, this.stage.rig.camera);
     if (!this.raycaster.ray.intersectPlane(this.plane, this.hit)) return null;
     return { gx: this.hit.x + GRID.cols / 2, gy: GRID.rows / 2 - this.hit.y };
+  }
+
+  /** Every other owner's strands as section edges, so a front can be seen and aimed at. */
+  private enemyEdges(): RevealEdge[] {
+    const edges: RevealEdge[] = [];
+    for (const { net } of regionNetworks(this.match)) {
+      if (net.owner === 'player') continue;
+      for (const node of net.nodes) {
+        if (!node.alive || !node.spatial || node.parent < 0) continue;
+        const parent = net.nodes[node.parent];
+        if (!parent?.alive || !parent.spatial) continue;
+        edges.push({
+          key: `${net.colonyId ?? net.owner}:${node.id}`, parent: parent.id, child: node.id,
+          from: parent.spatial, to: node.spatial, thickness: node.thickness, reinforced: node.reinforced,
+          connected: node.connected, standId: node.standId, parentStandId: parent.standId,
+        });
+      }
+    }
+    return edges;
+  }
+
+  /** The regional point under the cursor in the underground view, section or stand. */
+  private contactPointAt(clientX: number, clientY: number): { x: number; y: number; z: number } | null {
+    if (this.stage.rig.view !== 'underground' || this.stage.rig.transitioning) return null;
+    if (this.section) return this.sectionPointAt(clientX, clientY);
+    const cell = this.gridAt(clientX, clientY);
+    if (!cell) return null;
+    return this.sim.world.regionalSoil?.pointAt(cell.gx - 0.5, cell.gy - 0.5) ?? null;
+  }
+
+  private castAtCursor(chemical: Chemical): void {
+    this.awaken();
+    const point = this.contactPointAt(this.hover.x, this.hover.y);
+    const result = point
+      ? this.match.contact.cast('player', chemical, point)
+      : { ok: false, message: `Aim ${CHEMICALS[chemical].name.toLowerCase()} at the soil.` };
+    this.contactBar.flash(chemical, result.ok);
+    this.ui.setNote(result.message);
+  }
+
+  /** Go to the busiest front the player is fighting on. */
+  private jumpToFront(): void {
+    const fronts = this.match.contact.frontsOf('player');
+    if (!fronts.length) { this.ui.setNote('No front: nothing of yours touches another network.'); return; }
+    const front = [...fronts].sort((a, b) => b.contacts - a.contacts)[0]!;
+    const stand = front.standId >= 0 ? this.match.stands[front.standId] : null;
+    const target = stand?.sim.hasColony ? front.standId : this.match.spatial?.originStandId;
+    if (target === undefined) { this.ui.setNote(`The front is in stand ${front.standId + 1}.`); return; }
+    if (target !== this.match.activeStandId || this.stage.rig.view !== 'underground') this.goToColony(target);
+    // Frame the front itself on the stand's transect.
+    const at = this.section ? null : this.contactToScene(front.centre);
+    if (at) this.stage.rig.focus(at.x, at.y, 70);
+    this.ui.setNote(`Front in stand ${front.standId + 1}: ${front.contacts} strands in contact. Aim with the cursor: Q W E, heavy A D C.`);
+  }
+
+  /**
+   * A regional point in the scene, as the current underground view draws it:
+   * on the open section's plane, or on the active stand's transect. Points the
+   * view cannot show (off the plane, another stand) are null.
+   */
+  private contactToScene(point: { x: number; y: number; z: number }): THREE.Vector3 | null {
+    if (this.section) {
+      const plane = this.section.spec.plane;
+      const off = plane.along === 'x' ? point.y - plane.fixed : point.x - plane.fixed;
+      if (Math.abs(off) > this.section.spec.halfWidth + 2) return null;
+      const at = this.regionToScenePoint(point);
+      at.x += this.sceneShift.x;
+      at.z += this.sceneShift.z;
+      return at;
+    }
+    const soil = this.sim.world.regionalSoil;
+    if (!soil) return null;
+    if (this.standPlane?.standId !== soil.standId) {
+      const a = soil.pointAt(0, 0);
+      const b = soil.pointAt(1, 0);
+      if (!a || !b) return null;
+      const alongIsX = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
+      this.standPlane = { standId: soil.standId, alongIsX, offset: (alongIsX ? a.x : a.y) - 0.5, fixed: alongIsX ? a.y : a.x };
+    }
+    const plane = this.standPlane;
+    if (Math.abs((plane.alongIsX ? point.y : point.x) - plane.fixed) > 4) return null;
+    const wx = (plane.alongIsX ? point.x : point.y) - plane.offset;
+    const wy = (this.region.heightAt(point.x, point.y) - point.z);
+    if (wx < -2 || wx > GRID.cols + 2) return null;
+    return new THREE.Vector3(wx - GRID.cols / 2, GRID.rows / 2 - wy, 0.6);
+  }
+
+  private updateContact(dt: number): void {
+    const war = this.match.contact;
+    const underground = this.stage.rig.view === 'underground' && !this.stage.rig.transitioning;
+    this.contactBar.update(war, 'player', underground || war.frontsOf('player').length > 0);
+    this.contactFx.update(dt, this.match.time, {
+      casts: war.casts, lingering: war.lingering, fronts: war.fronts,
+      radius: (chemical) => CHEMICALS[chemical].radius,
+    }, 'player', (point) => this.contactToScene(point), underground);
   }
 
   /** A click in a section resolves to the same regional XYZ point it displays. */

@@ -30,7 +30,7 @@ function check(name, fn) {
 
 try {
   const modules = [
-    'content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'network', 'sim', 'match', 'survey',
+    'content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'network', 'sim', 'match', 'survey',
     'root-architecture',
   ];
   for (const name of modules) {

@@ -10,6 +10,7 @@ import { elevationAtDepthCm, standFrameOf, standIdAt } from './spatial';
 import { FIRE, Wildfire } from './wildfire';
 import { Drought } from './drought';
 import { Flood } from './flood';
+import { ContactWar } from './contact';
 
 /**
  * A match is a region, not a stand.
@@ -158,6 +159,8 @@ export class RegionalMatch {
   readonly drought: Drought;
   /** The storm's water half: the stream overflows. See `flood.ts`. */
   readonly flood: Flood;
+  /** Networks of different owners fight where they touch (contact-war plan). */
+  readonly contact: ContactWar;
   /** Seeded per storm, so a replay throws down the same trees. */
   private windRng: () => number = () => 1;
   /**
@@ -239,6 +242,7 @@ export class RegionalMatch {
     this.fire = new Wildfire(this, seedText, (text) => this.broadcast(text));
     this.drought = new Drought(this, (text) => this.broadcast(text));
     this.flood = new Flood(this, () => this.storm);
+    this.contact = new ContactWar(this, seedText, (text) => this.broadcast(text));
     for (const stand of this.stands) {
       this.shareLineage(stand);
       // No stand stops at two blooms: the region decides the match.
@@ -633,6 +637,7 @@ export class RegionalMatch {
     this.fire.burn(this.elapsed - dt, this.elapsed);
     this.drought.step(dt);
     this.flood.step(dt);
+    this.contact.step(dt);
     this.stepSpores(dt);
     this.stepFusion(dt);
     this.stepVictory(dt);

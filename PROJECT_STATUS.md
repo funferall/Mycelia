@@ -405,6 +405,7 @@ of persistent state, not separate copies of a colony or its resources.
 | ADV-03 | Planned | Rival mycorrhizal fungi | Compete for unoccupied fine-root tips using ecologically distinct strategies and first-colonizer priority. Trees may support different partners across their root systems and should allocate more carbon to useful trade relationships. |
 | ADV-04 | Planned | Mycoparasitic fungus | Rare direct predator tracks, coils around, and digests exposed fungal hyphae. Fine exploratory growth is vulnerable; reinforced cords and redundant paths resist or route around attack. Use sparingly after `Armillaria` and root competition are proven. |
 | ADV-05 | Partial | Saprotroph competitor | One deterministic saprotroph network already exists, but it is not yet a complete ecological opponent. Clarify its role as a decomposer racing for dead matter rather than a substitute for a root pathogen or mutualist rival. Remaining: it begins inside the player's own opening transect instead of a separate starting stand; it must start in a different tile than the player (`MAP-16`). |
+| ADV-07 | Partial | Contact war (direct network fighting) | `src/sim/contact.ts`: fronts where strands of different owners touch, supply-limited passive fighting, overgrowth, severing, elimination, and six mouse-aimed chemicals as deterministic orders (Q W E light, A D C heavy); hotbar, front alert and Z jump in the game; first-pass soil effects. Remaining: C3 art and sound, C4 map pulse and control groups, C6 balance. See the contact-war major plan. |
 | ADV-06 | Planned | Defensive counterplay | Add early sensing, tree provisioning, cord reinforcement, defensive enzymes, root quarantine, deliberate branch sacrifice, rerouting, occupation of vulnerable tips, and escape by early fruiting. Each response needs a cost and visible consequence. |
 | MODE-01 | Planned | Standard cultivation-under-pressure mode | One concealed `Armillaria` infection center, one or two competing mutualists, a decomposer benefiting from death, and seasonal/weather pressure. Tune around defense, triage, and eventual fruiting rather than total extermination. |
 | MODE-02 | Planned | Chill mode | No aggressive root pathogen, slower or non-hostile competitors, gentler extremes, no forced tree-loss clock, and optional continued play after fruiting. Preserve the full growth, trade, season, and forest-feedback systems. |
@@ -1186,6 +1187,138 @@ It is an upgrade, not a first build: v1 has been playable since
   enough to make fire risky to use near it?
 - **Background trees (W4):** should they also leave charred remains, or only
   the playable ones?
+
+### Major plan: contact war, networks that fight (decided 29 September; C1 and C2 first pass done 29 September)
+
+**Progress, 29 September:**
+- **C1 done.** `src/sim/contact.ts` implements fronts, passive fighting and
+  elimination.
+  - Contact means strands within 2 voxels.
+  - A contact node spends 0.15 carbon/s and deals 1 health per carbon,
+    divided by the target's armour: 1 + 2 × thickness, ×1.5 if reinforced,
+    ×1.5 for a founding node.
+  - Overgrowth gives the killer 50% of the victim's carbon.
+  - A bounding-box check skips everything that is not near another owner.
+    Replays with no contact are unchanged.
+- **C2 first pass.**
+  - The six chemicals are orders: `ContactWar.cast(owner, chemical,
+    point)`.
+  - Reach is 7 voxels. Payment comes from connected strands within 9 voxels
+    of the source.
+  - The keys Q W E A D C cast at the cursor underground; Z jumps to the
+    busiest front and frames it.
+  - `src/ui/contact.ts` adds the hotbar with costs and cooldown shading, and
+    the pulsing front alert.
+  - `src/render/contact.ts` draws a first pass of effects: tinted bursts,
+    lingering leachate, the barrage ring, and a dark pulse at each front.
+  - The placeholder rival (`ContactWar.bots`) lyses every 1.4 s and bursts
+    oxalate every 9 s when it can.
+- **First real-match reading.** A player colony founded in the rival's stand
+  met the rival after about 40 s. Left alone, it lost about 70 strands in
+  25 s to the rival's much larger body and its casts. An unattended front is
+  meant to lose, but C6 must tune this.
+- **Still to do:**
+  - C3: zone-line art, dying hyphae turning grey, and the contact score.
+  - C4: a stand-map pulse, and control groups for fronts.
+  - C6: balance.
+
+
+**User direction (29 September):**
+- When two networks meet, they fight directly: tangling, rerouting and
+  chemical warfare, all paid for in resources.
+- Aim for StarCraft-like play: fast clicking on the frontier while also
+  tabbing away to manage the economy elsewhere.
+- A front **can eliminate a colony outright**.
+- Different abilities use different chemicals. Each is **one key, easy to
+  spam, aimed at the mouse**. Light attacks cost one resource; heavy attacks
+  cost a combination.
+- LLM agents and people are both fast enough to play in real time, so pace
+  stays real-time.
+- Factions are undecided. All rules are owner-agnostic: any network fights
+  any network of another owner.
+
+**Biology it draws on.** When two individual fungi meet, three things happen:
+- interference: hyphae touch and one lyses the other;
+- chemical warfare: enzymes, antibiotics, ammonia and oxalic acid;
+- a melanised barrage, the zone line seen in spalted wood, where neither side
+  wins.
+
+The outcome is either deadlock or replacement.
+
+#### Mechanics
+
+- **Fronts.** Two networks are in contact wherever living nodes of different
+  owners lie in neighbouring voxels (regional XYZ, `node.spatial`).
+  `src/sim/contact.ts` (`ContactWar`, owned by `RegionalMatch`) finds every
+  contact four times a second over `regionNetworks`, in a stable order.
+  - Contacts are grouped into fronts by stand and pair of owners.
+  - A new front announces itself once.
+- **Passive fighting.** Each contact node spends a little of its own carbon
+  every second to damage the enemy nodes touching it.
+  - Damage is divided by the target's armour. Thick cords and reinforced
+    strands are tougher.
+  - A node that has run dry does no damage.
+  - Supply therefore decides fronts: transport refills the carbon a front
+    spends, so a well-fed front wins and a severed one loses.
+  - Damage is gathered first and applied together, so the order in which
+    networks are processed gives no advantage.
+- **Overgrowth.** A node killed in a fight gives half its carbon to the node
+  that killed it, which also counts toward `genetic`. The rest returns to the
+  soil as dead strands do.
+  - The strands beyond a killed node are severed and starve through the
+    existing rules.
+  - A front that reaches the founding node cuts off the whole colony, which
+    starves out. That is elimination.
+- **Chemicals: one key each, aimed at the mouse.**
+  - Every chemical is secreted from the caster's nearest living connected
+    strand within reach of the cursor.
+  - It is paid from connected strands near that source, so spamming drains
+    the local front until transport catches up. This is the link between
+    fighting and the economy.
+  - Every cast is a deterministic order `{owner, chemical, point}`, the same
+    for a person, an agent or a replay.
+
+| Key | Chemical | Weight | Cost | Effect |
+|---|---|---|---|---|
+| Q | Lysing enzymes | light | carbon | Burst of damage in a small radius; weak against cords. |
+| W | Leachate | light | water | An antibiotic that lingers and spreads in the soil water; damage over time, stronger in wet soil. |
+| E | Ammonia | light | nitrogen | Damage, and knocks nitrogen out of enemy strands into the soil. |
+| A | Oxalate burst | heavy | carbon and nitrogen | Large, heavy burst that partly ignores cord armour. |
+| D | Coil | heavy | carbon, water and nitrogen | Seizes the thickest enemy strand in reach and kills it: a cord cut that severs what lies beyond. Cannot kill a founding node outright. |
+| C | Barrage | heavy | carbon and water | Melanised zone line: your strands inside take much less damage for a while, and enemy strands inside slowly lyse. |
+
+- **The placeholder opponent.** Opponents named in `ContactWar.bots` cast the
+  same orders on a simple timer, lysing where they touch and bursting when
+  they can afford it. This stands in for people and agents; it is not a
+  target for AI depth.
+
+#### Phases
+
+- **C1. Fronts, passive fighting and elimination.** In the simulation, with
+  headless tests: contact detection, supply-limited damage, overgrowth,
+  severing, elimination, and replay fingerprints unchanged without contact.
+- **C2. Chemicals as orders.** The six casts, with costs, cooldowns, reach,
+  local payment and lingering effects. Keys Q, W, E, A, D and C, aimed at the
+  cursor in the underground and section views.
+- **C3. Effects and sound.**
+  - Contact zones darken into zone lines.
+  - Casts bloom as tinted stains in the soil.
+  - Dying hyphae fade grey.
+  - A dissonant layer joins the score while a front is hot.
+- **C4. StarCraft-style controls.**
+  - An alert when a front opens; Space or a click jumps to it.
+  - Fronts pulse on the stand map.
+  - A chemical bar with costs and cooldowns under the cursor.
+  - Control groups for fronts.
+- **C5. The placeholder opponent casts** (the minimum is in C2).
+- **C6. Balance** on the GPU in real play: front duration, cost of spam, and
+  how long elimination takes.
+
+**Open questions:**
+- Should fights happen only inside a stand, or also across stand edges?
+  (Today: anywhere nodes touch.)
+- Should chemicals harm trees and roots?
+- How much should the contact score counter-weigh the calm soundtrack?
 
 ### Tech effects: implemented behavior and remaining work
 
@@ -2283,6 +2416,50 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: contact war, C1 and first-pass C2 (`ADV-07`)
+
+Run on the working tree. It includes uncommitted fire-render edits by another
+agent, which touch no contact code.
+
+- **`node tools/test-contact.mjs`: 11 checks pass.**
+  - A front opens at touching tips (4 contacts) and is announced once.
+  - Networks far apart are left byte-identical.
+  - Supply decides a front: in 60 s the starved side lost 2 strands and the
+    fed side none.
+  - Cords resist: 2 fine strands against 1 cord in 30 s.
+  - A coil cut severs 3 strands beyond it.
+  - Elimination: 8 oxalate bursts reached the founding node, and nothing
+    stays joined.
+  - Light chemicals cost one resource and heavy ones several. Reach, the
+    0.2 s spam cooldown and atomic refusal all hold.
+  - A barrage shields a starved line: 0 strands lost against 2 unshielded.
+  - Leachate washes out after 5 s.
+  - The placeholder opponent casts the same orders.
+  - Duels replay identically.
+  - The match owns the war, with no casts before a front.
+- **`node tools/test-contact-view.mjs`** (SwiftShader, fast QA; the colony is
+  founded synthetically): passes.
+  - A front opened after 42 s in stand 3, and the alert and six chips show.
+  - Z framed the front underground.
+  - Five casts aimed at the cursor (lyse, ammonia, leach, oxalate, barrage)
+    hit 62 strands and drew 14 effect sprites.
+  - The rival's strands are now drawn in the section, in the rival palette.
+  - Screenshots: `design/shots/contact-front.png` and `contact-bar.png`.
+- **Replay fingerprints without contact are unchanged:** raven-wood
+  `8e90afcc63ba88f4`, storm-race `45160dc3472d0e23`.
+- **Headless regressions pass:**
+  - `test-sim`: 11 checks.
+  - `test-regional-play`: 10 checks.
+  - `test-spores`: 6 checks.
+  - `test-region`: 19 checks.
+  - `test-crossing`: 18 checks.
+  - `test-wildfire`: all checks.
+- **Not run:**
+  - the other browser suites;
+  - a check on the real GPU;
+  - any balance play.
+
 
 ### 29 September 2026: wildfire v2 W1, water is fire armour (`TECH-06`)
 
