@@ -105,6 +105,14 @@ export class EvolutionUI {
       const prompt = document.querySelector<HTMLElement>(selector);
       if (prompt) panel.append(prompt);
     }
+    // Every colony the player has, as a tile to go below; and the toggle that
+    // shows them all through the forest floor.
+    const colonies = document.createElement('section');
+    colonies.className = 'colony-tiles';
+    colonies.setAttribute('aria-label', 'Your colonies');
+    colonies.innerHTML = `<h2>Colonies</h2><div class="colony-tile-list"></div>
+      <button type="button" id="forest-reveal" class="reveal-toggle" aria-pressed="false">See colonies through the floor</button>`;
+    panel.append(colonies);
     this.openButton.type = 'button';
     this.openButton.className = 'evolution-open';
     this.openButton.textContent = 'Unfold the tech tree';

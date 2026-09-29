@@ -140,6 +140,7 @@ export class Game {
   private lastView = '';
   private awakened = false;
   private markerClock = 0;
+  private revealClock = 0;
   /** Set once the regional result has been shown, so it is shown once. */
   private victoryShown = false;
   /** Stand crossings already offered to the player as a Follow prompt. */
@@ -700,10 +701,7 @@ export class Game {
    */
   attachSpatialFixture(fixture: SpatialFixture): void {
     this.spatial = fixture;
-    if (!this.reveal) {
-      this.reveal = new NetworkReveal(this.region, (point) => this.regionToScenePoint(point));
-      this.stage.scene.add(this.reveal.group);
-    }
+    this.ensureReveal();
     if (!this.sectionView) {
       this.sectionView = new SectionView(
         (point) => this.regionToScenePoint(point),
@@ -725,12 +723,8 @@ export class Game {
     }
     this.refreshSpatialViews();
     this.syncSectionUI();
-    // A Network control appears only after a real spatial body exists.
     const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
-    if (button) {
-      button.hidden = fixture === this.emptySectionViewer;
-      button.setAttribute('aria-pressed', String(this.revealEnabled));
-    }
+    if (button) button.setAttribute('aria-pressed', String(this.revealEnabled));
     const standSelect = document.querySelector<HTMLSelectElement>('#section-stand');
     if (standSelect) {
       if (standSelect.options.length !== this.match.stands.length) {
@@ -887,12 +881,148 @@ export class Game {
 
   /** Re-read the colony: new growth, a cut strand, a stand just reached. */
   refreshSpatialViews(): void {
-    if (!this.spatial || !this.reveal) return;
+    this.refreshReveal();
+    if (!this.spatial) return;
+    this.refreshSectionClip();
+  }
+
+  private ensureReveal(): NetworkReveal {
+    if (!this.reveal) {
+      this.reveal = new NetworkReveal(this.region, (point) => this.regionToScenePoint(point));
+      this.reveal.group.position.set(this.sceneShift.x, 0, this.sceneShift.z);
+      this.stage.scene.add(this.reveal.group);
+    }
+    return this.reveal;
+  }
+
+  /** Project every colony of the player's through the forest floor. */
+  private refreshReveal(): void {
+    if (!this.reveal) return;
     const camera = this.stage.rig.camera;
     camera.updateMatrixWorld();
-    const distance = camera.position.distanceTo(this.stage.rig.target);
-    this.reveal.setEdges(this.spatial.colonyEdges() as RevealEdge[], distance);
-    this.refreshSectionClip();
+    this.reveal.setEdges(this.allColonyEdges(), camera.position.distanceTo(this.stage.rig.target));
+  }
+
+  /**
+   * The strands of every colony the player has: each regional body, and the
+   * founding colony while it still grows in its own transect (its nodes carry
+   * their regional XYZ from the first tick). A bench fixture that is not part
+   * of the match is included as well. Keys carry the colony id, so no two
+   * colonies' strands can be confused.
+   */
+  private allColonyEdges(): RevealEdge[] {
+    const edges: RevealEdge[] = [];
+    const bodies = new Set<SpatialFixture>();
+    for (const stand of this.match.stands) {
+      if (!stand.sim.hasColony || stand.fusedInto !== undefined) continue;
+      const body = this.match.spatialColonies.get(stand.site.id);
+      if (body) {
+        bodies.add(body);
+        edges.push(...(body.colonyEdges() as RevealEdge[]));
+        continue;
+      }
+      if (this.match.spatialForStand(stand.site.id)) continue; // reached by another body's growth
+      const net = stand.sim.player;
+      if (net.extinct) continue;
+      for (const node of net.nodes) {
+        const parent = node.parent >= 0 ? net.nodes[node.parent] : undefined;
+        if (!parent || !node.spatial || !parent.spatial) continue;
+        edges.push({
+          key: `${net.colonyId ?? `local-${stand.site.id}`}:${parent.id}-${node.id}`,
+          parent: parent.id,
+          child: node.id,
+          from: parent.spatial,
+          to: node.spatial,
+          thickness: node.thickness,
+          reinforced: node.reinforced,
+          connected: node.alive && parent.alive && node.connected && parent.connected,
+          standId: node.standId < 0 ? stand.site.id : node.standId,
+          parentStandId: parent.standId < 0 ? stand.site.id : parent.standId,
+        });
+      }
+    }
+    if (this.spatial && this.spatial !== this.emptySectionViewer && !bodies.has(this.spatial)) {
+      edges.push(...(this.spatial.colonyEdges() as RevealEdge[]));
+    }
+    return edges;
+  }
+
+  /** Stands where the player has a colony: founded, grown into, or reached by spores. */
+  colonyStands(): Array<{ standId: number; how: 'home' | 'grown' | 'spores' }> {
+    const out: Array<{ standId: number; how: 'home' | 'grown' | 'spores' }> = [];
+    for (const stand of this.match.stands) {
+      if (!stand.sim.hasColony) continue;
+      const id = stand.site.id;
+      const how = id === this.region.foundingStand ? 'home' : stand.arrivals.length > 0 ? 'spores' : 'grown';
+      out.push({ standId: id, how });
+    }
+    return out;
+  }
+
+  /**
+   * Go below a colonized stand: attach the body that carries it and descend
+   * into its soil, framed on the colony.
+   */
+  goToColony(standId: number): { ok: boolean; message: string } {
+    const stand = this.match.stands[standId];
+    if (!stand?.sim.hasColony) return { ok: false, message: 'No colony of yours grows there.' };
+    this.awaken();
+    // A colony with its own body is its own stand: rebind the local views to
+    // it (as the section stand selector does), so the rings, orders and
+    // captions all speak of the colony being visited.
+    if (this.match.spatialColonies.has(standId) && standId !== this.match.activeStandId) {
+      if (this.stage.rig.view === 'forest') this.captureForestContext();
+      if (this.stage.rig.view !== 'forest') this.stage.rig.setView('forest', true);
+      this.enterStand(standId);
+    }
+    const body = this.match.spatialColonies.get(standId) ?? this.match.spatialForStand(standId);
+    if (body && body !== this.spatial) {
+      this.match.spatial = body;
+      this.attachSpatialFixture(body);
+    }
+    this.selectedStandId = standId;
+    for (const surface of this.surfaces) if (surface) surface.selectedId = null;
+    if (body) {
+      if (this.stage.rig.view === 'forest' && !this.forestContext) this.captureForestContext();
+      const opened = this.openSection(standId);
+      if (opened.ok && this.stage.rig.view !== 'underground') this.setView('underground');
+      const select = document.querySelector<HTMLSelectElement>('#section-stand');
+      if (select) select.value = String(standId);
+      this.syncViewUI();
+      return opened;
+    }
+    // A colony still in its own transect: rise if needed, enter it, go below.
+    this.section = null;
+    this.sectionView?.setSection(null);
+    if (this.stage.rig.view !== 'forest') this.stage.rig.setView('forest', true);
+    this.descend();
+    const site = this.region.stands[standId];
+    return { ok: true, message: `Below stand ${standId + 1} · ${site ? COMMUNITY_LABEL[site.community] : ''}.` };
+  }
+
+  /** Keep the colony tiles in the side panel matched to the colonies that exist. */
+  private syncColonyTiles(): void {
+    const list = document.querySelector<HTMLElement>('.colony-tile-list');
+    if (!list) return;
+    const colonies = this.colonyStands();
+    const current = this.section?.spec.standId ?? this.match.activeStandId;
+    const signature = colonies.map((c) => `${c.standId}${c.how}`).join(',') + `|${current}|${this.stage.rig.view}`;
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    const where = { home: 'founded here', grown: 'grown into', spores: 'spores landed' } as const;
+    list.replaceChildren(...colonies.map(({ standId, how }) => {
+      const site = this.region.stands[standId]!;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'colony-tile';
+      button.dataset.stand = String(standId);
+      button.dataset.how = how;
+      if (standId === current && this.stage.rig.view === 'underground') button.setAttribute('aria-current', 'true');
+      button.setAttribute('aria-label', `Go below stand ${standId + 1}, ${COMMUNITY_LABEL[site.community]} (${where[how]})`);
+      button.innerHTML = `<span class="colony-tile-number">${standId + 1}</span><span class="colony-tile-name">${COMMUNITY_LABEL[site.community]}</span><small>${where[how]}</small>`;
+      button.addEventListener('click', () => this.ui.setNote(this.goToColony(standId).message));
+      return button;
+    }));
   }
 
   private refreshSectionClip(): void {
@@ -903,9 +1033,13 @@ export class Game {
     this.reveal?.setSlice(this.section.spec);
   }
 
-  /** The Network toggle: a projection of the real strands, off by default. */
+  /** The colonies toggle: every colony projected through the floor, off by default. */
   setReveal(enabled: boolean): void {
-    this.revealEnabled = enabled && this.spatial !== null && this.spatial !== this.emptySectionViewer;
+    this.revealEnabled = enabled && this.colonyStands().length > 0;
+    if (this.revealEnabled) {
+      this.ensureReveal();
+      this.refreshReveal();
+    }
     this.reveal?.setVisible(this.revealEnabled);
     const button = document.querySelector<HTMLButtonElement>('#forest-reveal');
     if (button) button.setAttribute('aria-pressed', String(this.revealEnabled));
@@ -1367,7 +1501,7 @@ export class Game {
    * under one click is reported rather than guessed at.
    */
   private pickStrandAt(clientX: number, clientY: number): boolean {
-    if (!this.reveal || !this.revealEnabled || !this.spatial) return false;
+    if (!this.reveal || !this.revealEnabled) return false;
     const rect = this.canvas.getBoundingClientRect();
     const ndc = {
       x: ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -1397,8 +1531,27 @@ export class Game {
       connected: pick.connected,
     };
     this.selectedEdgeKey = pick.key;
+    // The strand may belong to any of the player's colonies: attach its body.
+    let owner: SpatialFixture | null = this.spatial?.colonyEdges().some((candidate) => candidate.key === pick.key) ? this.spatial : null;
+    if (!owner) {
+      for (const body of this.match.spatialColonies.values()) {
+        if (body.colonyEdges().some((candidate) => candidate.key === pick.key)) {
+          owner = body;
+          this.match.spatial = body;
+          this.attachSpatialFixture(body);
+          break;
+        }
+      }
+    }
+    if (!owner) {
+      // A founding colony still in its own transect: go below its stand.
+      const strand = this.reveal.strandFor(pick.key);
+      if (strand) this.goToColony(strand.standId);
+      return true;
+    }
+    this.selectedEdgeKey = pick.key;
     // Clicking a projected strand opens the exact section through it.
-    const edge = this.spatial.colonyEdges().find((candidate) => candidate.key === pick.key);
+    const edge = owner.colonyEdges().find((candidate) => candidate.key === pick.key);
     if (edge) {
       const spec = this.sectionHolding(edge as RevealEdge, edge.standId);
       this.openSection(edge.standId, spec?.id);
@@ -1726,11 +1879,17 @@ export class Game {
     this.fruiting.update(dt, this.fruitingSites(), blend > 0.3);
     // The reveal and the section follow the same fold and clock, and are drawn
     // in the region's own coordinates so a rebase moves them with the ground.
-    if (this.spatial) {
+    if (this.reveal) {
       const camera = this.stage.rig.camera;
       camera.updateMatrixWorld();
-      this.reveal?.update(camera.position.distanceTo(this.stage.rig.target), blend, !this.ambientMotion);
-      this.sectionView?.update(blend, !this.ambientMotion, elapsed);
+      this.reveal.update(camera.position.distanceTo(this.stage.rig.target), blend, !this.ambientMotion);
+    }
+    if (this.spatial) this.sectionView?.update(blend, !this.ambientMotion, elapsed);
+    // The projection follows growth while it is shown, once a second.
+    this.revealClock += dt;
+    if (this.revealEnabled && this.revealClock >= 1) {
+      this.revealClock = 0;
+      this.refreshReveal();
     }
     this.living.update(this.sim, dt, this.reducedMotion, overlay);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
@@ -1840,6 +1999,7 @@ export class Game {
     if (draw) this.stage.render(dt);
     this.markerClock += dt;
     this.offerFollow();
+    this.syncColonyTiles();
     this.launchSporeFlights();
     this.sporeFlights.update(dt, this.stage.rig.surfaceBlend > 0.3);
     if (this.markerClock > 0.1) {
@@ -1944,8 +2104,8 @@ export class Game {
     document.querySelector('#forest-reveal')?.addEventListener('click', () => {
       const on = this.toggleReveal();
       this.ui.setNote(on
-        ? 'Network revealed. Click a projected strand to open the section through it.'
-        : 'Network hidden. The forest is unchanged underneath.');
+        ? 'Your colonies show through the forest floor. Click a strand to go below it.'
+        : 'Colonies hidden. The forest is unchanged underneath.');
     });
     // The section browser's own controls. They exist for the player, not only
     // for the bench: Previous and Next open a section on their first press.
