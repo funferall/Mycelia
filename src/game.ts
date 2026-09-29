@@ -1587,7 +1587,15 @@ export class Game {
     if (this.sim.player.fruited > this.lastFruits) this.sound.chime('fruit');
     this.lastBonds = bonds;
     this.lastFruits = this.sim.player.fruited;
-    this.sound.update(bonds);
+    this.sound.update({
+      bonds,
+      surface: blend,
+      season,
+      storm: storm.phase === 'idle' ? 0 : this.match.stormIntensity,
+      fire: this.match.fire.phase === 'burning' ? this.match.fire.intensity : 0,
+      drought: this.droughtShown,
+      lightning: this.stormView.flash,
+    });
 
     if (this.steward) {
       this.stewardClock -= dt * Math.max(1, this.speed);

@@ -17,6 +17,7 @@
     "test:subclusters": "node tools/test-subclusters.mjs",
     "test:subclusters-view": "npm run build && node tools/test-subclusters-view.mjs",
     "test:fruiting": "node tools/test-fruiting.mjs",
+    "test:score-view": "npm run build && node tools/test-score-view.mjs",
     "test:mushroom-view": "npm run build && node tools/test-mushroom-view.mjs",
     "test:evolution": "node tools/test-evolution.mjs",
     "test:evolution-view": "npm run build && node tools/test-evolution-view.mjs",
