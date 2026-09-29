@@ -10,7 +10,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(withQaPreset(`http://127.0.0.1:${port}/?seed=oak`, 'fast'));
+  await page.goto(withQaPreset(`http://127.0.0.1:${port}/?start=best&seed=oak`, 'fast'));
   await page.waitForFunction(() => Boolean(window.mycelia?.game));
   await page.click('#begin');
   await page.evaluate(() => {

@@ -41,7 +41,7 @@ try {
 
   /** A founding colony with one mature bloom and enough to pay for a spore. */
   const ready = (seed = 'raven-wood', rich = true) => {
-    const m = new RegionalMatch(seed);
+    const m = new RegionalMatch(seed, undefined, { starts: 'best' });
     // The bloom matures on calm air, so what happens next is the test's doing.
     for (let i = 0; i < 600 * 60 && m.gusting(); i++) m.step(DT);
     const stand = m.active;
@@ -149,7 +149,7 @@ try {
   });
 
   check('gusts come often enough to matter and rarely enough to wait for', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     let onsets = 0, prev = false;
     for (let t = 0; t < 3600; t += 0.1) {
       const g = m.gustAt(t) >= SPORE_GUST;

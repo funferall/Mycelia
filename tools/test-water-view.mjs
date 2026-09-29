@@ -106,7 +106,7 @@ try {
   }));
   await page.screenshot({ path: `design/shots/test-bench-${qa}.png` });
   // The opt-in fixture must never leak into an ordinary match.
-  await page.goto(withQaPreset(`${server.url}/?seed=raven-wood`, qa), { waitUntil: 'domcontentloaded' });
+  await page.goto(withQaPreset(`${server.url}/?start=best&seed=raven-wood`, qa), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia));
   await page.evaluate(() => window.mycelia.game.stop());
   check('ordinary entry has no test bench and only the founding colony', await page.evaluate(() =>

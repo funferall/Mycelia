@@ -53,7 +53,7 @@ try {
   // ---------------------------------------------------------------- C: lineage
 
   check('every colony shares one learned list', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const lists = new Set(m.stands.map((stand) => stand.sim.player.evolution.learned));
     assert.equal(lists.size, 1, 'one list for the player');
     assert.equal([...lists][0], m.lineage.player);
@@ -61,7 +61,7 @@ try {
   });
 
   check('what one colony learns, every colony knows, including later daughters', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const home = m.active.sim.player;
     home.nodes[home.rootId].bondedTree = 0;
     assert.equal(learnAdaptation(home, 'deep-drink'), 'Deep drink learned.');
@@ -80,7 +80,7 @@ try {
   });
 
   check('the rival lineage is separate from the player lineage', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const rival = m.active.sim.rival;
     rival.evolution.learned.push('deep-drink');
     assert.equal(m.lineage.rival.includes('deep-drink'), true);
@@ -94,7 +94,7 @@ try {
    * each other, stopping on the step before they touch.
    */
   const meet = () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const home = m.activeStandId;
     const to = foundDaughter(m);
     const hs = m.region.stands[home], ts = m.region.stands[to];
@@ -213,7 +213,7 @@ try {
   };
 
   check('there is no two-bloom win in a regional match', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     m.active.sim.player.fruited = 2;
     for (let i = 0; i < 120; i++) m.step(DT);
     assert.equal(m.outcome, 'playing');
@@ -222,7 +222,7 @@ try {
   });
 
   check('holding five stands through the turn of the season takes the region', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     holdStands(m, HOLD_TILES);
     for (let i = 0; i < 90; i++) m.step(DT);
     assert.equal(m.hold.player.tiles, HOLD_TILES);
@@ -235,7 +235,7 @@ try {
   });
 
   check('losing a stand mid-season breaks the hold, and the turn then wins nothing', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const held = holdStands(m, HOLD_TILES);
     for (let i = 0; i < 90; i++) m.step(DT);
     assert.notEqual(m.hold.player.since, null);
@@ -253,7 +253,7 @@ try {
   });
 
   check('a stand tied with the rival does not count', () => {
-    const m = new RegionalMatch('raven-wood');
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const held = holdStands(m, HOLD_TILES);
     // The rival matches the player in one stand.
     const tree = m.stands[held[0]].sim.world.trees.filter((t) => !t.dead)[1];

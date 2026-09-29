@@ -1,5 +1,5 @@
 import { ECON, GRID, SEASONS } from './content';
-import { STAND_SIZE, createRegion, downwindStands, type Region, type StandSite } from './region';
+import { STAND_SIZE, createRegion, downwindStands, type Region, type StandSite, type StartRule } from './region';
 import { Simulation, type MatchOutcome } from './sim';
 import { payColonyFund, markConnectivity, startFruiting, createNetwork, type Owner } from './network';
 import { CrossingMatch, chooseCrossing, type CrossingCorridor, type CrossingDirection } from './crossing';
@@ -176,6 +176,12 @@ export class RegionalMatch {
   readonly colonization: Colonization[] = [];
   readonly growthCrossings: GrowthCrossing[] = [];
   readonly fusions: Fusion[] = [];
+  /**
+   * Every cloud of spores that left a body, whether or not it took hold, for
+   * drawing: `to` is the stand it founded, or null when the wind carried it
+   * somewhere nothing of this owner could grow. Presentation-facing record.
+   */
+  readonly sporeReleases: Array<{ at: number; from: number; to: number | null; owner: Owner; direction: number }> = [];
   private fusionClock = 0;
   readonly soil: SoilVolume;
   /**
@@ -200,9 +206,9 @@ export class RegionalMatch {
   private readonly sharedStands = new Set<number>();
   private readonly seedText: string;
 
-  constructor(seedText = 'raven-wood', foundingSimulation?: Simulation) {
+  constructor(seedText = 'raven-wood', foundingSimulation?: Simulation, options: { starts?: StartRule } = {}) {
     this.seedText = seedText;
-    this.region = createRegion(seedText);
+    this.region = createRegion(seedText, undefined, undefined, options.starts ?? 'drawn');
     this.soil = new SoilVolume(this.region, hashString(`${seedText}:soil`));
     this.stands = this.region.stands.map((site) => ({
       site,
@@ -219,10 +225,17 @@ export class RegionalMatch {
     // Only the founding stand starts with a colony in it.
     for (const stand of this.stands) { stand.sim.hasColony = false; stand.sim.rivalEnabled = false; }
     this.require(this.activeStandId).sim.hasColony = true;
-    this.require(this.activeStandId).rivalPresent = true;
-    this.require(this.activeStandId).sim.rivalEnabled = true;
+    // The rival begins in a stand of its own, away from the player (`MAP-16`).
+    const rivalHome = this.require(this.region.rivalStand);
+    rivalHome.rivalPresent = true;
+    rivalHome.sim.rivalEnabled = true;
     this.require(this.activeStandId).sim.player.colonyId = `player@${seedText}:stand-${this.activeStandId}`;
     this.ensureSharedSoil(this.activeStandId);
+    if (rivalHome.site.id !== this.activeStandId) {
+      this.ensureSharedSoil(rivalHome.site.id);
+      rivalHome.sim.rival.colonyId = `rival@${seedText}:stand-${rivalHome.site.id}`;
+      rivalHome.sim.syncRegionalPositions(false);
+    }
     this.fire = new Wildfire(this, seedText, (text) => this.broadcast(text));
     this.drought = new Drought(this, (text) => this.broadcast(text));
     this.flood = new Flood(this, () => this.storm);
@@ -904,9 +917,11 @@ export class RegionalMatch {
       if (!payColonyFund(parent, cost)) return founded > 0 ? 'released' : 'unaffordable';
       if (owner === 'player') this.found(target, from, cost, wind.strength);
       else this.foundRival(target, from, cost, wind.strength);
+      this.sporeReleases.push({ at: this.time, from: from.site.id, to: targetId, owner, direction: wind.direction });
       founded++;
       if (--budget <= 0) break;
     }
+    if (founded === 0) this.sporeReleases.push({ at: this.time, from: from.site.id, to: null, owner, direction: wind.direction });
     return founded > 0 ? 'released' : 'nowhere';
   }
 

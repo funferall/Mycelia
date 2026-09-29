@@ -55,7 +55,13 @@ function boot(): void {
 function seedFromLocation(): string {
   const params = new URLSearchParams(location.search);
   const seed = params.get('seed');
-  return seed && seed.trim().length > 0 ? seed.trim().slice(0, 48) : 'raven-wood';
+  if (seed && seed.trim().length > 0) return seed.trim().slice(0, 48);
+  // A new game is a new forest: without a named seed, draw one, and write it
+  // into the address so this forest can be reloaded or shared.
+  const drawn = Math.random().toString(36).slice(2, 9);
+  params.set('seed', drawn);
+  history.replaceState(null, '', `${location.pathname}?${params.toString()}${location.hash}`);
+  return drawn;
 }
 
 boot();

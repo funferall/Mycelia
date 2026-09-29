@@ -21,7 +21,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   const problems = collectProblems(page);
   page.setDefaultTimeout(180000);
-  await page.goto(withQaPreset(`${server.url}/?seed=raven-wood`, qa), { waitUntil: 'domcontentloaded' });
+  await page.goto(withQaPreset(`${server.url}/?start=best&seed=raven-wood`, qa), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
 
   const setup = await page.evaluate(() => {
@@ -90,6 +90,36 @@ try {
   assert.equal(home.view, 'underground');
   assert.equal(home.section, false, 'the founding colony is shown in its own transect');
   assert.deepEqual(problems, [], 'no page errors');
+
+  // A game opened without a seed draws one, writes it into the address, and
+  // starts the player and the rival in their own drawn stands (MAP-16).
+  const fresh = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const freshProblems = collectProblems(fresh);
+  await fresh.goto(withQaPreset(`${server.url}/`, qa), { waitUntil: 'domcontentloaded' });
+  await fresh.waitForFunction(() => Boolean(window.mycelia?.game?.match));
+  const drawn = await fresh.evaluate(() => {
+    const game = window.mycelia.game;
+    const region = game.match.region;
+    const home = region.stands[region.foundingStand];
+    const rival = region.stands[region.rivalStand];
+    return {
+      seedInUrl: new URLSearchParams(location.search).get('seed'),
+      seed: game.seedText,
+      active: game.match.activeStandId,
+      founding: region.foundingStand,
+      rivalStands: game.match.stands.filter((stand) => stand.rivalPresent).map((stand) => stand.site.id),
+      rivalStand: region.rivalStand,
+      steps: Math.abs(home.sx - rival.sx) + Math.abs(home.sy - rival.sy),
+    };
+  });
+  await fresh.close();
+  assert.ok(drawn.seedInUrl && drawn.seedInUrl === drawn.seed && drawn.seed !== 'raven-wood', `a new game draws its own seed: ${JSON.stringify(drawn)}`);
+  assert.equal(drawn.active, drawn.founding);
+  assert.deepEqual(drawn.rivalStands, [drawn.rivalStand], 'the rival begins in its own stand');
+  assert.ok(drawn.rivalStand !== drawn.founding, 'not the player’s stand');
+  assert.deepEqual(freshProblems, [], 'no page errors on a fresh game');
+
+  console.log(`PASS colonies browser: fresh game drew seed "${drawn.seed}" (player stand ${drawn.founding + 1}, rival stand ${drawn.rivalStand + 1}, ${drawn.steps} steps apart);`);
   console.log(`PASS colonies browser: ${tiles.length} colony tiles, ${reveal.report.strands} strands projected through the floor, daughter tile opens stand ${daughter.standId + 1} below, home tile returns.`);
 } finally {
   await browser?.close();

@@ -62,7 +62,13 @@ try {
   // Speed multiplies the simulation's share of every frame: 4x runs four
   // times the fixed steps per frame.
   await page.evaluate(() => document.querySelector('.speed-row button[data-speed="4"]')?.click());
-  console.log(`large network at 4x speed: forest ${JSON.stringify(await fps('forest'))}, underground ${JSON.stringify(await fps('underground'))}`);
+  const achieved = async (view) => {
+    const result = await fps(view);
+    const speed = await page.evaluate(() => window.mycelia.game.effectiveSpeed);
+    return { ...result, simSpeed: +speed.toFixed(2) };
+  };
+  // Frames stay smooth; the world runs as fast as the CPU allows (simSpeed).
+  console.log(`large network at 4x speed: forest ${JSON.stringify(await achieved('forest'))}, underground ${JSON.stringify(await achieved('underground'))}`);
 } finally {
   await browser.close();
   server.stop();

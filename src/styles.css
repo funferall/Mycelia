@@ -252,6 +252,7 @@ body {
   transition: transform 240ms linear;
 }
 
+.speed-note { margin: 6px 0 0; color: var(--ink-dim); font: italic 13px/1.4 var(--serif); }
 .speed-row {
   display: flex;
   justify-content: flex-end;

@@ -9,7 +9,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 try {
-  await page.goto(`${server.url}/?qa=fast`, { waitUntil: 'commit' });
+  await page.goto(`${server.url}/?start=best&seed=raven-wood&qa=fast`, { waitUntil: 'commit' });
   await waitForGame(page);
   await page.evaluate(() => { window.mycelia.game.stop(); window.mycelia.game.ui.update(window.mycelia.game.sim, 1); });
   mkdirSync('design/shots', { recursive: true });

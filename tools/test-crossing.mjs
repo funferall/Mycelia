@@ -430,7 +430,7 @@ try {
   });
 
   check('the running match promotes its own funded body and steps it once', () => {
-    const region = new RegionalMatch('old-growth');
+    const region = new RegionalMatch('old-growth', undefined, { starts: 'best' });
     const origin = region.activeStandId;
     const sim = region.active.sim;
     const body = sim.player;
@@ -472,7 +472,7 @@ try {
   });
 
   check('opening XYZ survives promotion and an order steers through a perpendicular section', () => {
-    const region = new RegionalMatch('old-growth');
+    const region = new RegionalMatch('old-growth', undefined, { starts: 'best' });
     for (let i = 0; i < 45; i++) region.step(DT);
     const net = region.active.sim.player;
     const before = net.nodes.map((node) => ({ ...node.spatial }));
@@ -515,7 +515,7 @@ try {
   });
 
   check('an opening slice survives a region with no passable east-west seam corridor', () => {
-    const region = new RegionalMatch('old-growth');
+    const region = new RegionalMatch('old-growth', undefined, { starts: 'best' });
     const original = region.soil.segment;
     region.soil.segment = () => ({ blocked: true });
     try {
@@ -530,7 +530,7 @@ try {
   });
 
   check('a lateral 3D arrival crosses its own stand edge and records the correct portal', () => {
-    const region = new RegionalMatch('old-growth');
+    const region = new RegionalMatch('old-growth', undefined, { starts: 'best' });
     assert.equal(region.growAcross('north').ok, true);
     const body = region.spatial;
     const origin = body.originStandId;
@@ -576,7 +576,7 @@ try {
   });
 
   check('a naturally bonded ordinary colony can be directed across an edge', () => {
-    const region = new RegionalMatch('old-growth');
+    const region = new RegionalMatch('old-growth', undefined, { starts: 'best' });
     const sim = region.active.sim;
     const founder = sim.player.nodes[sim.player.rootId];
     const options = sim.world.trees.flatMap((tree) => tree.rootTips.map((tip) => ({ tree, tip })));
@@ -597,7 +597,7 @@ try {
   });
 
   check('a paid spore founds a separate spatial body on the same soil volume', () => {
-    const region = new RegionalMatch('raven-wood');
+    const region = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
     const origin = region.activeStandId;
     const parent = region.active.sim.player;
     const root = parent.nodes[parent.rootId];

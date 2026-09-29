@@ -313,7 +313,7 @@ and equivalent useful details have been accounted for, then remove it.
 | MAP-13 | Partial | Generator persistence and replay | The region is a pure function of its seed: two matches from the same seed colonize the same stands with the same spores and end in the same state. Remaining: no save or replay format, no generator-version field, and no RNG-state serialization. |
 | MAP-14 | Partial | Shared spatial network and soil coordinates | Regional XYZ ownership, stable references, supercover traversal and one sparse SoilVolume remain. The opening, rival, trees and spore daughters use lazy local views into that canonical material. Opening nodes record their physical XYZ and stand from the first tick; promotion expands their founder-relative x bounds without changing any existing node address or position, and moves no soil. Section and reveal read the same regional XYZ. Remaining: the flat opening UI still samples one east-west slice, local water-table summaries approximate a varying regional surface, surface tree placement still has its own formula, and no save format carries SPATIAL_VERSION. |
 | MAP-15 | Implemented, unverified | Automatic fusion of the player's colonies | Decided 28 September: two of the player's colonies fuse automatically when their strands touch; there is no manual fusion action. Once a second `stepFusion` looks for a living node of one player body in a 26-neighbour voxel of another. The older colony (founding first, then by spore arrival) absorbs the younger through `CrossingMatch.absorb`. Nodes are appended with shifted ids, and the younger founder is re-parented to the contact node. Resources move node by node and are conserved. Surplus, blooms, fruited, spores and a body in progress join the survivor (a second active body returns its store to surplus). Tree bonds are re-pointed through the trees' stand and id. The younger body is retired, its stand records `fusedInto`, and a fusion is broadcast. Player colonies never fuse with the rival. `test:regional-play` grows a daughter and the founding colony into contact and checks: conservation, every strand joined, bonds pointing at living junctions, a cut link severing again, and determinism. Remaining: the absorbed colony's subclusters rejoin the colony at large rather than keeping their ids; no browser check of a fusion yet. |
-| MAP-16 | Planned | Randomized player and rival starting stands | Requested 27 September: the player's starting tile must be chosen at random per match by the procedural generator instead of always resolving to the same best-scoring stand, and the opponent mycelium must begin in a different starting stand from the player. The choice must derive from the match seed so `MAP-13` replay stays exact, keep `MAP-09`'s reachability and water-in-reach guarantees for whatever stand is drawn, and give the rival its own habitable start at a fair distance rather than an adjacent or identical tile. No randomized starting-stand selection exists today: the player's stand is the deterministic best score and the rival starts inside the player's own opening transect. |
+| MAP-16 | Implemented, unverified | Randomized player and rival starting stands | Requested 27 September; built 29 September. `createRegion` draws the player's stand from the stands good enough to begin in (habitable, water in reach, within 1.2 of the best start score). It uses a seed stream of its own, so replay stays exact (`MAP-13`) and nothing else in the region moves. The rival begins in its own stand: one with water in reach, at least two orthogonal steps from the player, drawn from the same stream; the fallback is the farthest livable stand. `region.rivalStand` is where `RegionalMatch` enables the rival. Every region still validates (`MAP-09`). A game opened without `?seed=` now draws a random seed and writes it into the address, so every new game is a new forest, with different stands, communities and trees. "Open a new sheet" already did this. `StartRule` `best` (`createRegion(..., 'best')`, `RegionalMatch(..., { starts: 'best' })`, `?start=best`) keeps the earlier single best start with the rival in it, for fixtures built around one seed's geography. The standalone crossing bench defaults to it. `test-region` checks 12 seeds: 8 different starts, rival never adjacent, repeatable, valid. `test-colonies-view` checks a fresh game draws a seed and separate starts. Remaining: balance of a corner start whose wind blows off the map (its spores land nowhere until the wind turns), and a played-browser match from a drawn start. |
 
 #### Regional generation order
 
@@ -1927,6 +1927,39 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: random starts, fresh forests, visible spore clouds, 4x pacing (`MAP-16`, `MAP-10`, `PERF-03`)
+
+- **4x pacing.**
+  - Cause: the frame loop ran up to 24 fixed steps a frame with no time budget, and banked the time it could not run. Past the CPU's simulation rate, every frame ran all 24 steps: about 5.9 ms each at 4,946 strands (4,013 of them the rival's), so 2.6 to 4.9 fps.
+  - Profile: transport is 59% of a step. None of the regional code added on 29 September appears in it.
+  - Fix, `src/game.ts`: `STEP_BUDGET_MS` 11, at most `MAX_CARRY` two steps of carried time, and `effectiveSpeed`. A `#speed-note` appears when the world runs below 85% of the asked speed.
+  - Replays are unchanged (fingerprints `0837080b77c11551` / `cd272b4bfd5a5183`).
+  - `npm run check:gpu` (RTX 4060) at 4x with 4,923 strands: 60 fps and a p95 frame of 16.7 ms in both views, with the world running at 3.0x (it was 2.6 fps before).
+  - A transport rewrite with precomputed parent and child tables gave bit-identical results but no reliable speedup (A/B rounds 161 vs 220, 202 vs 199 and 261 vs 224 ms per simulated second, taken under background load). It was reverted.
+- **Spore clouds.**
+  - `src/render/spore-flight.ts`: six faint haze puffs per cloud that travel and breathe with it, and 260 spores each twinkling on its own rhythm.
+  - `RegionalMatch.sporeReleases` records every release. A release that takes hold nowhere now shows too, drifting a stand's width downwind and thinning away.
+  - GPU capture: a warm haze with sparkling spores rising over the canopy.
+- **Random starts and fresh forests.** See `MAP-16`.
+  - The six suites whose fixtures depend on one seed's old start opt into `StartRule` `best`: `test-region` (older checks), `test-crossing`, `test-flood`, `test-spores`, `test-regional-play` and `test-sections`. Named-seed browser fixtures use `?start=best`.
+  - `test-evolution-view` and `test-mushroom-view` now pin `raven-wood`.
+- **Headless results:**
+  - Pass: `test-region` (19, including the drawn-start check), `test-crossing` (18), `test-flood`, `test-spores` (6), `test-regional-play` (10), `test-sections` (10), `test-sim` (11) and `test-storm`.
+  - Passed earlier under drawn starts: `test-dressing`, `test-roots`, `test-spatial`, `test-evolution`, `test-subclusters`, `test-wildfire` and `test-drought`.
+- `npm run typecheck`: pass.
+- **Browser, on a fresh build:**
+  - Pass:
+    - `test-colonies-view`: including a fresh game that drew seed `y3u5zp6`, starting the player in stand 5 and the rival in stand 9.
+    - `test-regional-spatial-view`
+    - `test-regional-mature-view`
+    - `test-storm-view`
+    - `test-underground-view`
+    - `test-subclusters-view`
+    - `test-evolution-view`
+    - `test-mushroom-view`
+    - `test-sections-view` (27 checks)
+  - `test-view` had not finished when this was committed.
 
 ### 29 September 2026: held trees glow in the forest (`VIEW-02`)
 

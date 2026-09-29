@@ -11,7 +11,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const problems = collectProblems(page);
   page.setDefaultTimeout(120000);
-  await page.goto(`${server.url}/?seed=storm-race&qa=fast`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.url}/?start=best&seed=storm-race&qa=fast`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
   await page.evaluate(() => window.mycelia.game.stop());
 

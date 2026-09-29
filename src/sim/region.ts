@@ -128,6 +128,11 @@ export interface Region {
   rows: number;
   stands: StandSite[];
   foundingStand: number;
+  /**
+   * Where the rival mycelium begins (`MAP-16`): a different habitable stand,
+   * at least two steps from the player's, drawn from the seed.
+   */
+  rivalStand: number;
   wind: WindState;
   /**
    * Ground height anywhere in the region, in world units. One function for the
@@ -152,7 +157,15 @@ const FLOW_STEP = 4;
 /** Flow at which ground reads as a channel rather than wet ground. */
 const CHANNEL_FLOW = 0.9;
 
-export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION_ROWS): Region {
+/**
+ * How the starting stands are chosen. `drawn` is the game: the player's stand
+ * is drawn from the good starts and the rival begins apart (`MAP-16`). `best`
+ * is the earlier rule (the single best-scoring stand, with the rival in it),
+ * kept for fixtures built around one seed's geography.
+ */
+export type StartRule = 'drawn' | 'best';
+
+export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION_ROWS, starts: StartRule = 'drawn'): Region {
   const seed = hashString(seedText);
   const relief = makeNoise2D(seed ^ 0x2f6b1c3d, 4, 0.0042);
   const detail = makeNoise2D(seed ^ 0x77c1a9e5, 3, 0.017);
@@ -477,6 +490,7 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
     rows,
     stands,
     foundingStand: 0,
+    rivalStand: 0,
     wind,
     heightAt,
     waterTableAt,
@@ -487,7 +501,16 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
     validation: { ok: true, problems: [], foundingStand: 0, reachableStands: 0, streamBoundaries: 0, habitableStands: 0 },
   };
 
-  region.foundingStand = chooseFoundingStand(region);
+  // The starting stands are drawn, not always the best one (`MAP-16`), from a
+  // stream of the seed of its own so nothing else in the region moves.
+  const startRng = mulberry32(seed ^ 0x5eed57a7);
+  if (starts === 'best') {
+    region.foundingStand = bestStart(region);
+    region.rivalStand = region.foundingStand;
+  } else {
+    region.foundingStand = chooseFoundingStand(region, startRng);
+    region.rivalStand = chooseRivalStand(region, startRng);
+  }
   region.validation = validateRegion(region);
   return region;
 }
@@ -608,20 +631,65 @@ export function communityThresholds(community: StandCommunity): [number, number]
  * down rather than up, and preferably the ordinary mixed slope the game has
  * always opened on.
  */
-function chooseFoundingStand(region: Region): number {
+/** How good a stand is to begin a colony in: habitable, with water in reach. */
+function startScore(stand: StandSite): number {
+  const habitability = stand.moisture < 0.78 && stand.drainage < 0.85 ? 1 : 0.2;
+  const water = Math.max(0, 1 - Math.abs(stand.waterTableCm - MAX_DEPTH_CM * 0.66) / 40);
+  const ordinary = stand.community === 'mixed-slope' ? 1 : stand.community === 'oak-ridge' ? 0.75 : 0.4;
+  return habitability * 2 + water + ordinary + stand.neighbours.length * 0.15;
+}
+
+/** The single best stand to begin in: the rule before starts were drawn. */
+function bestStart(region: Region): number {
   let best = 0;
   let bestScore = -Infinity;
   for (const stand of region.stands) {
-    const habitability = stand.moisture < 0.78 && stand.drainage < 0.85 ? 1 : 0.2;
-    const water = Math.max(0, 1 - Math.abs(stand.waterTableCm - MAX_DEPTH_CM * 0.66) / 40);
-    const ordinary = stand.community === 'mixed-slope' ? 1 : stand.community === 'oak-ridge' ? 0.75 : 0.4;
-    const score = habitability * 2 + water + ordinary + stand.neighbours.length * 0.15;
+    const score = startScore(stand);
     if (score > bestScore) {
       bestScore = score;
       best = stand.id;
     }
   }
   return best;
+}
+
+/** A stand a colony can actually live in from its first strand. */
+function canStart(stand: StandSite): boolean {
+  return stand.moisture >= 0.2 && stand.moisture < 0.78 && stand.drainage < 0.85 &&
+    stand.waterTableCm <= MAX_DEPTH_CM * 0.86;
+}
+
+/**
+ * The player's starting stand, drawn at random from the stands good enough to
+ * begin in (within reach of the best one's score), so each seed opens
+ * somewhere different. Falls back to the best stand if none qualifies.
+ */
+function chooseFoundingStand(region: Region, rng: Rng): number {
+  const ranked = [...region.stands].sort((a, b) => (startScore(b) - startScore(a)) || (a.id - b.id));
+  const best = ranked[0];
+  if (!best) return 0;
+  const good = ranked.filter((stand) => canStart(stand) && startScore(stand) >= startScore(best) - 1.2);
+  if (good.length === 0) return best.id;
+  return good[Math.floor(rng() * good.length) % good.length]!.id;
+}
+
+/**
+ * The rival's starting stand: habitable, not the player's, and at least two
+ * orthogonal steps away (no shared edge). The farthest habitable stand is the
+ * fallback, then any other stand.
+ */
+function chooseRivalStand(region: Region, rng: Rng): number {
+  const home = region.stands[region.foundingStand];
+  if (!home) return 0;
+  const steps = (stand: StandSite) => Math.abs(stand.sx - home.sx) + Math.abs(stand.sy - home.sy);
+  const others = region.stands.filter((stand) => stand.id !== home.id);
+  // A decomposer does not need the player's dry, well-drained ground: any
+  // stand with water in reach will do, so a fair distance is almost always found.
+  const livable = (stand: StandSite) => stand.moisture >= 0.2 && stand.waterTableCm <= MAX_DEPTH_CM * 0.86;
+  const fair = others.filter((stand) => livable(stand) && steps(stand) >= 2);
+  if (fair.length > 0) return fair[Math.floor(rng() * fair.length) % fair.length]!.id;
+  const habitable = others.filter(livable).sort((a, b) => (steps(b) - steps(a)) || (a.id - b.id));
+  return (habitable[0] ?? others[0] ?? home).id;
 }
 
 export function validateRegion(region: Region): RegionValidation {

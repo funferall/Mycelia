@@ -16,7 +16,7 @@ const { markConnectivity, updateTotals, isPassable } = await load('network');
 
 /** A storm-capable colony on a stand the stream runs through; ecology frozen. */
 function fixture(seed = 'storm-race') {
-  const m = new RegionalMatch(seed);
+  const m = new RegionalMatch(seed, undefined, { starts: 'best' });
   const id = m.region.foundingStand;
   const from = m.stands[id];
   assert(from.site.stream, 'fixture stand has a stream');

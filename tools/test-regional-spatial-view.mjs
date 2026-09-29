@@ -15,7 +15,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   const problems = collectProblems(page);
   page.setDefaultTimeout(120000);
-  await page.goto(withQaPreset(`${server.url}/?seed=old-growth`, qa), { waitUntil: 'domcontentloaded' });
+  await page.goto(withQaPreset(`${server.url}/?start=best&seed=old-growth`, qa), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
   await page.evaluate(() => window.mycelia.game.stop());
   const before = await page.evaluate(() => {

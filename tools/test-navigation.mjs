@@ -11,7 +11,7 @@ const check = (name, condition) => { assert.ok(condition, name); console.log(`PA
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 760 }, reducedMotion: 'reduce' });
   const problems = collectProblems(page);
-  await page.goto(withQaPreset(server.url + '/?seed=raven-wood', parseQaPreset()), { waitUntil: 'commit' });
+  await page.goto(withQaPreset(server.url + '/?start=best&seed=raven-wood', parseQaPreset()), { waitUntil: 'commit' });
   await page.waitForFunction(() => window.mycelia?.game.assets.ready);
   await page.evaluate(() => window.mycelia.game.stop());
   console.log(formatRenderReport(await readRenderReport(page)));

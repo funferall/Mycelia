@@ -60,6 +60,17 @@ import { FIRE } from './sim/wildfire';
 import { buildSurvey } from './sim/survey';
 
 const FIXED_STEP = 1 / 60;
+/**
+ * Most wall-clock time one frame may spend stepping the simulation, in
+ * milliseconds. When the requested speed needs more (a large network at 4x),
+ * the rest of the frame's time is dropped rather than banked: the world runs
+ * slower than asked instead of the frame rate collapsing, and the speed control
+ * says how fast it is really going. The simulation is still fixed-step and
+ * deterministic; only how much of it happens per frame changes.
+ */
+const STEP_BUDGET_MS = 11;
+/** At most this much unstepped time is carried into the next frame. */
+const MAX_CARRY = FIXED_STEP * 2;
 
 /**
  * The player's network is the only bright thing on the sheet, so its core is
@@ -157,6 +168,11 @@ export class Game {
 
   private speed = 0;
   private accumulator = 0;
+  /** Simulated and asked-for seconds over the last moments, for the speed readout. */
+  private paceSimulated = 0;
+  private paceAsked = 0;
+  /** The speed the world is actually running at, smoothed; equals `speed` when it keeps up. */
+  effectiveSpeed = 1;
   private lastFrame = 0;
   private raf = 0;
   private seasonId = '';
@@ -263,7 +279,9 @@ export class Game {
     this.ui = ui;
     this.seedText = seedText;
     this.sim = new Simulation(seedText);
-    this.match = new RegionalMatch(seedText, this.sim);
+    // `?start=best` keeps the earlier single best start, for fixtures only.
+    const starts = new URLSearchParams(location.search).get('start') === 'best' ? 'best' : 'drawn';
+    this.match = new RegionalMatch(seedText, this.sim, { starts });
     this.region = this.match.region;
     const home = this.region.stands[this.region.foundingStand];
     this.sceneOrigin = { x: (home?.sx ?? 0) * TILE_SIZE, y: (home?.sy ?? 0) * TILE_SIZE };
@@ -302,7 +320,7 @@ export class Game {
     this.stage.scene.add(this.fruiting.group);
     this.sporeFlights = new SporeFlights(glow, (point) => this.regionToScenePoint(point));
     this.stage.scene.add(this.sporeFlights.group);
-    this.colonizationSeen = this.match.colonization.length;
+    this.colonizationSeen = this.match.sporeReleases.length;
     this.stormUI = new StormUI(this.match, text => { this.ui.setNote(text); if (text === 'Storm announced') this.ui.resetStand(); });
     const stormWidth = this.region.cols * TILE_SIZE, stormDepth = this.region.rows * TILE_SIZE;
     this.stormView = new StormView(stormWidth,stormDepth,this.stage.quality.id === 'fast');
@@ -758,18 +776,24 @@ export class Game {
     this.sound.chime('bond');
   }
 
-  /** Draw every newly recorded spore landing as a cloud crossing the canopy. */
+  /**
+   * Draw every newly released cloud of spores crossing the canopy: to the
+   * stand it founded, or, when it took hold nowhere, a stand's width downwind
+   * before it thins away.
+   */
   private launchSporeFlights(): void {
-    const records = this.match.colonization;
+    const records = this.match.sporeReleases;
     if (records.length === this.colonizationSeen) return;
     for (let i = this.colonizationSeen; i < records.length; i++) {
       const record = records[i]!;
       const from = this.region.stands[record.from];
-      const to = this.region.stands[record.to];
-      if (!from || !to) continue;
+      if (!from) continue;
+      const to = record.to === null ? null : this.region.stands[record.to];
+      const endX = to ? to.centreX : from.centreX + Math.cos(record.direction) * TILE_SIZE;
+      const endY = to ? to.centreY : from.centreY + Math.sin(record.direction) * TILE_SIZE;
       this.sporeFlights.launch(
         { x: from.centreX, y: from.centreY, z: this.region.heightAt(from.centreX, from.centreY) },
-        { x: to.centreX, y: to.centreY, z: this.region.heightAt(to.centreX, to.centreY) },
+        { x: endX, y: endY, z: this.region.heightAt(endX, endY) },
         record.owner === 'rival' ? 'rival' : 'player'
       );
       if (record.owner !== 'rival') this.sound.chime('spores');
@@ -1787,11 +1811,18 @@ export class Game {
 
     this.accumulator += dt * this.speed;
     let steps = 0;
+    const stepStart = performance.now();
     while (this.accumulator >= FIXED_STEP && steps < 24) {
       this.match.step(FIXED_STEP);
       this.accumulator -= FIXED_STEP;
       steps++;
+      // Always one step, then only as many as the frame can afford.
+      if (performance.now() - stepStart > STEP_BUDGET_MS) break;
     }
+    // Time the CPU could not afford is let go, not banked: banking it would
+    // make every later frame run the whole step cap and never recover.
+    if (this.accumulator > MAX_CARRY) this.accumulator = MAX_CARRY;
+    this.trackPace(dt, steps);
     if (this.spatial && steps > 0) {
       this.spatialRefreshClock += steps * FIXED_STEP;
       if (this.spatialRefreshClock >= 0.25) {
@@ -2030,6 +2061,28 @@ export class Game {
     for (const surface of this.surfaces) for (const entry of surface.trees) {
       if (entry.model) yield { key: `${surface.standId}:${entry.tree.id}`, model: entry.model, visible: surface.group.visible };
     }
+  }
+
+  /** Smooth the achieved speed and say so when the world cannot keep up. */
+  private trackPace(dt: number, steps: number): void {
+    if (this.speed <= 0 || dt <= 0) {
+      this.effectiveSpeed = this.speed;
+      this.paceSimulated = 0;
+      this.paceAsked = 0;
+      return;
+    }
+    this.paceSimulated += steps * FIXED_STEP;
+    this.paceAsked += dt;
+    if (this.paceAsked < 0.5) return;
+    const achieved = this.paceSimulated / this.paceAsked;
+    this.effectiveSpeed += (achieved - this.effectiveSpeed) * 0.5;
+    this.paceSimulated = 0;
+    this.paceAsked = 0;
+    const note = document.querySelector<HTMLElement>('#speed-note');
+    if (!note) return;
+    const behind = this.effectiveSpeed < this.speed * 0.85;
+    note.hidden = !behind;
+    if (behind) note.textContent = `running at ${this.effectiveSpeed.toFixed(1)}\u00d7 \u2014 the network is too large for ${this.speed}\u00d7 here`;
   }
 
   private setSpeed(speed: number): void {

@@ -27,7 +27,7 @@ try {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.goto(`${server.url}/?seed=raven-wood`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.url}/?start=best&seed=raven-wood`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
   await page.click('#sound');
   assert.equal(await page.getAttribute('#sound', 'aria-pressed'), 'true', 'the button reports sound on');

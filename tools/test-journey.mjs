@@ -148,7 +148,7 @@ const visibleLabels = () =>
       .map((button) => `${button.textContent.trim()}${button.disabled ? ' [disabled]' : ''}`)
   );
 
-await page.goto(withQaPreset(url + `/?seed=${seed}`, qa), { waitUntil: 'commit', timeout: 120000 });
+await page.goto(withQaPreset(url + `/?start=best&seed=${seed}`, qa), { waitUntil: 'commit', timeout: 120000 });
 await page.waitForFunction(() => Boolean(window.mycelia), null, { timeout: 120000 });
 console.log(formatRenderReport(await readRenderReport(page)));
 if (accelerated) { await page.evaluate(() => window.mycelia.game.stop()); console.log('Accelerated UI journey: fixed-step state frames, GPU draws only at checkpoints.'); }

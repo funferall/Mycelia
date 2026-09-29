@@ -11,7 +11,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const problems = collectProblems(page);
   page.setDefaultTimeout(300000);
-  await page.goto(`${server.url}/?seed=split-view&qa=fast`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.url}/?start=best&seed=split-view&qa=fast`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(window.mycelia?.game?.match));
   mkdirSync('design/shots', { recursive: true });
   // Synthetic fixture: the colony is fed while it grows, so it is large enough

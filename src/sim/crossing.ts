@@ -298,7 +298,8 @@ export class CrossingMatch {
 
   constructor(options: CrossingOptions = {}) {
     const seedText = options.seedText ?? 'raven-wood';
-    this.region = options.region ?? createRegion(seedText);
+    // A standalone bench keeps the earlier single best start (`StartRule`).
+    this.region = options.region ?? createRegion(seedText, undefined, undefined, 'best');
     this.soil = options.soil ?? new SoilVolume(this.region, hashString(`${seedText}:soil`));
     this.regionalCoordinates = options.regionalCoordinates ?? false;
     this.worldForStand = options.worldForStand;

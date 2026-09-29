@@ -158,7 +158,7 @@ const settle = async (page) => {
 // 0. A small opt-in smoke check, for fast visual iteration
 // ---------------------------------------------------------------------------
 if (smoke) {
-  const page = await open('/?seed=raven-wood', { width: 1200, height: 760 });
+  const page = await open('/?start=best&seed=raven-wood', { width: 1200, height: 760 });
   const loaded = await readRenderReport(page);
   check(
     'the smoke check is running the requested QA preset',
@@ -346,7 +346,7 @@ function movement(series) {
 // 1. A crossing is timed by the clock, not by the frame rate
 // ---------------------------------------------------------------------------
 {
-  const page = await open('/?seed=raven-wood&view=underground', { width: 900, height: 560 });
+  const page = await open('/?start=best&seed=raven-wood&view=underground', { width: 900, height: 560 });
 
   for (const rate of RATES) {
     const step = 1 / rate;
@@ -574,7 +574,7 @@ function movement(series) {
 // 5. A viewport change re-frames the active view
 // ---------------------------------------------------------------------------
 {
-  const page = await open('/?seed=raven-wood&view=underground');
+  const page = await open('/?start=best&seed=raven-wood&view=underground');
 
   const framed = () =>
     page.evaluate(() => {
@@ -709,7 +709,7 @@ function movement(series) {
 // 6. Reduced motion moves between the views without a crossing
 // ---------------------------------------------------------------------------
 {
-  const page = await open('/?seed=raven-wood&view=underground', { width: 1366, height: 768 }, { reducedMotion: 'reduce' });
+  const page = await open('/?start=best&seed=raven-wood&view=underground', { width: 1366, height: 768 }, { reducedMotion: 'reduce' });
   await page.evaluate(() => {
     window.__crossingFrames = 0;
     const tick = () => {
@@ -741,7 +741,7 @@ function movement(series) {
 // 7. What a click, a drag, a wheel and the keyboard actually do
 // ---------------------------------------------------------------------------
 {
-  const page = await open('/?seed=raven-wood&view=underground', { width: 1280, height: 800 });
+  const page = await open('/?start=best&seed=raven-wood&view=underground', { width: 1280, height: 800 });
   await page.click('#begin');
   await settle(page);
   // Paused, so the effect of an order is unambiguous: a waypoint either exists
@@ -997,7 +997,7 @@ function movement(series) {
 // 8. Every tree picks the authored tier its own size on screen deserves
 // ---------------------------------------------------------------------------
 if (!smoke) {
-  const page = await open('/?seed=raven-wood&view=forest', { width: 1366, height: 768 });
+  const page = await open('/?start=best&seed=raven-wood&view=forest', { width: 1366, height: 768 });
   const twoFrames = () =>
     page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
@@ -1135,7 +1135,7 @@ if (!smoke) {
 // 9. The stream is drawn above ground and is a threshold below it
 // ---------------------------------------------------------------------------
 if (!smoke) {
-  const page = await open('/?seed=raven-wood&view=forest', { width: 1366, height: 768 });
+  const page = await open('/?start=best&seed=raven-wood&view=forest', { width: 1366, height: 768 });
   const water = await page.evaluate(() => window.mycelia.game.renderReport().water);
   check(
     'the forest draws the region\u2019s own stream as a ribbon',

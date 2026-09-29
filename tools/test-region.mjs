@@ -72,7 +72,7 @@ function dump(region, seed) {
 // 1. The terrain is one surface, not nine squares
 // ---------------------------------------------------------------------------
 {
-  const region = createRegion(seeds[0]);
+  const region = createRegion(seeds[0], undefined, undefined, 'best');
   let worstSeam = 0;
   let checked = 0;
   for (const stand of region.stands) {
@@ -107,7 +107,7 @@ function dump(region, seed) {
 // ---------------------------------------------------------------------------
 {
   for (const seed of seeds) {
-    const region = createRegion(seed);
+    const region = createRegion(seed, undefined, undefined, 'best');
     dump(region, seed);
     const validation = region.validation;
     assert.ok(validation.ok, `${seed}: ${validation.problems.join('; ')}`);
@@ -150,9 +150,9 @@ function dump(region, seed) {
 // 3. A stand knows where it is, and the map is deterministic
 // ---------------------------------------------------------------------------
 {
-  const a = createRegion(seeds[0]);
-  const b = createRegion(seeds[0]);
-  const c = createRegion(seeds[1] ?? 'ironwood');
+  const a = createRegion(seeds[0], undefined, undefined, 'best');
+  const b = createRegion(seeds[0], undefined, undefined, 'best');
+  const c = createRegion(seeds[1] ?? 'ironwood', undefined, undefined, 'best');
   assert.deepEqual(a.stands, b.stands, 'the same seed must build the same stands');
   assert.equal(a.foundingStand, b.foundingStand);
   assert.notDeepEqual(a.stands.map((stand) => stand.elevation), c.stands.map((stand) => stand.elevation));
@@ -170,7 +170,7 @@ function dump(region, seed) {
 // 4. Wind: adjacent stands always, further only in heavy wind
 // ---------------------------------------------------------------------------
 {
-  const region = createRegion(seeds[0]);
+  const region = createRegion(seeds[0], undefined, undefined, 'best');
   const base = region.wind;
   const calm = { direction: base.direction, strength: base.strength };
   const from = region.foundingStand;
@@ -214,7 +214,7 @@ function dump(region, seed) {
 // 5. Communities decide the stand, and a stand decides its mix
 // ---------------------------------------------------------------------------
 {
-  const region = createRegion(seeds[0]);
+  const region = createRegion(seeds[0], undefined, undefined, 'best');
   const tally = (community) => {
     const counts = { oak: 0, birch: 0, hemlock: 0 };
     for (let i = 0; i < 1000; i++) counts[speciesFor(community, i / 1000)]++;
@@ -243,7 +243,7 @@ function dump(region, seed) {
 // 6. Validation rejects a region that cannot be played
 // ---------------------------------------------------------------------------
 {
-  const region = createRegion(seeds[0]);
+  const region = createRegion(seeds[0], undefined, undefined, 'best');
   const broken = {
     ...region,
     stands: region.stands.map((stand) => ({ ...stand, neighbours: [] })),
@@ -275,7 +275,7 @@ function dump(region, seed) {
     }));
 
   // A match opens in one stand, and only that stand is simulated.
-  const match = new RegionalMatch(seeds[0]);
+  const match = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
   assert.equal(match.colonizedStands, 1, 'a match opens with one colony');
   assert.equal(match.activeStandId, match.region.foundingStand, 'the founding stand is the one in view');
   assert.equal(match.stands.filter((stand) => stand.sim.hasColony).length, 1, 'no other stand holds a colony yet');
@@ -292,7 +292,7 @@ function dump(region, seed) {
 
   // Every colony shares one weather, without any of them being told about it.
   {
-    const other = new RegionalMatch(seeds[0]);
+    const other = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     advance(other, 90);
     const seasons = new Set(other.stands.map((stand) => stand.sim.season.id));
     assert.equal(seasons.size, 1, `colonies disagree about the season: ${[...seasons]}`);
@@ -322,7 +322,7 @@ function dump(region, seed) {
 
   // A bloom sends a spore to an adjacent stand, and the parent pays for it.
   {
-    const m = new RegionalMatch(seeds[0]);
+    const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     const from = m.region.foundingStand;
     const { stand, before } = release(m, from);
     assert.equal(m.colonization.length, 1, 'a bloom should found exactly one daughter colony here');
@@ -371,7 +371,7 @@ function dump(region, seed) {
   // Heavy wind reaches further than adjacency — but only when it has to, so the
   // test first fills every neighbour and then asks the storm for somewhere new.
   {
-    const m = new RegionalMatch(seeds[0]);
+    const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     const from = m.region.foundingStand;
     // Ordinary weather only carries a spore downwind, so fill every stand it
     // can reach and then ask the storm for somewhere it could not have gone.
@@ -430,7 +430,7 @@ function dump(region, seed) {
 
   // A parent that cannot pay sends nobody.
   {
-    const m = new RegionalMatch(seeds[0]);
+    const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     const from = m.region.foundingStand;
     const stand = m.stands[from];
     // Nothing to give: the colony still has its soil income, so give it a
@@ -453,7 +453,7 @@ function dump(region, seed) {
 
   // A colony keeps growing while nobody is looking at it.
   {
-    const m = new RegionalMatch(seeds[0]);
+    const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     const from = m.region.foundingStand;
     release(m, from);
     const daughterId = m.colonization[0].to;
@@ -476,8 +476,8 @@ function dump(region, seed) {
 
   // Where the camera is never changes what happens.
   {
-    const plain = new RegionalMatch(seeds[0]);
-    const watched = new RegionalMatch(seeds[0]);
+    const plain = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
+    const watched = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
     for (const m of [plain, watched]) {
       const net = m.stands[m.region.foundingStand].sim.player;
       net.nodes[net.rootId].carbon = 300;
@@ -504,8 +504,8 @@ function dump(region, seed) {
 
   // And the whole region is deterministic.
   {
-    const a = new RegionalMatch(seeds[1] ?? 'ironwood');
-    const b = new RegionalMatch(seeds[1] ?? 'ironwood');
+    const a = new RegionalMatch(seeds[1] ?? 'ironwood', undefined, { starts: 'best' });
+    const b = new RegionalMatch(seeds[1] ?? 'ironwood', undefined, { starts: 'best' });
     for (const m of [a, b]) {
       const net = m.stands[m.region.foundingStand].sim.player;
       net.nodes[net.rootId].carbon = 300;
@@ -524,7 +524,7 @@ function dump(region, seed) {
 
 // Resource summaries must never serve as a second bank.
 {
-  const m = new RegionalMatch(seeds[0]);
+  const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
   const net = m.sim.player;
   const root = net.nodes[net.rootId];
   root.carbon = 120; root.water = 12; root.nitrogen = 8;
@@ -547,7 +547,7 @@ function dump(region, seed) {
 // describes, hide what nobody has been down to record, and keep the difference
 // between an occupied stand and a connected one.
 {
-  const m = new RegionalMatch(seeds[0]);
+  const m = new RegionalMatch(seeds[0], undefined, { starts: 'best' });
   const founding = m.region.foundingStand;
   const home = m.stands[founding];
   // Give the founding colony a body worth surveying.
@@ -610,7 +610,7 @@ function dump(region, seed) {
 // The stream is a threshold, not a boundary: open water in the channel, wet
 // ground on the bank, and soil a network can still pass beneath the bed.
 {
-  const region = createRegion(seeds[0]);
+  const region = createRegion(seeds[0], undefined, undefined, 'best');
   const crossed = region.stands.filter((site) => site.stream);
   assert.ok(crossed.length > 0, 'the region must put a stream through at least one stand');
   const site = crossed[0];
@@ -662,6 +662,30 @@ function dump(region, seed) {
     'no strand ever grew into the channel'
   );
   ok('the channel refuses hyphae while the same network keeps growing around it');
+}
+
+// Starting stands are drawn per seed (MAP-16): they vary, the rival begins
+// apart from the player, every region still validates, and a seed repeats.
+{
+  const drawnSeeds = ['raven-wood', 'old-growth', 'ironwood', 'storm-race', 'a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7', 'h8'];
+  const founding = new Set();
+  for (const seed of drawnSeeds) {
+    const region = createRegion(seed);
+    const again = createRegion(seed);
+    assert.deepEqual([again.foundingStand, again.rivalStand], [region.foundingStand, region.rivalStand], `${seed}: starts repeat for a seed`);
+    assert.equal(region.validation.ok, true, `${seed}: ${region.validation.problems.join('; ')}`);
+    const home = region.stands[region.foundingStand];
+    const rival = region.stands[region.rivalStand];
+    assert.notEqual(rival.id, home.id, `${seed}: the rival begins in its own stand`);
+    assert.ok(Math.abs(home.sx - rival.sx) + Math.abs(home.sy - rival.sy) >= 2, `${seed}: the rival begins at least two steps away`);
+    founding.add(region.foundingStand);
+    const match = new RegionalMatch(seed);
+    assert.equal(match.activeStandId, home.id);
+    assert.deepEqual(match.stands.filter((stand) => stand.sim.hasColony).map((stand) => stand.site.id), [home.id], `${seed}: only the drawn stand holds the player`);
+    assert.deepEqual(match.stands.filter((stand) => stand.rivalPresent).map((stand) => stand.site.id), [rival.id], `${seed}: only the rival's stand holds the rival`);
+  }
+  assert.ok(founding.size >= 5, `starts vary across seeds: ${[...founding].join(', ')}`);
+  ok(`starting stands are drawn per seed (${founding.size} different starts across ${drawnSeeds.length} seeds) and the rival begins two or more steps away`);
 }
 
 console.log(`PASS: ${results.length} checks.`);
