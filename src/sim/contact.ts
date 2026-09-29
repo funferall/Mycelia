@@ -379,7 +379,7 @@ export class ContactWar {
     if (!spec) return { ok: false, message: 'No such chemical.' };
     if (![point.x, point.y, point.z].every(Number.isFinite)) return { ok: false, message: 'Aim at the soil.' };
     const wait = this.cooldown(owner, chemical);
-    if (wait > 0) return { ok: false, message: `${spec.name} ready in ${wait.toFixed(1)}s.` };
+    if (wait > 0) return { ok: false, message: `${spec.name} ready in ${(Math.ceil(wait * 10) / 10).toFixed(1)}s.` };
     const entries = regionNetworks(this.host).filter((entry) => !entry.net.extinct);
     const placed = this.place(entries);
     // The source: the caster's nearest living, connected strand within reach.

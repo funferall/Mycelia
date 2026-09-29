@@ -405,6 +405,7 @@ of persistent state, not separate copies of a colony or its resources.
 | ADV-03 | Planned | Rival mycorrhizal fungi | Compete for unoccupied fine-root tips using ecologically distinct strategies and first-colonizer priority. Trees may support different partners across their root systems and should allocate more carbon to useful trade relationships. |
 | ADV-04 | Planned | Mycoparasitic fungus | Rare direct predator tracks, coils around, and digests exposed fungal hyphae. Fine exploratory growth is vulnerable; reinforced cords and redundant paths resist or route around attack. Use sparingly after `Armillaria` and root competition are proven. |
 | ADV-05 | Partial | Saprotroph competitor | One deterministic saprotroph network already exists, but it is not yet a complete ecological opponent. Clarify its role as a decomposer racing for dead matter rather than a substitute for a root pathogen or mutualist rival. Remaining: it begins inside the player's own opening transect instead of a separate starting stand; it must start in a different tile than the player (`MAP-16`). |
+| AGENT-01 | Partial | Agent players (System One) | `src/agent/*`, `server/decide.ts`, `functions/api/decide.ts`, `src/ui/agent.ts`: an agent plays the rival in real time by answering typed questions (Jev format) over a compact observation, with confidence-gated actions through the ordinary orders; a key-holding relay for TypeSafe Jev and OpenAI Decisions; an offline heuristic fallback. Remaining: live Jev run, OpenAI preview schema, order log for replays, agent-versus-agent, fruiting and spores questions. See the agent-players major plan. |
 | ADV-07 | Partial | Contact war (direct network fighting) | `src/sim/contact.ts`: fronts where strands of different owners touch, supply-limited passive fighting, overgrowth, severing, elimination, and six mouse-aimed chemicals as deterministic orders (Q W E light, A D C heavy); hotbar, front alert and Z jump in the game; first-pass soil effects. Remaining: C3 art and sound, C4 map pulse and control groups, C6 balance. See the contact-war major plan. |
 | ADV-06 | Planned | Defensive counterplay | Add early sensing, tree provisioning, cord reinforcement, defensive enzymes, root quarantine, deliberate branch sacrifice, rerouting, occupation of vulnerable tips, and escape by early fruiting. Each response needs a cost and visible consequence. |
 | MODE-01 | Planned | Standard cultivation-under-pressure mode | One concealed `Armillaria` infection center, one or two competing mutualists, a decomposer benefiting from death, and seasonal/weather pressure. Tune around defense, triage, and eventual fruiting rather than total extermination. |
@@ -1319,6 +1320,102 @@ The outcome is either deadlock or replacement.
   (Today: anywhere nodes touch.)
 - Should chemicals harm trees and roots?
 - How much should the contact score counter-weigh the calm soundtrack?
+
+### Major plan: agent players through System One models (decided 29 September; first pass done 29 September)
+
+**User direction (29 September):**
+- Opponents will include LLM agents and "System One" decision models
+  playing in real time alongside people.
+- Start with the fast, cheap kind: TypeSafe **Jev** and OpenAI's
+  **Decisions API**.
+
+**What the providers are:**
+- **Jev** (https://docs.typesafe.ai/api):
+  - `POST https://api.typesafe.ai/v1/systemone` takes `{state, model:
+    "jev-latest", questions}`.
+  - Questions are typed:
+    - `choice` (up to 255 options), which answers `choice`, `probabilities`
+      and `confidence`;
+    - `score` (2 to 10 levels);
+    - `noul` (yes/no), which answers the probability of yes.
+  - About 100 ms. Input costs $0.042 per million tokens and output is free.
+  - Limits: 1,200 requests per minute and 64k context. Text only.
+- **OpenAI Decisions API** (DevDay, 29 September 2026):
+  - GPT-6 Luna in a limited preview.
+  - You define questions with a finite set of answers and send context as
+    text or images; answers come back with confidence in about 150 ms.
+  - The request schema and pricing are **not public**.
+
+**Design (System One style, code in control):**
+- **The model only picks from closed options.** It never invents
+  coordinates or free-form actions. The code proposes and labels the
+  candidates; the model chooses among them.
+- **Observation** (`src/agent/observe.ts`). A compact JSON state for one
+  owner:
+  - its own and the enemy's resources;
+  - fronts, fight tallies, and chemical costs and cooldowns;
+  - up to 8 labelled target strands (nearest, most strands cut off,
+    thickest), each reachable from a connected strand of the owner;
+  - up to 6 growth options: toward the enemy founding strand, toward dead
+    or burned wood, toward a living tree, deeper, or hold.
+- **Questions** (`src/agent/decision.ts`), all in one request:
+  - `stance` (attack / hold / withdraw / expand);
+  - `chemical` (none plus whichever of the six are off cooldown);
+  - `target`;
+  - `growth`;
+  - `strike` (noul);
+  - `losing` (noul).
+- **Acting** (`act`). Answers become the same validated orders a person
+  uses: `ContactWar.cast` and growth waypoints.
+  - A pick below confidence 0.35 is not acted on.
+  - Whether to cast is its own yes/no question: a cast needs strike ≥ 0.5,
+    and the spread-out chemical choice then only needs confidence 0.15.
+    Live, Jev's chemical confidence sat at 0.2 to 0.45 while strike was
+    about 0.85, so gating on the chemical alone withheld sensible casts.
+  - Stance limits what is allowed: a withdrawing colony may only barrage.
+  - Out-of-set answers do nothing.
+  - An identical growth order is not re-sent within 20 s.
+- **Controller** (`src/agent/controller.ts`).
+  - Asks every 250 ms of wall-clock time, only while game time is moving,
+    with one request in flight; the game never waits. A ~200 ms model
+    therefore decides about 4 times a second, fast enough to micro a
+    front.
+  - A landed answer is applied on the next frame.
+  - A failure falls back to the offline heuristic.
+  - Switching provider discards stale answers.
+  - A 5 s wall-clock watchdog drops a request that never returns.
+  - The agent replaces the placeholder bot for its owner.
+- **Relay** (`server/decide.ts`). API keys never reach the browser.
+  - It is served at `/api/decide` by a Cloudflare Pages Function
+    (`functions/api/decide.ts`, keys as Pages secrets) and by a Vite
+    middleware in dev and preview (keys in the git-ignored `.env.local`).
+  - GET reports which providers are configured; POST validates the
+    request, calls the provider and normalises the answers.
+  - Jev questions pass through unchanged.
+  - The OpenAI mapping is isolated in `openaiRequest` and `normaliseOpenAI`
+    and is **unverified** until the preview docs are available. It needs
+    `OPENAI_DECISIONS_URL` to be enabled at all.
+- **In the game.** The Opponent disclosure picks who plays the rival:
+  - the placeholder bot;
+  - the offline heuristic agent;
+  - Jev;
+  - OpenAI Decisions.
+
+  `?opponent=local|jev|openai` sets it at load. A readout shows the model,
+  latency, stance, actions, failures and tokens used.
+- **Cost, measured live.** A decision request with a live front is about
+  1,650 to 1,900 input tokens. At about 4 decisions a second on Jev that is
+  about $1 per hour of play.
+
+**Still to do:**
+- Confirm the OpenAI Decisions schema with preview access.
+- Keep a per-owner order log for replays: agent decisions arrive
+  asynchronously, so a replay needs recorded orders, not re-queried models.
+- Let an agent play the player's side and agent-versus-agent matches, and
+  give it fruiting, spores and powers as further questions.
+- Offer an image state for OpenAI, once it is confirmed.
+- Add a slower "System Two" LLM for strategy that sets the stance and
+  targets for the fast layer.
 
 ### Tech effects: implemented behavior and remaining work
 
@@ -2416,6 +2513,59 @@ either foundation.
   results here because those images are not durable repository evidence.
 
 ## Verification record
+
+### 29 September 2026: agent players, live Jev (`AGENT-01`)
+
+The key is in the git-ignored `.env.local`. These runs are live calls to
+`jev-1.13.0` through `server/decide.ts`.
+
+- **Sequential decisions on a real front** (`contact-run`, rival stand 3).
+  - First run, 12 decisions: median 174 ms, cold call 400 ms.
+    - Stance and target were confident (0.9+), and it always chose the cut
+      that severs the most strands.
+    - Chemical confidence was only 0.2 to 0.45, so the gate held back half
+      the casts.
+  - After offering only ready chemicals and adding the `strike` question,
+    8 of 8 decisions cast. The rival killed 44 strands and lost 13;
+    before, it killed 3 and lost 14.
+- **Real time, 20 s from the same state**, rival played by:
+  - the placeholder bot: 12 casts, 61 killed, 4 lost;
+  - the Jev agent with a 250 ms wall-clock pace: 76 decisions (3.8 Hz),
+    0 failures, median latency 181 ms, 126k input tokens (about $0.005),
+    35 casts using all six chemicals, 158 killed, 2 lost.
+  - The player's front was unattended, so this is the agent against no
+    micro at all.
+- **Regressions:** `tools/test-agent.mjs` (7 checks) and
+  `tools/test-contact.mjs` (11) pass. `tools/test-agent-view.mjs` passes,
+  and the preview relay reports `{"jev":true,"openai":false}`.
+
+### 29 September 2026: agent players, first pass (`AGENT-01`)
+
+No live provider was called: no key is configured, and every provider call in
+these tests is faked.
+
+- **`node tools/test-agent.mjs`: 7 checks pass.**
+  - A quiet opening gives 4 growth options, a state of 1,837 characters
+    (about 459 tokens) and 4 questions, all within the relay's limits.
+  - A real front gives 3 labelled, reachable targets. The request is about
+    1,166 tokens, roughly $0.18 per hour at 1 Hz on Jev.
+  - Heuristic answers become orders: an oxalate burst hit 50 strands, plus
+    one growth order.
+  - Low confidence, a withdrawing stance and out-of-set answers all withhold
+    action.
+  - The controller does not block, keeps one request in flight, applies an
+    answer when it lands, and falls back to the heuristic on failure.
+  - The offline agent played a minute: 59 decisions, 4 casts and 3 growth
+    orders.
+  - The relay validates requests and calls Jev with the key, `jev-latest`
+    and the questions unchanged, then normalises the answers. Unconfigured
+    providers refuse without calling out.
+- **`node tools/test-agent-view.mjs`** (SwiftShader, preview server): passes.
+  - `/api/decide` reports `{"jev":false,"openai":false}` and refuses an
+    empty question set with 422.
+  - `?opponent=local` played 4 decisions, the placeholder bot stood down,
+    and the picker marks the unconfigured providers.
+- **`npm run build`** (tsc and vite): passes.
 
 ### 29 September 2026: contact war, C1 and first-pass C2 (`ADV-07`)
 

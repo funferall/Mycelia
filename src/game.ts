@@ -50,6 +50,7 @@ import { StormView } from './render/storm';
 import { FireView } from './render/wildfire';
 import { FireUI } from './ui/wildfire';
 import { ContactBar } from './ui/contact';
+import { AgentUI } from './ui/agent';
 import { ContactEffects } from './render/contact';
 import { CHEMICALS, type Chemical } from './sim/contact';
 import { regionNetworks } from './sim/wildfire';
@@ -209,6 +210,8 @@ export class Game {
   /** Contact war: the chemical hotbar, the soil effects, and where the cursor rests. */
   private readonly contactBar: ContactBar;
   private readonly contactFx = new ContactEffects();
+  /** Who plays the rival: the placeholder, or an agent through a System One provider. */
+  private readonly agentUI: AgentUI;
   private readonly hover = { x: -1, y: -1 };
   private standPlane: { standId: number; alongIsX: boolean; offset: number; fixed: number } | null = null;
   private readonly droughtView: DroughtView;
@@ -337,6 +340,7 @@ export class Game {
     this.stage.scene.add(this.stormView.group);
     this.fireUI = new FireUI(this.match, text => this.ui.setNote(text));
     this.contactBar = new ContactBar(() => this.jumpToFront());
+    this.agentUI = new AgentUI(this.match);
     this.stage.scene.add(this.contactFx.group);
     this.fireView = new FireView(stormWidth, stormDepth,
       (x, y) => this.regionToScenePoint({ x, y, z: this.region.heightAt(x, y) }),
@@ -2941,6 +2945,7 @@ export class Game {
   }
 
   private updateContact(dt: number): void {
+    this.agentUI.update();
     const war = this.match.contact;
     const underground = this.stage.rig.view === 'underground' && !this.stage.rig.transitioning;
     this.contactBar.update(war, 'player', underground || war.frontsOf('player').length > 0);

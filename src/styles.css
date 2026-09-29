@@ -1221,3 +1221,8 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 @keyframes contact-pulse { 50% { border-color: #ff7a5a; } }
 @media (max-width: 760px) { .contact-bar { left: 50%; } .contact-chip { min-width: 0; } .contact-name { display: none; } }
 @media (prefers-reduced-motion: reduce) { .contact-alert { animation: none; } }
+
+/* Opponent picker and the agent's decision readout. */
+.agent-controls label { display: block; margin: 8px 0 4px; font: italic 13px var(--serif); color: var(--ink-dim); }
+.agent-controls select { width: 100%; }
+.agent-readout { min-height: 3.2em; margin: 8px 0 0; font: 12px var(--mono); color: var(--ink-dim); line-height: 1.45; }

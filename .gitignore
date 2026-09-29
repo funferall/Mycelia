@@ -10,3 +10,8 @@ design/shots/
 
 # Scratch output from the browser tooling.
 .playwright-mcp/
+
+# Provider API keys for the decision relay (never commit).
+.env.local
+.env.*.local
+.dev.vars
