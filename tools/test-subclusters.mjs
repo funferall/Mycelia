@@ -10,7 +10,7 @@ for (const file of readdirSync(new URL('../src/sim/', import.meta.url)).filter(f
 }
 const load = name => import(pathToFileURL(join(out, name + '.mjs')));
 const { RegionalMatch } = await load('match');
-const { MIN_SPLIT_STRANDS, MIN_GROUP_STRANDS, groupSummary, setGroupResting, groupResting } = await load('network');
+const { MIN_SPLIT_STRANDS, MIN_GROUP_STRANDS, groupSummary, setGroupResting, groupResting, createGroupWhere, orderWaypoint } = await load('network');
 
 /** A founding colony kept fed, so it grows like a well-supplied match. */
 function grown(seconds, seed = 'split-test') {
@@ -22,6 +22,47 @@ function grown(seconds, seed = 'split-test') {
 }
 const tipsOf = (net, id) => net.nodes.filter(n => n.alive && n.isTip && (n.group ?? 0) === id);
 const meanDistance = (nodes, p) => nodes.reduce((v, n) => v + Math.hypot(n.wx - p.gx, n.wy - p.gy), 0) / Math.max(1, nodes.length);
+
+{
+  const { sim, net, step } = grown(60);
+  const root = net.nodes[net.rootId];
+  const far = tipsOf(net, 0).sort((a, b) => Math.hypot(b.gx - root.gx, b.gy - root.gy) - Math.hypot(a.gx - root.gx, a.gy - root.gy))[0];
+  const first = sim.splitAt(root.gx + 0.5, root.gy + 0.5, 10);
+  const second = createGroupWhere(net, sim.world, (n) => !n.group && Math.hypot(n.gx - far.gx, n.gy - far.gy) <= 12);
+  assert(first.ok && second.ok, `${first.message}; ${second.message}`);
+  const targets = [
+    { id: first.id, gx: Math.max(4, root.gx - 30), gy: Math.min(60, root.gy + 10) },
+    { id: second.id, gx: Math.min(130, far.gx + 40), gy: Math.min(60, far.gy + 20) },
+  ];
+  const distance = (p) => Math.min(...net.nodes.filter((n) => n.alive && n.group === p.id).map((n) => Math.hypot(n.wx - p.gx, n.wy - p.gy)));
+  net.resting = true;
+  const colonyOrder = JSON.stringify(net.waypoints);
+  for (const p of targets) assert(sim.growTo(p.gx, p.gy, p.id).ok);
+  const before = targets.map(distance);
+  step(20);
+  for (const [i, p] of targets.entries()) {
+    assert(distance(p) < before[i] - 2, `group ${p.id} independently approaches its target (${before[i]} -> ${distance(p)})`);
+    assert.equal(net.groups.find((g) => g.id === p.id).waypoints[0].gx, p.gx);
+  }
+  assert.equal(net.resting, true);
+  assert.equal(JSON.stringify(net.waypoints), colonyOrder);
+  assert(net.tipCount <= net.tipCeiling, 'independent objectives share the existing tip allowance');
+  console.log('PASS two subclusters grow simultaneously toward opposite objectives while the colony keeps its own rest and orders');
+
+  const tip = tipsOf(net, second.id)[0];
+  orderWaypoint(net, tip.gx, tip.gy, sim.world, undefined, second.id);
+  assert.equal(net.groups.find((g) => g.id === second.id).waypoints.length, 1, 'an arrived tip keeps the group objective');
+  const held = [tip.wx, tip.wy];
+  step(1);
+  assert.deepEqual([tip.wx, tip.wy], held, 'an arrived tip holds instead of resuming autonomous growth');
+  const obstructed = Object.create(sim.world);
+  obstructed.passableFrom = () => false;
+  obstructed.cellFrom = () => null;
+  orderWaypoint(net, targets[1].gx, targets[1].gy, obstructed, undefined, second.id);
+  assert.equal(net.groups.find((g) => g.id === second.id).waypoints.length, 1, 'an obstructed tip keeps the group objective');
+  assert.equal(net.groups.find((g) => g.id === first.id).waypoints[0].gx, targets[0].gx, 'arrival and obstruction leave the other group alone');
+  console.log('PASS arrival holds and obstruction preserves the objective without clearing another group\'s direction');
+}
 
 {
   const { sim } = grown(0);
