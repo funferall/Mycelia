@@ -25,7 +25,7 @@ export interface HyphaePalette {
 
 export interface HyphaeOptions {
   /**
-   * Multiplies every strand radius. The rival saprotroph is drawn thinner than
+   * Multiplies every strand radius. The rival colony is drawn thinner than
    * the player so the two networks stay distinguishable by texture as well as
    * by hue -- the design system requires identity to survive colour-vision
    * deficiency, and a hue swap alone would not.
@@ -274,7 +274,8 @@ export class HyphaeMesh {
 
     // Radius follows thickness: a freshly committed strand is hair-fine, a cord
     // that has been carrying traffic is a visible pipe.
-    const radius = (0.04 + node.thickness * 0.26) * this.radiusScale;
+    // A cord's own strand is the dark core its braid (`cords.ts`) winds around.
+    const radius = (0.04 + node.thickness * 0.26) * this.radiusScale * (node.reinforced ? 0.45 : 1);
     this.dummy.position.copy(this.mid);
     this.dummy.quaternion.copy(this.quat);
     this.dummy.scale.set(radius, length * 1.04, radius);
@@ -287,7 +288,7 @@ export class HyphaeMesh {
     const flow = Math.min(1, Math.abs(node.flow) * 0.5);
     const heat = Math.min(1, node.thickness * 0.75 + flow * 0.5 + node.pulse * 0.4);
     this.color.copy(this.palette.glow).lerp(this.palette.core, heat);
-    this.color.multiplyScalar((0.22 + heat * 0.5) * (0.2 + health * 0.8));
+    this.color.multiplyScalar((0.22 + heat * 0.5) * (0.2 + health * 0.8) * (node.reinforced ? 0.5 : 1));
     // The selected subcluster reads cool and bright against the warm colony.
     if (this.highlight && node.group === this.highlight) this.color.lerp(SELECTED, 0.6).multiplyScalar(1.5);
     this.mesh.setColorAt(slot, this.color);

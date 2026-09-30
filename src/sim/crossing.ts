@@ -36,6 +36,8 @@ import {
   holdsAnyBond,
   markConnectivity,
   makeCord,
+  cordRoute,
+  layCord,
   nearestNode,
   orderWaypoint,
   startFruiting,
@@ -866,6 +868,21 @@ export class CrossingMatch {
     return best;
   }
 
+  /** The living strand of this body nearest a physical point, within reach. */
+  strandAt(point: Vec3, reach = 5): number | null {
+    return this.nearestSpatialNode(point, reach)?.id ?? null;
+  }
+
+  /** Lay a cord from one strand toward another (default: home), as far as affordable. */
+  cordRoute(fromId: number, toId?: number): { ok: boolean; message: string; laid: number } {
+    const route = cordRoute(this.colony, fromId, toId);
+    if (!route.length) return { ok: false, message: 'Those strands are not joined.', laid: 0 };
+    const laid = layCord(this.colony, route);
+    if (!laid) return { ok: false, message: 'Not enough carbon to spare for a cord.', laid: 0 };
+    this.log(`${laid} strand${laid === 1 ? '' : 's'} braided into a cord.`);
+    return { ok: true, message: 'Cord laid.', laid };
+  }
+
   cordAt(point: Vec3): { ok: boolean; message: string } {
     const gx = this.regionalCoordinates ? Math.floor(point.x) - this.originX
       : this.columnAt(this.plane.along === 'x' ? point.x : point.y);
@@ -906,8 +923,14 @@ export class CrossingMatch {
       : { ok: false, message: 'Choose a supplied strand in the upper 12 cm.' };
   }
 
-  /** Send the frontier toward one tree's root tip, for a remote bond. */
-  orderTowardTip(treeRef: TreeRef, tipId: number): { ok: boolean; message: string } {
+  /**
+   * Send the frontier toward one tree's root tip, for a remote bond.
+   *
+   * `viaRow` routes it first to that shallower row above the tip and then down,
+   * which is how a strand gets over a groundwater lens or a stone lip that a
+   * straight-line heading keeps pressing into.
+   */
+  orderTowardTip(treeRef: TreeRef, tipId: number, viaRow?: number): { ok: boolean; message: string } {
     const index = this.treeIndex(treeRef);
     const tree = index < 0 ? null : (this.view.trees[index] as Tree);
     const tip = tree?.rootTips[tipId];
@@ -918,8 +941,13 @@ export class CrossingMatch {
     const along = this.regionalCoordinates
       ? Math.floor(point.x) - this.originX
       : this.alongOfTip(treeRef.standId, tip);
-    orderWaypoint(this.colony, along, tip.gy, this.view,
-      this.regionalCoordinates ? point.y : undefined);
+    const lateral = this.regionalCoordinates ? point.y : undefined;
+    if (viaRow !== undefined && viaRow < tip.gy) {
+      orderWaypoint(this.colony, along, viaRow, this.view, lateral);
+      this.colony.waypoints.push({ gx: along, gy: tip.gy, lateral });
+    } else {
+      orderWaypoint(this.colony, along, tip.gy, this.view, lateral);
+    }
     return { ok: true, message: `Frontier directed to a root tip of tree ${treeRef.treeId}.` };
   }
 
@@ -966,7 +994,8 @@ export class CrossingMatch {
    */
   nearestUnbondedTip(
     standId: StandId,
-    exclude?: Set<string>
+    exclude?: Set<string>,
+    unpartneredTree = false
   ): { treeRef: TreeRef; tipId: number; distanceCm: number } | null {
     let best: { treeRef: TreeRef; tipId: number; distanceCm: number } | null = null;
     for (let index = 0; index < this.view.trees.length; index++) {
@@ -974,12 +1003,13 @@ export class CrossingMatch {
       if (!ref || ref.standId !== standId) continue;
       const tree = this.view.trees[index] as Tree;
       if (tree.dead) continue;
+      if (unpartneredTree && holdsAnyBond(tree, this.colony.colonyId)) continue;
       for (const tip of tree.rootTips) {
         if (tip.bondedTo !== null) continue;
         if (exclude?.has(`${ref.treeId}:${tip.id}`)) continue;
         const target = this.rootTipPosition(standId, tip);
         for (const node of this.colony.nodes) {
-          if (!node.alive || !node.connected) continue;
+          if (!node.alive || !node.connected || node.bondedTree >= 0) continue;
           if (node.standId !== standId) continue;
           const here = this.nodePosition(node);
           const distanceCm = Math.hypot(

@@ -1009,6 +1009,15 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .water-ring { stroke: #78969a; }
 .nitrogen-ring { stroke: #9cab7d; }
 .root-sigil { fill: none; stroke: #f2b353; stroke-width: 1.2; stroke-linecap: round; }
+/* A ring in trouble breathes red: the founding node starving (carbon), or a
+   partner tree going short of what the colony promised it (water, nitrogen).
+   Dashes as well as colour, so the warning survives colour-vision deficiency. */
+.reserve-ring.is-alarm { stroke: #e0472f; stroke-dasharray: 14 7; animation: ring-alarm 0.9s ease-in-out infinite alternate; }
+.root-sigil.is-alarm { stroke: #e0472f; animation: ring-alarm 0.9s ease-in-out infinite alternate; }
+@keyframes ring-alarm { from { opacity: 1; } to { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .reserve-ring.is-alarm, .root-sigil.is-alarm { animation: none; }
+}
 .reserve-caption { position: absolute; bottom: 70px; left: 0; right: 0; margin: 0; text-align: center; font: italic 13px var(--serif); color: var(--ink-dim); }
 .resource-legend { display: flex; justify-content: space-between; gap: 9px; margin-top: 12px; }
 .resource-readout { position: relative; border: 0; background: none; color: var(--ink); font: 17px var(--serif); padding: 10px 0; cursor: help; }

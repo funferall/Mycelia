@@ -2,14 +2,14 @@ import { AgentController, LocalProvider, RelayProvider, relayProviders, type Pro
 import type { RegionalMatch } from '../sim/match';
 
 const LABEL: Record<ProviderId | 'bot', string> = {
-  bot: 'Placeholder bot',
+  bot: 'Built-in rival',
   local: 'Heuristic agent (offline)',
   jev: 'Jev (TypeSafe System One)',
   openai: 'OpenAI Decisions (preview)',
 };
 
 /**
- * Who plays the rival: the placeholder bot, the offline heuristic agent, or a
+ * Who plays the rival: the built-in controller, the offline heuristic agent, or a
  * System One model through the relay. `?opponent=jev|openai|local` picks at
  * load. The readout shows the latest decision, its latency and its actions.
  */
@@ -50,7 +50,7 @@ export class AgentUI {
     if (id === 'bot') {
       this.agent?.release();
       this.agent = null;
-      this.readout.textContent = 'The placeholder lyses where it touches and bursts when it can.';
+      this.readout.textContent = 'The rival courts trees, spreads between stands, and contests the regional hold.';
       return;
     }
     const provider = id === 'local' ? new LocalProvider() : new RelayProvider(id);

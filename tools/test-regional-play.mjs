@@ -87,6 +87,48 @@ try {
     assert.equal(m.lineage.player.includes('deep-drink'), false);
   });
 
+  check('the rival begins as a mutualist and earns a real tree bond', () => {
+    const m = new RegionalMatch('raven-wood');
+    const home = m.stands[m.region.rivalStand];
+    const rival = home.sim.rival;
+    assert.notEqual(m.region.rivalStand, m.region.foundingStand);
+    assert.equal(rival.traits?.decomposer ?? false, false);
+    assert.equal(rival.carbon, m.active.sim.player.carbon);
+    for (let i = 0; i < 120 * 60 && !home.sim.world.trees.some((tree) =>
+      tree.rootTips.some((tip) => tip.bondedColonyId === rival.colonyId)); i++) m.step(DT);
+    const tree = home.sim.world.trees.find((candidate) => candidate.rootTips.some((tip) => tip.bondedColonyId === rival.colonyId));
+    assert.ok(tree, 'the rival can bond a tree using its own living strands');
+    assert.ok(tree.rootTips.some((tip) => rival.nodes[tip.bondedTo]?.bondedTree === tree.id));
+    assert.ok(m.standDominance()[home.site.id].rival >= 1);
+    // Give the already-bonded colony a completed bloom; then let its regional
+    // controller choose and grow through a seam with the ordinary tick.
+    rival.fruited = 1;
+    for (let i = 0; i < 180 * 60 && (m.rivalSpatialColonies.get(home.site.id)?.reachedStandIds().length ?? 0) < 2; i++) m.step(DT);
+    assert.ok((m.rivalSpatialColonies.get(home.site.id)?.reachedStandIds().length ?? 0) >= 2,
+      'the rival physically enters a neighbouring stand');
+    const body = m.rivalSpatialColonies.get(home.site.id);
+    const reached = body.reachedStandIds().find((id) => id !== home.site.id);
+    for (let i = 0; i < 120 * 60 && m.standDominance()[reached].rival === 0; i++) m.step(DT);
+    assert.ok(m.standDominance()[reached].rival >= 1, 'the connected rival body bonds a tree after crossing');
+  });
+
+  check('a rival bloom promotes its existing body to regional growth', () => {
+    const m = new RegionalMatch('raven-wood');
+    const origin = m.region.rivalStand;
+    const net = m.stands[origin].sim.rival;
+    const root = net.nodes[net.rootId];
+    const carbon = root.carbon;
+    net.fruited = 1;
+    for (let i = 0; i < 9 * 60; i++) m.step(DT);
+    const body = m.rivalSpatialColonies.get(origin);
+    assert.ok(body, 'a rival body receives a regional coordinator');
+    assert.equal(body.colony, net, 'promotion retains the same network');
+    assert.ok(body.colony.nodes[body.colony.rootId].spatial, 'its root keeps a physical position');
+    assert.ok(body.colony.waypoints.length > 0 || body.reachedStandIds().length > 1,
+      'the rival has an order into a neighbouring stand');
+    assert.ok(root.carbon <= carbon, 'promotion did not mint carbon');
+  });
+
   // ---------------------------------------------------------------- D: fusion
 
   /**
@@ -198,7 +240,7 @@ try {
    * so the bonds stand still while the rule is exercised.
    */
   const holdStands = (m, n, colony = 'player@fixture') => {
-    const dormant = m.stands.filter((stand) => stand.site.id !== m.activeStandId && !stand.sim.hasColony);
+    const dormant = m.stands.filter((stand) => stand.site.id !== m.activeStandId && !stand.sim.hasColony && !stand.rivalPresent);
     const chosen = dormant.slice(0, n);
     for (const stand of chosen) {
       const tree = stand.sim.world.trees.find((t) => !t.dead);
@@ -264,6 +306,17 @@ try {
     assert.deepEqual([entry.player, entry.rival, entry.holder], [1, 1, null]);
     assert.equal(m.hold.player.tiles, HOLD_TILES - 1);
     assert.equal(m.hold.player.since, null);
+  });
+
+  check('five rival held stands through a season cause a loss', () => {
+    const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
+    holdStands(m, HOLD_TILES, 'rival@fixture');
+    for (let i = 0; i < 90; i++) m.step(DT);
+    assert.equal(m.hold.rival.tiles, HOLD_TILES);
+    assert.notEqual(m.hold.rival.since, null);
+    nearTurn(m);
+    for (let i = 0; i < 6 * 60 && m.victory === 'playing'; i++) m.step(DT);
+    assert.equal(m.victory, 'lost');
   });
 
   console.log(`PASS: ${count} checks.`);

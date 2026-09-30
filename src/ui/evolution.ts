@@ -1,4 +1,5 @@
-import { ECON } from '../sim/content';
+import { ECON, SPECIES } from '../sim/content';
+import { holdsAnyBond } from '../sim/network';
 import { ADAPTATIONS, POWERS, adaptationState, powerState, learnAdaptation, invokePower } from '../sim/evolution';
 import type { Simulation } from '../sim/sim';
 
@@ -59,6 +60,7 @@ export class EvolutionUI {
   private sim?: Simulation;
   private dialog = document.createElement('dialog');
   private rings: SVGCircleElement[] = [];
+  private sigil: SVGPathElement | null = null;
   private resourceButtons: HTMLButtonElement[] = [];
   private techButtons = new Map<string, HTMLButtonElement>();
   private powerButtons = new Map<string, HTMLButtonElement>();
@@ -85,6 +87,7 @@ export class EvolutionUI {
     sheet.append(panel);
     panel.querySelector('header')!.append(document.querySelector('#season-name')!);
     this.rings = Array.from(panel.querySelectorAll('circle'));
+    this.sigil = panel.querySelector('.root-sigil');
     for (const [i, name] of ['Carbon', 'Water', 'Nitrogen'].entries()) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -212,6 +215,21 @@ export class EvolutionUI {
       this.resourceButtons[i]!.setAttribute('aria-label', label);
       this.resourceButtons[i]!.querySelector('.reserve-tooltip')!.textContent = `${value.toFixed(1)} · ${state} · connected reserve`;
     });
+    // Alarms: the total reserve can look abundant while the colony is dying,
+    // because it is spread thin across every strand. What kills a colony is its
+    // founding node starving, and what costs it partners is a tree going short.
+    const root = sim.hasColony ? net.nodes[net.rootId] : undefined;
+    const heart = Boolean(root?.alive && (root.carbon < 0.3 || root.health < 0.95));
+    let thirsty = false;
+    let hungry = false;
+    if (sim.hasColony) for (const tree of sim.world.trees) {
+      if (tree.dead || !holdsAnyBond(tree, net.colonyId)) continue;
+      if (tree.patience > SPECIES[tree.species].patience * 0.75) continue;
+      if (tree.waterReceived <= tree.nutrientReceived) thirsty = true; else hungry = true;
+    }
+    const alarms = [heart, thirsty, hungry];
+    alarms.forEach((on, i) => this.rings[i]!.classList.toggle('is-alarm', on));
+    this.sigil?.classList.toggle('is-alarm', heart);
     this.refresh();
   }
 

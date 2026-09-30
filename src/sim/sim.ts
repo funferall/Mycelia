@@ -20,6 +20,9 @@ import {
   dissolveGroup,
   nearestNode,
   makeCord,
+  cordRoute,
+  layCord,
+  planCord,
   startFruiting,
   starveBondedTree,
   stepNetwork,
@@ -122,19 +125,17 @@ export class Simulation {
       kit?.carbon ?? 220,
       kit ? { water: kit.water, nitrogen: kit.nitrogen } : {}
     );
-    // The rival saprotroph starts deep in the litter at the far end, where the
-    // decomposable matter is richest, and spreads toward the player.
-    const rivalStart = passableNear(this.world, Math.floor(GRID.cols * 0.14), 3);
+    // In a regional match the rival starts in another stand, beside roots just
+    // as the player does. Standalone fixtures keep the two founders apart.
+    const rivalStart = site ? startingGround(this.world) : passableNear(this.world, Math.floor(GRID.cols * 0.14), 3);
     this.rival = createNetwork(
       'rival',
       RIVAL_PALETTE.label,
       rivalStart.gx,
       rivalStart.gy,
       mulberry32(seed ^ 0x55aa77),
-      40
+      220
     );
-    // Today's placeholder opponent is a saprotroph: a decomposer by trait.
-    this.rival.traits = { decomposer: true };
 
     this.log(
       site
@@ -175,10 +176,13 @@ export class Simulation {
   }
 
   /** Keep the opening body's real XYZ positions while its flat UI stays local. */
-  syncRegionalPositions(includePlayer = true): void {
+  syncRegionalPositions(includePlayer = true, includeRival = true): void {
     const projection = this.world.regionalSoil;
     if (!projection) return;
-    for (const net of includePlayer ? [this.player, this.rival] : [this.rival]) for (const node of net.nodes) {
+    const nets = [includePlayer ? this.player : null, includeRival ? this.rival : null];
+    for (const net of nets) {
+      if (!net) continue;
+      for (const node of net.nodes) {
       // Only growing tips move. A node already synced where it stands keeps its
       // point: the projection is pure, so recomputing it would change nothing.
       const last = this.synced.get(node);
@@ -192,6 +196,7 @@ export class Simulation {
         node.lateral = point.y;
         node.targetLateral = point.y;
       }
+      }
     }
   }
 
@@ -200,7 +205,7 @@ export class Simulation {
   }
 
   /** Advance by exactly one fixed step. */
-  step(dt: number, playerManagedByRegion = false, soilManagedByRegion = false): void {
+  step(dt: number, playerManagedByRegion = false, soilManagedByRegion = false, rivalManagedByRegion = false): void {
     if (this.outcome !== 'playing' && !playerManagedByRegion && !this.regionalContinuation) return;
 
     this.time += dt;
@@ -238,15 +243,15 @@ export class Simulation {
       dt,
     };
     // A spatial colony is stepped once by RegionalMatch over the shared soil
-    // volume. This stand still advances its weather, saprotroph and trees.
+    // volume. This stand still advances its weather and trees.
     if (!playerManagedByRegion) stepNetwork(this.player, ctx);
-    if (this.rivalEnabled) stepNetwork(this.rival, ctx);
-    this.syncRegionalPositions(!playerManagedByRegion);
+    if (this.rivalEnabled && !rivalManagedByRegion) stepNetwork(this.rival, ctx);
+    this.syncRegionalPositions(!playerManagedByRegion, !rivalManagedByRegion);
 
-    this.stepTrees(dt, playerManagedByRegion);
+    this.stepTrees(dt, playerManagedByRegion, rivalManagedByRegion);
     // Charred remains decay into the soil; a decomposer's strands nearby double the pace.
     stepRemains(this.world, dt, (tree) => (this.decomposerNear(tree) ? REMAINS.decomposerSpeed : 1));
-    if (this.rivalEnabled) this.stepRivalDrama(dt);
+    if (this.rivalEnabled && !rivalManagedByRegion) this.stepRivalDrama(dt);
     if (!playerManagedByRegion) this.checkOutcome();
   }
 
@@ -275,7 +280,7 @@ export class Simulation {
    * minerals in return; a tree that goes without long enough severs the bond,
    * which is the economy's ability to strike back at the player.
    */
-  private stepTrees(dt: number, playerManagedByRegion = false): void {
+  private stepTrees(dt: number, playerManagedByRegion = false, rivalManagedByRegion = false): void {
     for (const tree of this.world.trees) {
       if (tree.dead) continue;
       // How well watered the tree has been lately. Read before this step's
@@ -289,18 +294,21 @@ export class Simulation {
       // Which of my nodes is bonded to this tree? The rules for what the tree
       // does about it live in `network.ts`, because a colony that crosses a
       // stand boundary trades with its partners by exactly the same ones.
-      const bondNode = bondedJunction(this.player, tree);
+      const playerBond = !playerManagedByRegion ? bondedJunction(this.player, tree) : null;
+      const rivalBond = this.rivalEnabled && !rivalManagedByRegion ? bondedJunction(this.rival, tree) : null;
       const bonded = holdsAnyBond(tree);
 
-      if (bondNode && !playerManagedByRegion) {
-        if (drawTreeDemand(tree, bondNode, spec, dt)) {
-          this.severBond(tree, 'stopped supplying');
-        }
-      } else if (bonded && !playerManagedByRegion) {
-        if (starveBondedTree(tree, dt)) {
-          this.severBond(tree, 'lost the strand that fed it');
-        }
-      } else if (!bonded) {
+      for (const [net, junction, managed] of [
+        [this.player, playerBond, playerManagedByRegion],
+        [this.rival, rivalBond, rivalManagedByRegion || !this.rivalEnabled],
+      ] as const) {
+        if (managed || !holdsAnyBond(tree, net.colonyId)) continue;
+        const sever = junction
+          ? drawTreeDemand(tree, junction, spec, dt)
+          : starveBondedTree(tree, dt);
+        if (sever) this.severBond(tree, net, junction ? 'stopped supplying' : 'lost the strand that fed it');
+      }
+      if (!bonded) {
         // Unbonded trees live off the soil alone. Drought hurts them, but
         // slowly: a stand must not be wiped out in the first minute by weather.
         const stress = Math.max(0, 0.2 - soilWater);
@@ -313,7 +321,7 @@ export class Simulation {
       // has not reached yet — which is how the player's target list grows.
       if (tree.health > 0.72 && this.season.warmth > 0.25) {
         tree.maturity = Math.min(1, tree.maturity + dt * 0.004 * this.season.light);
-        if (tree.maturity > 0.85 && bondNode && tree.rootTips.length < 9 && this.rng() < dt * 0.03) {
+        if (tree.maturity > 0.85 && bonded && tree.rootTips.length < 9 && this.rng() < dt * 0.03) {
           this.growRootTip(tree);
         }
       }
@@ -349,12 +357,12 @@ export class Simulation {
     }
   }
 
-  private severBond(tree: Tree, reason: string): void {
+  private severBond(tree: Tree, net: Network, reason: string): void {
     let severed = false;
     for (const tip of tree.rootTips) {
       if (tip.bondedTo === null) continue;
-      if ((tip.bondedColonyId ?? null) !== (this.player.colonyId ?? null)) continue;
-      const node = this.player.nodes[tip.bondedTo];
+      if ((tip.bondedColonyId ?? null) !== (net.colonyId ?? null)) continue;
+      const node = net.nodes[tip.bondedTo];
       if (node) {
         node.bondedTree = -1;
         node.bondedRootTip = -1;
@@ -369,39 +377,32 @@ export class Simulation {
     }
   }
 
-  /**
-   * The rival's "mind": very simple, and deliberately not a mirror of the
-   * player. It does not court trees at all. It hunts decomposable matter, which
-   * means every corpse — a dead tree, a starved strand — is a gift to it.
-   */
+  /** The rival uses the same root-tip bond and growth orders as the player. */
   private stepRivalDrama(dt: number): void {
-    if (this.rival.extinct) return;
+    if (this.rival.extinct || this.rival.resting) return;
     this.rivalThinkClock -= dt;
     if (this.rivalThinkClock > 0) return;
-    this.rivalThinkClock = 5 + this.rng() * 6;
-    if (this.rival.waypoints.length > 0) return;
-
-    // Look for the richest patch of organic matter the rival has not reached.
-    let bestScore = -Infinity;
-    const rivalRoot = this.rival.nodes[this.rival.rootId];
-    let bestX = rivalRoot?.gx ?? 0;
-    let bestY = rivalRoot?.gy ?? 0;
-    for (let sample = 0; sample < 220; sample++) {
-      const gx = Math.floor(this.rng() * GRID.cols);
-      const gy = Math.floor(this.rng() * GRID.rows);
-      const cell = this.world.cells[idx(gx, gy)];
-      if (!cell || cell.stratum === 'bedrock') continue;
-      // Distance matters: a saprotroph will not cross the whole sheet for a
-      // slightly better meal.
-      const dist = rivalRoot ? Math.hypot(gx - rivalRoot.gx, gy - rivalRoot.gy) : 0;
-      const score = cell.organic * 3 + cell.nitrogen - dist * 0.012 - cell.occupancy * 2;
-      if (score > bestScore) {
-        bestScore = score;
-        bestX = gx;
-        bestY = gy;
+    this.rivalThinkClock = 4;
+    let next: { gx: number; gy: number; score: number } | null = null;
+    for (const tree of this.world.trees) {
+      if (tree.dead) continue;
+      const alreadyPartnered = holdsAnyBond(tree, this.rival.colonyId);
+      for (const tip of tree.rootTips) {
+        if (tip.bondedTo !== null) continue;
+        const candidate = bondCandidate(this.rival, this.world, tree, tip);
+        if (!candidate) continue;
+        if (candidate.distanceCm <= BOND_REACH_CM && candidate.availableCarbon >= ECON.bondCharge &&
+          tryBond(this.rival, this.world, tree.id, tip.id)) {
+          this.log(`The rival bonded a ${SPECIES[tree.species].common}.`);
+          return;
+        }
+        const score = candidate.distanceCm + (alreadyPartnered ? 1000 : 0);
+        if (!next || score < next.score) next = { gx: tip.gx, gy: tip.gy, score };
       }
     }
-    orderWaypoint(this.rival, bestX, bestY);
+    if (next && (this.rival.waypoints[0]?.gx !== next.gx || this.rival.waypoints[0]?.gy !== next.gy)) {
+      orderWaypoint(this.rival, next.gx, next.gy, this.world);
+    }
   }
 
   private checkOutcome(): void {
@@ -562,6 +563,24 @@ export class Simulation {
     makeCord(this.player, node.id);
     this.log('A strand thickened into a cord.');
     return { ok: true, message: 'Cord thickened.' };
+  }
+
+  /**
+   * Lay a cord from one strand of the colony toward another (by default, all
+   * the way home to the founding node), as far as the colony can afford.
+   */
+  orderCordRoute(fromId: number, toId?: number): { ok: boolean; message: string; laid: number } {
+    if (this.outcome !== 'playing' && !this.regionalContinuation) return { ok: false, message: 'This specimen is complete.', laid: 0 };
+    const route = cordRoute(this.player, fromId, toId);
+    if (!route.length) return { ok: false, message: 'Those strands are not joined.', laid: 0 };
+    const laid = layCord(this.player, route);
+    if (!laid) {
+      return planCord(this.player, route).fresh === 0 && route.every((id) => this.player.nodes[id]?.reinforced)
+        ? { ok: false, message: 'Already a cord.', laid: 0 }
+        : { ok: false, message: 'Not enough carbon to spare for a cord.', laid: 0 };
+    }
+    this.log(`${laid} strand${laid === 1 ? '' : 's'} braided into a cord.`);
+    return { ok: true, message: 'Cord laid.', laid };
   }
 
   nearestAvailableTip(gx: number, gy: number, maxDist = 4): { treeId: number; tipId: number } | null {

@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { ECON, GRID, SPECIES } from './sim/content';
-import { groupResting, groupSummary, nearestNode, setGroupResting, type Network } from './sim/network';
+import { cordRoute, groupResting, groupSummary, nearestNode, planCord, setGroupResting, type Network } from './sim/network';
 import { Soundscape } from './audio/soundscape';
 import { LivingView } from './render/living';
 import { FruitingView, type FruitingSite } from './render/fruiting';
 import { TILE_SIZE, SurfaceForest } from './render/surface';
-import { COMMUNITY_LABEL, type Region } from './sim/region';
+import { COMMUNITY_LABEL, STAND_SIZE, type Region } from './sim/region';
+import { ProjectedNetwork } from './render/projected-network';
 import { RegionalMatch } from './sim/match';
 import { CrossingMatch, type CrossingDirection } from './sim/crossing';
-import { elevationAtDepthCm, standFrameOf, standIdAt, type Vec3 } from './sim/spatial';
+import { elevationAtDepthCm, rowDepthCm, standFrameOf, standIdAt, type Vec3 } from './sim/spatial';
 import { disposeView } from './render/dispose';
 import { TreeBatches, type BatchedTree } from './render/tree-batches';
 import { ForestDressing } from './render/forest-dressing';
@@ -35,7 +36,8 @@ import { Simulation } from './sim/sim';
 import { OverlayFade } from './render/fade';
 import { AssetLibrary } from './render/assets';
 import { ForestView } from './render/forest';
-import { HyphaeMesh, Motes } from './render/hyphae';
+import { HyphaeMesh, Motes, nodePosition } from './render/hyphae';
+import { BOTTLENECK_LOAD, CordOverlay, type CordSegment } from './render/cords';
 import { SoilMesh } from './render/soil';
 import { GroundwaterView, StreamView } from './render/water';
 import { Stage } from './render/stage';
@@ -86,7 +88,7 @@ const PLAYER_PALETTE = {
   glow: new THREE.Color('#c9690f'),
 };
 /**
- * The rival saprotroph is deliberately *less* luminous than the player, so a
+ * The rival colony is deliberately *less* luminous than the player, so a
  * contested frame reads as warmth losing to pallor. Its brightest strand (the
  * core) still sits below the player's core, and the bulk of the network is the
  * dim, cold glow colour.
@@ -245,6 +247,37 @@ export class Game {
   private emptySectionViewer: SpatialFixture | null = null;
   private reveal: NetworkReveal | null = null;
   private sectionView: SectionView | null = null;
+  /**
+   * What the transect below the stand in view shows and commands. Every
+   * stand's underground is the same flat transect; a stand the colony's
+   * regional body has grown into shows that body through the stand's own
+   * columns (`ProjectedNetwork`), and orders placed there go to the body.
+   */
+  private below: {
+    standId: number;
+    sim: Simulation;
+    body: CrossingMatch | null;
+    player: ProjectedNetwork | null;
+    rivalSource: Network | null;
+    rival: ProjectedNetwork | null;
+    /** The stand's simulation with `player` as the transect sees it. */
+    viewSim: Simulation;
+    /** The same with the whole colony as `player`: its reserves and blooms. */
+    colonySim: Simulation;
+  } | null = null;
+  /** Braided cords, bottlenecks and the cord preview over the stand's transect. */
+  private readonly cordOverlay: CordOverlay;
+  /** The same over a regional section, in that section's frame. */
+  private sectionCords: CordOverlay | null = null;
+  private readonly glowTexture: THREE.Texture;
+  /** A cord being dragged along the strands: where it began, and where it now ends. */
+  private cordDrag: { fromId: number; toId: number | null } | null = null;
+  private cordClock = 0;
+  private cordHoverClock = 0;
+  private cordHoverId: number | null = null;
+  private cordPreviewKey = '';
+  /** The last section clip drawn, so its cords are braided from the same edges. */
+  private sectionClip: ReturnType<typeof clipEdges> | null = null;
   private spatialRefreshClock = 0;
   private revealEnabled = false;
   private selectedEdgeKey: string | null = null;
@@ -266,7 +299,7 @@ export class Game {
   private syncSectionUI(): void {
     const panel = document.querySelector<HTMLElement>('#section-browser');
     if (!panel) return;
-    const show = this.section !== null || this.match.spatialColonies.has(this.match.activeStandId);
+    const show = this.section !== null;
     document.body.classList.toggle('spatial-colony', show);
     panel.hidden = !show;
     const status = document.querySelector('#section-status');
@@ -310,6 +343,9 @@ export class Game {
     // Thinner filaments for the rival, so the two networks differ in texture.
     this.rivalMesh = new HyphaeMesh(RIVAL_PALETTE, glow, { radiusScale: 0.62 });
     this.stage.scene.add(this.playerMesh.group, this.rivalMesh.group);
+    this.glowTexture = glow;
+    this.cordOverlay = new CordOverlay(PLAYER_PALETTE, glow, { radius: 0.3 });
+    this.playerMesh.group.add(this.cordOverlay.group);
 
     this.playerMotes = new Motes(glow, 900, 1337);
     this.rivalMotes = new Motes(glow, 420, 4242);
@@ -364,7 +400,7 @@ export class Game {
     // Art is opportunistic: the stand above is already drawn procedurally, and
     // whatever loads is handed over as it arrives.
     void this.assets.load().then(() => this.adoptAssets());
-    this.living = new LivingView(this.sim, this.assets);
+    this.living = new LivingView(this.belowView().viewSim, this.assets);
     this.stage.scene.add(this.living.group);
     this.groundwater = this.buildGroundwater();
     this.stage.scene.add(this.groundwater.group);
@@ -754,6 +790,8 @@ export class Game {
         standAt: (x, y) => standIdAt(this.region, x, y),
       });
       this.stage.scene.add(this.sectionView.group);
+      this.sectionCords = new CordOverlay(PLAYER_PALETTE, this.glowTexture, { radius: 0.35 });
+      this.sectionView.group.add(this.sectionCords.group);
     }
     this.refreshSpatialViews();
     this.syncSectionUI();
@@ -915,9 +953,7 @@ export class Game {
     }
     if (!result.ok || !this.match.spatial) return result;
     this.attachSpatialFixture(this.match.spatial);
-    const opened = this.openSection(selected);
-    if (opened.ok) this.syncViewUI();
-    return { ok: true, message: `${result.message} ${opened.message}` };
+    return result;
   }
 
   /** Re-read the colony: new growth, a cut strand, a stand just reached. */
@@ -1071,6 +1107,8 @@ export class Game {
     if (!this.spatial || !this.sectionView || !this.section) return;
     const display = this.sectionDisplaySpec(this.section.spec);
     const clip = clipEdges(this.spatial.region, display, this.spatial.colonyEdges() as RevealEdge[]);
+    this.sectionClip = clip;
+    this.cordClock = 0;
     const enemy = clipEdges(this.spatial.region, display, this.enemyEdges());
     this.sectionView.setSection(this.section.spec);
     this.sectionView.sync(clip, enemy, this.spatial.groupNodeIds?.(this.selectedGroup));
@@ -1194,7 +1232,121 @@ export class Game {
    * Open a section: the one asked for, else the one through the last strand
    * picked, else an opening plane in that stand.
    */
+  /** The rival network a stand's transect shows: its own, or a rival body grown in. */
+  private rivalSourceFor(standId: number): { net: Network; body: CrossingMatch | null } | null {
+    const stand = this.match.stands[standId];
+    if (!stand) return null;
+    const home = this.match.rivalSpatialColonies.get(standId);
+    if (home) return { net: home.colony, body: home };
+    for (const body of [...this.match.rivalSpatialColonies.values()].sort((a, b) => a.originStandId - b.originStandId)) {
+      if (body.stand(standId) !== null && body.nodesInStand(standId).length > 0) return { net: body.colony, body };
+    }
+    if (stand.rivalPresent && stand.sim.rivalEnabled) return { net: stand.sim.rival, body: null };
+    return null;
+  }
+
+  /** The row of stands a stand sits in, as regional y. */
+  private standBand(standId: number): { minY: number; maxY: number } | null {
+    const frame = standFrameOf(this.region, standId);
+    return frame ? { minY: frame.originY, maxY: frame.originY + STAND_SIZE } : null;
+  }
+
+  /** Recompute what the transect below the stand in view draws, when that changes. */
+  private belowView(): NonNullable<Game['below']> {
+    const standId = this.match.activeStandId;
+    const body = this.match.spatialColonies.get(standId) ?? this.match.spatialForStand(standId);
+    const rivalSource = this.rivalSourceFor(standId);
+    const known = this.below;
+    if (known && known.standId === standId && known.sim === this.sim && known.body === body &&
+      known.rivalSource === (rivalSource?.net ?? null)) return known;
+    const frame = standFrameOf(this.region, standId);
+    const band = this.standBand(standId);
+    const project = (net: Network, owner: CrossingMatch | null) =>
+      new ProjectedNetwork(net, owner && frame ? owner.originX - frame.originX : 0, band);
+    // Ground no colony of the player's has reached draws no strands of its own:
+    // its placeholder network is shown through a band nothing stands in.
+    const player = body ? project(body.colony, body)
+      : this.sim.hasColony ? null : new ProjectedNetwork(this.sim.player, 0, { minY: Infinity, maxY: -Infinity });
+    const rival = rivalSource ? project(rivalSource.net, rivalSource.body) : null;
+    const facade = (net: Network): Simulation => Object.create(this.sim, { player: { value: net } }) as Simulation;
+    this.below = {
+      standId, sim: this.sim, body, player, rivalSource: rivalSource?.net ?? null, rival,
+      viewSim: player ? facade(player.view) : this.sim,
+      colonySim: body ? facade(body.colony) : this.sim,
+    };
+    return this.below;
+  }
+
+  /** The regional point a transect cell of the stand in view stands for. */
+  private transectPoint(gx: number, gy: number): Vec3 | null {
+    const plane = this.match.transectPlane(this.match.activeStandId);
+    if (!plane) return null;
+    const x = plane.originX + gx + 0.5;
+    const y = plane.fixedY;
+    return { x, y, z: elevationAtDepthCm(this.region, x, y, rowDepthCm(gy)) };
+  }
+
+  /**
+   * An order placed in the transect of a stand the colony's regional body
+   * has grown into: the same orders as in the founding stand, sent to the
+   * body in regional coordinates.
+   */
+  private orderBelow(order: OrderId, gx: number, gy: number): { ok: boolean; message: string } {
+    const below = this.belowView();
+    const body = below.body;
+    if (!body || !below.player) return { ok: false, message: 'No colony of yours grows here.' };
+    const point = this.transectPoint(gx, gy);
+    if (!point) return { ok: false, message: 'This stand is not joined to the regional soil yet.' };
+    if (order === 'grow') return body.growAt(point, 'x', point.y, this.liveGroup());
+    if (order === 'bond') {
+      const tip = this.sim.nearestAvailableTip(gx, gy);
+      if (!tip) return { ok: false, message: 'Click a root tip to form a mycorrhizal bond.' };
+      return this.bondBelow(tip.treeId, tip.tipId);
+    }
+    const node = nearestNode(below.player.view, gx, gy, 4);
+    if (!node) return { ok: false, message: 'Choose one of your strands.' };
+    if (order === 'cord') return body.cordRoute(node.id);
+    const real = below.player.real(node.id);
+    return real ? body.fruitAt(body.nodePosition(real)) : { ok: false, message: 'Choose one of your strands.' };
+  }
+
+  /** Bond a root tip of the stand in view if a strand is there, else grow to it. */
+  private bondBelow(treeId: number, tipId: number): { ok: boolean; message: string } {
+    const body = this.belowView().body;
+    if (!body) return this.sim.orderBondTip(treeId, tipId);
+    const treeRef = { standId: this.match.activeStandId, treeId };
+    const bonded = body.bond(treeRef, tipId);
+    return bonded.ok ? bonded : body.orderTowardTip(treeRef, tipId);
+  }
+
+  /**
+   * Every stand's underground is its flat transect. Going below a stand enters
+   * it; the regional sections are kept only for the crossing test bench.
+   */
   openSection(standId?: number, sectionId?: string): { ok: boolean; message: string } {
+    if (!this.labCrossing) return this.goBelowStand(standId ?? this.selectedStandId ?? this.match.activeStandId);
+    return this.openSectionView(standId, sectionId);
+  }
+
+  private goBelowStand(standId: number): { ok: boolean; message: string } {
+    const site = this.region.stands[standId];
+    if (!site) return { ok: false, message: 'No such stand.' };
+    if (this.section) {
+      this.section = null;
+      this.stage.rig.clearSectionNavigation();
+      this.sectionView?.setSection(null);
+    }
+    if (standId !== this.match.activeStandId) {
+      if (this.stage.rig.view === 'forest' && !this.stage.rig.transitioning) this.captureForestContext();
+      this.enterStand(standId);
+    }
+    if (this.stage.rig.view !== 'underground') this.stage.rig.setView('underground', true);
+    this.syncSectionUI();
+    this.syncViewUI();
+    return { ok: true, message: `Below stand ${standId + 1} \u00b7 ${COMMUNITY_LABEL[site.community]}.` };
+  }
+
+  private openSectionView(standId?: number, sectionId?: string): { ok: boolean; message: string } {
     if (!this.spatial) return { ok: false, message: 'No spatial colony in this match.' };
     const browsable = this.match.spatialColonies.size > 0
       ? this.match.stands.map((stand) => stand.site.id)
@@ -1939,11 +2091,14 @@ export class Game {
     this.soil.update(dt);
     this.groundwater.update(elapsed, this.ambientMotion);
     this.updateUndergroundWeather(dt);
-    this.playerMesh.sync(this.sim.player);
-    this.rivalMesh.sync(this.sim.rival);
+    const below = this.belowView();
+    this.playerMesh.sync(below.viewSim.player);
+    const rivalNet = below.rival?.view ?? this.sim.rival;
+    this.rivalMesh.sync(rivalNet);
     const visualSpeed = Math.max(0.15, this.speed);
-    this.playerMotes.update(this.sim.player, dt * visualSpeed);
-    this.rivalMotes.update(this.sim.rival, dt * visualSpeed);
+    this.playerMotes.update(below.viewSim.player, dt * visualSpeed);
+    this.updateCords(dt, elapsed);
+    this.rivalMotes.update(rivalNet, dt * visualSpeed);
 
     const season = this.sim.season.id;
     if (season !== this.seasonId) {
@@ -2027,12 +2182,13 @@ export class Game {
       this.revealClock = 0;
       this.refreshReveal();
     }
-    this.living.update(this.sim, dt, this.reducedMotion, overlay);
+    this.living.update(this.belowView().viewSim, dt, this.reducedMotion, overlay, this.selectedGroup);
     const bonds = this.sim.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length;
     if (bonds > this.lastBonds) this.sound.chime('bond');
-    if (this.sim.player.fruited > this.lastFruits) this.sound.chime('fruit');
+    const colony = this.belowView().colonySim.player;
+    if (colony.fruited > this.lastFruits) this.sound.chime('fruit');
     this.lastBonds = bonds;
-    this.lastFruits = this.sim.player.fruited;
+    this.lastFruits = colony.fruited;
     this.sound.update({
       bonds,
       surface: blend,
@@ -2069,9 +2225,9 @@ export class Game {
             bondedTrees: activeSpatial.world.trees.filter(tree => tree.rootTips.some(tip => tip.bondedTo !== null)).length,
             livingTrees: activeSpatial.world.trees.filter(tree => !tree.dead).length,
           }
-        : deriveJourney(this.sim);
+        : deriveJourney(this.belowView().viewSim);
     }
-    this.ui.update(this.sim, dt, this.journey);
+    this.ui.update(this.belowView().colonySim, dt, this.journey);
     this.updateLasso();
     this.syncClusterControls();
     this.stormUI.update(dt);
@@ -2111,7 +2267,7 @@ export class Game {
     // Last word on the overlays: the views above write their own opacities, so
     // the fade is applied after them and nothing is left half lit.
     this.overlays.apply(overlay);
-    if (!this.sim.rivalEnabled) { this.rivalMesh.group.visible = false; this.rivalMotes.points.visible = false; }
+    if (!this.belowView().rival) { this.rivalMesh.group.visible = false; this.rivalMotes.points.visible = false; }
     // And the last word on what a section replaces. The match's own stand views
     // and the region's surfaces belong to the ground above, not to the plane
     // being inspected, so they leave while a section is open. This runs after
@@ -2389,11 +2545,6 @@ export class Game {
       return;
     }
     if (this.selectedStandId !== null && this.selectedStandId !== this.enterableStand) {
-      if (!this.match.stands[this.selectedStandId]?.sim.hasColony) {
-        this.setView('forest');
-        this.ui.setNote('No colony here yet. Fruit in an occupied stand to send spores on the wind.');
-        return;
-      }
       // A wheel crossing is requested by the rig before it reaches this method.
       // Return to its surface endpoint before rebinding a different soil slice.
       if (this.stage.rig.view !== 'forest') this.stage.rig.setView('forest', true);
@@ -2575,7 +2726,7 @@ export class Game {
   private enterStand(id: number): void {
     const old = this.region.stands[this.match.activeStandId];
     const next = this.region.stands[id];
-    if (!next || !this.match.stands[id].sim.hasColony || id === old.id) return;
+    if (!next || id === old.id) return;
     const selectedNetwork = this.groupNet();
     // The player is going below; the survey is an above-ground record.
     this.survey.dismiss();
@@ -2609,7 +2760,7 @@ export class Game {
     this.attachEdgeSoil();
     this.forest = new ForestView(this.sim.world);
     this.forest.showRootsOnly();
-    this.living = new LivingView(this.sim, this.assets);
+    this.living = new LivingView(this.belowView().viewSim, this.assets);
     this.groundwater = this.buildGroundwater();
     this.stage.scene.add(this.soil.group, this.forest.group, this.living.group, this.groundwater.group);
     this.playerMesh.reset();
@@ -2632,7 +2783,8 @@ export class Game {
     this.lastFruits = this.sim.player.fruited;
     this.ui.resetStand();
     this.ui.buildRail(this.sim);
-    this.ui.update(this.sim, 1, deriveJourney(this.sim));
+    this.below = null;
+    this.ui.update(this.belowView().colonySim, 1, deriveJourney(this.belowView().viewSim));
     this.lastView = '';
   }
 
@@ -2780,6 +2932,15 @@ export class Game {
           : `Bond with ${spec.common}`,
       disabled: false,
       onClick: () => {
+        if (distant && this.belowView().body) {
+          const result = this.bondBelow(target.treeId, target.tipId);
+          this.ui.setNote(result.message);
+          if (result.ok) {
+            this.living.acknowledge(target.gx, target.gy);
+            this.sound.chime('grow');
+          }
+          return;
+        }
         if (distant) {
           if (!this.sim.orderGrowth(target.gx, target.gy)) {
             this.ui.setNote('That root cannot be reached from here. Try a strand of your own.');
@@ -2792,7 +2953,7 @@ export class Game {
           );
           return;
         }
-        const result = this.sim.orderBondTip(target.treeId, target.tipId);
+        const result = this.bondBelow(target.treeId, target.tipId);
         this.ui.setNote(result.message);
         if (result.ok) this.living.acknowledge(target.gx, target.gy);
       },
@@ -2820,7 +2981,13 @@ export class Game {
       this.shiftDown = event.shiftKey;
       // Underground, holding still on the soil grows a selection circle.
       this.lasso = null;
-      if (this.canSelectRegion() && !event.shiftKey) {
+      this.cordDrag = null;
+      // With the cord tool, a press on one of the colony's strands takes hold
+      // of it: dragging braids the strands between, a tap braids the way home.
+      const cordFrom = this.cordToolActive() && !event.shiftKey ? this.cordStrandAt(event.clientX, event.clientY) : null;
+      if (cordFrom !== null) {
+        this.cordDrag = { fromId: cordFrom, toId: null };
+      } else if (this.canSelectRegion() && !event.shiftKey) {
         if (this.section) {
           // In a regional section the circle is drawn on the section plane, in XYZ.
           const point = this.sectionPointAt(event.clientX, event.clientY);
@@ -2851,6 +3018,11 @@ export class Game {
       // A growing selection circle holds the view still.
       if (this.lasso?.active) return;
       this.pointerMoved += Math.abs(dx) + Math.abs(dy);
+      // A cord in hand follows the cursor along the strands; the view stays put.
+      if (this.cordDrag) {
+        this.cordDrag.toId = this.cordStrandAt(event.clientX, event.clientY);
+        return;
+      }
       // Moving before the circle starts makes this a drag, not a selection.
       if (this.pointerMoved >= 6) this.lasso = null;
 
@@ -2873,6 +3045,12 @@ export class Game {
         canvas.releasePointerCapture(event.pointerId);
       } catch {
         /* capture already released */
+      }
+      const drag = this.cordDrag;
+      this.cordDrag = null;
+      if (drag) {
+        this.finishCord(drag, this.pointerMoved < 6);
+        return;
       }
       // A held press that grew a circle selects; it never also places an order.
       const lasso = this.lasso;
@@ -2899,7 +3077,7 @@ export class Game {
       }
     };
     canvas.addEventListener('pointerup', release);
-    canvas.addEventListener('pointercancel', () => { this.pointerDown = false; this.lasso = null; this.hideLassoRing(); });
+    canvas.addEventListener('pointercancel', () => { this.pointerDown = false; this.lasso = null; this.cordDrag = null; this.hideLassoRing(); });
 
     canvas.addEventListener(
       'wheel',
@@ -3142,10 +3320,22 @@ export class Game {
       if (result.ok) this.refreshSpatialViews();
       return;
     }
-    if (this.sim.outcome !== 'playing') return;
     const point = this.gridAt(clientX, clientY);
     if (!point) return;
     const order = this.ui.order;
+    // A stand the colony's regional body has grown into takes the same orders,
+    // sent to the body. The founding stand's body is the same network, so it
+    // is ordered this way too once it has crossed an edge.
+    if (this.belowView().body) {
+      const result = this.orderBelow(order, point.gx, point.gy);
+      if (result.ok) {
+        this.living.acknowledge(point.gx, point.gy);
+        this.sound.chime('grow');
+      }
+      this.ui.setNote(result.message);
+      return;
+    }
+    if (this.sim.outcome !== 'playing') return;
     if (order === 'grow' && (point.gx < 0 || point.gx >= GRID.cols)) {
       const direction = point.gx < 0 ? 'west' : 'east';
       const site = this.region.stands[this.match.activeStandId];
@@ -3198,7 +3388,7 @@ export class Game {
   private canSelectRegion(): boolean {
     if (this.stage.rig.view !== 'underground' || this.stage.rig.transitioning || !this.awakened) return false;
     if (this.section) return Boolean(this.spatial?.colony && this.spatial.splitAt);
-    return this.sim.outcome === 'playing' && this.sim.hasColony;
+    return Boolean(this.belowView().body) || (this.sim.outcome === 'playing' && this.sim.hasColony);
   }
 
   /**
@@ -3207,7 +3397,7 @@ export class Game {
    * groups when they are the same network.
    */
   private groupNet(): Network {
-    return (this.section && this.spatial?.colony) || this.sim.player;
+    return (this.section && this.spatial?.colony) || this.belowView().body?.colony || this.sim.player;
   }
 
   /** The selected subcluster if it still exists, else the colony at large. */
@@ -3218,6 +3408,7 @@ export class Game {
 
   private selectGroup(id: number): void {
     this.selectedGroup = id;
+    if (id) this.ui.setActiveOrder('grow');
     this.playerMesh.setHighlight(id);
     this.syncClusterControls(true);
     if (this.section) this.refreshSectionClip();
@@ -3267,7 +3458,9 @@ export class Game {
       if (!lasso.point || !this.spatial?.splitAt) return;
       result = this.spatial.splitAt(lasso.point, lasso.radius);
     } else {
-      result = this.sim.splitAt(lasso.gx, lasso.gy, lasso.radius);
+      const body = this.belowView().body;
+      const point = body ? this.transectPoint(lasso.gx, lasso.gy) : null;
+      result = body && point ? body.splitAt(point, lasso.radius) : this.sim.splitAt(lasso.gx, lasso.gy, lasso.radius);
     }
     this.ui.setNote(result.message);
     if (!result.ok || !result.id) return;
@@ -3284,15 +3477,12 @@ export class Game {
   private syncClusterControls(force = false): void {
     const net = this.groupNet();
     const summary = groupSummary(net);
-    const key = `${this.selectedGroup}|${summary.map((g) => `${g.id}:${g.strands}:${g.tips}:${g.resting}`).join(',')}`;
     const rest = document.querySelector<HTMLButtonElement>('#rest');
     if (rest) {
       const resting = groupResting(net, this.selectedGroup);
       rest.setAttribute('aria-pressed', String(resting));
       rest.textContent = resting ? 'Wake' : 'Rest';
     }
-    if (!force && key === this.clusterKey) return;
-    this.clusterKey = key;
     if (!this.clusterBar) {
       const bar = document.createElement('div');
       bar.className = 'cluster-bar';
@@ -3301,30 +3491,213 @@ export class Game {
       const anchor = document.querySelector('.primary-intents') ?? document.querySelector('#rest');
       if (!anchor) return;
       anchor.after(bar);
+      // One listener for the bar's lifetime: its buttons are never re-wired,
+      // so a click can never land between a button and its replacement.
+      bar.addEventListener('click', (event) => {
+        const target = event.target as HTMLElement;
+        const merge = target.closest<HTMLButtonElement>('.cluster-merge');
+        if (merge) {
+          this.mergeSubcluster(Number(merge.dataset.merge));
+          return;
+        }
+        const select = target.closest<HTMLButtonElement>('.cluster-select');
+        if (select) this.selectGroup(Number(select.dataset.group));
+      });
       this.clusterBar = bar;
     }
     const bar = this.clusterBar;
     bar.hidden = summary.length <= 1;
-    bar.innerHTML = summary.map((g) => {
-      const label = g.id ? `Subcluster ${g.id}` : 'Colony';
-      const state = g.resting ? ' · resting' : '';
-      const merge = g.id ? `<button type="button" class="cluster-merge" data-merge="${g.id}" aria-label="Merge subcluster ${g.id} back into the colony">×</button>` : '';
-      return `<span class="cluster-chip${g.id === this.selectedGroup ? ' is-selected' : ''}">` +
-        `<button type="button" class="cluster-select" data-group="${g.id}" aria-pressed="${g.id === this.selectedGroup}">` +
-        `${label} <small>${g.strands} strands · ${g.tips} tips${state}</small></button>${merge}</span>`;
-    }).join('') + '<p class="cluster-hint">Hold on the soil to circle a subcluster. Esc: whole colony.</p>';
-    for (const button of bar.querySelectorAll<HTMLButtonElement>('.cluster-select')) {
-      button.addEventListener('click', () => this.selectGroup(Number(button.dataset.group)));
+    // Rebuilt only when which chips exist, which is selected, or which rest
+    // changes. Strand and tip counts change every step as the colony grows;
+    // they are written into the existing chips, so the buttons under the
+    // pointer stay the same elements from press to release.
+    const key = `${this.selectedGroup}|${summary.map((g) => `${g.id}:${g.resting}`).join(',')}`;
+    if (force || key !== this.clusterKey) {
+      this.clusterKey = key;
+      bar.innerHTML = summary.map((g) => {
+        const label = g.id ? `Subcluster ${g.id}` : 'Colony';
+        const merge = g.id ? `<button type="button" class="cluster-merge" data-merge="${g.id}" aria-label="Merge subcluster ${g.id} back into the colony">×</button>` : '';
+        return `<span class="cluster-chip${g.id === this.selectedGroup ? ' is-selected' : ''}">` +
+          `<button type="button" class="cluster-select" data-group="${g.id}" aria-pressed="${g.id === this.selectedGroup}">` +
+          `${label} <small data-counts="${g.id}"></small></button>${merge}</span>`;
+      }).join('') + '<p class="cluster-hint">Select a subcluster, then click soil to direct it. Each keeps its destination. Esc: colony.</p>';
     }
-    for (const button of bar.querySelectorAll<HTMLButtonElement>('.cluster-merge')) {
-      button.addEventListener('click', () => {
-        const id = Number(button.dataset.merge);
-        if (this.section && this.spatial?.mergeGroup) this.spatial.mergeGroup(id); else this.sim.mergeGroup(id);
-        this.playerMesh.refreshColors();
-        if (this.selectedGroup === id) this.selectGroup(0); else this.syncClusterControls(true);
-        this.ui.setNote(`Subcluster ${id} rejoins the colony and follows its orders.`);
-      });
+    for (const g of summary) {
+      const counts = bar.querySelector<HTMLElement>(`[data-counts="${g.id}"]`);
+      const text = `${g.strands} strands · ${g.tips} tips${g.resting ? ' · resting' : g.ordered ? ' · directed' : ''}`;
+      if (counts && counts.textContent !== text) counts.textContent = text;
     }
+  }
+
+  /** Return a subcluster to the colony, on whichever network holds it. */
+  private mergeSubcluster(id: number): void {
+    if (!id) return;
+    const body = this.section ? this.spatial : this.belowView().body;
+    const merged = body?.mergeGroup ? body.mergeGroup(id) : this.sim.mergeGroup(id);
+    this.playerMesh.refreshColors();
+    if (this.selectedGroup === id) this.selectGroup(0); else this.syncClusterControls(true);
+    this.ui.setNote(merged === false
+      ? `Subcluster ${id} has already rejoined the colony.`
+      : `Subcluster ${id} rejoins the colony and follows its orders.`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Cords: drag along the colony's strands to braid them into a cord; a tap on
+  // a strand braids the route from there home. The preview shows the rope
+  // before it is paid for - bright as far as the colony can afford, red past
+  // it - and, while the tool is in hand, the strands running full glow.
+  // -------------------------------------------------------------------------
+
+  private cordToolActive(): boolean {
+    return this.ui.order === 'cord' && this.awakened &&
+      this.stage.rig.view === 'underground' && !this.stage.rig.transitioning;
+  }
+
+  /** The network cords are laid in, for the view that is showing. */
+  private cordNet(): Network | null {
+    if (this.section) return this.sectionBody()?.colony ?? null;
+    const body = this.belowView().body;
+    if (body) return body.colony;
+    return this.sim.hasColony && !this.sim.player.extinct ? this.sim.player : null;
+  }
+
+  /** The colony's strand under the cursor, if the cord tool can take hold of one. */
+  private cordStrandAt(clientX: number, clientY: number): number | null {
+    if (this.section) {
+      const body = this.sectionBody();
+      const point = this.sectionPointAt(clientX, clientY);
+      return body && point ? body.strandAt(point, 5) : null;
+    }
+    const below = this.belowView();
+    if (!below.body && !this.sim.hasColony) return null;
+    const point = this.gridAt(clientX, clientY);
+    return point ? nearestNode(below.viewSim.player, point.gx, point.gy, 3)?.id ?? null : null;
+  }
+
+  /** A node's place in the frame of the overlay that is drawing it. */
+  private cordPoint(net: Network, id: number): THREE.Vector3 | null {
+    if (!this.section) {
+      // The transect draws the colony through its projection.
+      const shown = this.belowView().viewSim.player.nodes[id];
+      return shown ? nodePosition(shown, new THREE.Vector3()) : null;
+    }
+    const node = net.nodes[id];
+    if (!node) return null;
+    const body = this.sectionBody();
+    return body ? this.regionToScenePoint(body.nodePosition(node)) : null;
+  }
+
+  private finishCord(drag: { fromId: number; toId: number | null }, tapped: boolean): void {
+    // Dragged off the strands: nothing to braid to.
+    if (!tapped && drag.toId === null) return;
+    const toId = tapped ? undefined : drag.toId ?? undefined;
+    const result = this.section
+      ? this.sectionBody()?.cordRoute(drag.fromId, toId)
+      : this.belowView().body?.cordRoute(drag.fromId, toId) ?? this.sim.orderCordRoute(drag.fromId, toId);
+    if (!result) return;
+    this.ui.setNote(result.message);
+    this.cordClock = 0;
+    this.cordPreviewKey = '';
+    if (!result.ok) return;
+    this.sound.chime('grow');
+    if (this.section) this.refreshSpatialViews();
+  }
+
+  /** Per frame: braid the cords, mark the bottlenecks, draw the preview. */
+  private updateCords(dt: number, time: number): void {
+    const overlay = this.section ? this.sectionCords : this.cordOverlay;
+    // The overlay of the view not showing keeps no preview of its own.
+    const idle = this.section ? this.cordOverlay : this.sectionCords;
+    idle?.setPreview([], 0);
+    if (!overlay) return;
+    const net = this.cordNet();
+    const tool = this.cordToolActive();
+
+    this.cordClock -= dt;
+    const rebuilt = this.cordClock <= 0;
+    if (rebuilt) {
+      this.cordClock = 0.25;
+      const segments: CordSegment[] = [];
+      const choke: THREE.Vector3[] = [];
+      const chokeLoad: number[] = [];
+      const busy = (load: number | undefined) => tool && (load ?? 0) > BOTTLENECK_LOAD && choke.length < 2000;
+      if (this.section && this.sectionClip && net) {
+        overlay.setNormal(this.section.spec.plane.along === 'x' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0));
+        for (const edge of this.sectionClip.visible) {
+          const node = net.nodes[edge.child];
+          if (!node?.alive || !edge.connected) continue;
+          const a = this.regionToScenePoint(edge.to);
+          const b = this.regionToScenePoint(edge.from);
+          if (edge.reinforced) segments.push({ id: edge.child, parentId: edge.parent, a, b, load: node.load ?? 0 });
+          else if (busy(node.load)) { choke.push(a.add(b).multiplyScalar(0.5)); chokeLoad.push(node.load ?? 0); }
+        }
+        overlay.setCords(segments, this.section.spec.id);
+      } else if (!this.section && net) {
+        // Drawn through the transect's projection of the colony.
+        const shown = this.belowView().viewSim.player;
+        for (const node of shown.nodes) {
+          if (!node.alive || node.parent < 0) continue;
+          const parent = shown.nodes[node.parent];
+          if (!parent?.alive) continue;
+          if (node.reinforced) {
+            segments.push({ id: node.id, parentId: parent.id, a: nodePosition(node, new THREE.Vector3()), b: nodePosition(parent, new THREE.Vector3()), load: node.load ?? 0 });
+          } else if (busy(node.load)) {
+            choke.push(nodePosition(node, new THREE.Vector3()).add(nodePosition(parent, new THREE.Vector3())).multiplyScalar(0.5));
+            chokeLoad.push(node.load ?? 0);
+          }
+        }
+        overlay.setCords(segments, `transect:${this.match.activeStandId}`);
+      } else {
+        overlay.setCords([], 'none');
+      }
+      overlay.setBottlenecks(choke, chokeLoad);
+    }
+
+    // The preview: the dragged route, or the route home from the strand under
+    // the cursor. Re-read whenever it changes, and with each rebuild above so
+    // what the colony can afford stays current.
+    let from: number | null = null;
+    let to: number | undefined;
+    if (tool && net) {
+      if (this.cordDrag) {
+        from = this.cordDrag.fromId;
+        if (this.pointerMoved >= 6) {
+          if (this.cordDrag.toId === null) from = null;
+          else to = this.cordDrag.toId;
+        }
+      } else {
+        this.cordHoverClock -= dt;
+        if (this.cordHoverClock <= 0) {
+          this.cordHoverClock = 0.08;
+          this.cordHoverId = this.cordStrandAt(this.hover.x, this.hover.y);
+        }
+        from = this.cordHoverId;
+      }
+    }
+    const key = from === null ? '' : `${from}>${to ?? 'home'}`;
+    if (key !== this.cordPreviewKey || (key && rebuilt)) {
+      this.cordPreviewKey = key;
+      if (from === null || !net) {
+        overlay.setPreview([], 0);
+      } else {
+        const route = cordRoute(net, from, to);
+        const plan = planCord(net, route);
+        const points: THREE.Vector3[] = [];
+        let current = from;
+        const first = this.cordPoint(net, current);
+        if (first) points.push(first);
+        for (const id of route) {
+          const node = net.nodes[id]!;
+          const next = node.parent === current ? id : node.parent;
+          const at = this.cordPoint(net, next);
+          if (!at) break;
+          points.push(at);
+          current = next;
+        }
+        overlay.setPreview(points, plan.affordable + 1);
+      }
+    }
+    overlay.update(time, this.reducedMotion);
   }
 
   private applyOrder(order: OrderId): void {
@@ -3333,7 +3706,7 @@ export class Game {
     const hints: Record<OrderId, string> = {
       grow: 'Click the soil to send the growth frontier there.',
       bond: 'Click a root tip to form a mycorrhizal bond.',
-      cord: 'Click one of your strands to thicken it into a cord.',
+      cord: 'Drag along your strands to braid a cord. Tap a strand: braid it home.',
       fruit: 'Click near the surface to raise a fruiting body.',
     };
     this.ui.setNote(hints[order]);

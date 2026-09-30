@@ -58,6 +58,11 @@ export interface HyphaNode {
   bondedRootTip: number;
   /** Net carbon that moved through this node last tick; signs are flow direction. */
   flow: number;
+  /**
+   * 0..1, smoothed: how full this strand's carbon pipe ran. Near 1 the strand
+   * is a bottleneck, the place a cord pays for itself. Derived, never hashed.
+   */
+  load?: number;
   /** 0..1 decaying highlight, so the renderer can flash recent activity. */
   pulse: number;
   /** Seconds this node has existed. Drives thickening and rendering taper. */
@@ -391,7 +396,7 @@ export function isPassable(world: World, gx: number, gy: number): boolean {
  * from cells the network already occupies.
  */
 function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
-  if (world.spatialGrowth) {
+  if (world.spatialGrowth || (net.groups?.length && waypointsOf(net, tip.group).length)) {
     chooseSpatialTarget(net, world, tip, rng);
     return;
   }
@@ -479,7 +484,16 @@ function chooseTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rn
 function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, rng: Rng): void {
   const waypoints = waypointsOf(net, tip.group);
   let waypoint = waypoints[0];
-  if (waypoint && Math.hypot(waypoint.gx + 0.5 - tip.wx, waypoint.gy + 0.5 - tip.wy,
+  // Destinations of a split body persist. One arrived or obstructed tip must
+  // not release all the other tips from their group's objective.
+  if (atGroupTarget(net, world, tip)) {
+    tip.targetGx = tip.gx;
+    tip.targetGy = tip.gy;
+    tip.targetLateral = tip.y;
+    tip.ordered = true;
+    return;
+  }
+  if (!net.groups?.length && waypoint && Math.hypot(waypoint.gx + 0.5 - tip.wx, waypoint.gy + 0.5 - tip.wy,
     (waypoint.lateral ?? tip.y) - tip.lateral) < 2.2) {
     waypoints.shift();
     waypoint = waypoints[0];
@@ -489,7 +503,8 @@ function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, 
   const headingDepth = parent ? tip.gy - parent.gy : 1;
   const headingLateral = parent ? tip.y - parent.y : 0;
   let best = { score: -Infinity, dx: 0, dy: 0, dl: 0 };
-  for (let dl = -1; dl <= 1; dl++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+  const lateralReach = world.spatialGrowth ? 1 : 0;
+  for (let dl = -lateralReach; dl <= lateralReach; dl++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     if (dx === 0 && dy === 0 && dl === 0) continue;
     const cell = world.cellFrom(tip, dx, dy, dl);
     if (!cell || !world.passableFrom(tip, dx, dy, dl)) continue;
@@ -497,7 +512,7 @@ function chooseSpatialTarget(net: Network, world: NetworkWorld, tip: HyphaNode, 
     if (waypoint) {
       const towardX = waypoint.gx + 0.5 - tip.wx;
       const towardDepth = waypoint.gy + 0.5 - tip.wy;
-      const towardLateral = (waypoint.lateral ?? tip.y) - tip.lateral;
+      const towardLateral = world.spatialGrowth ? (waypoint.lateral ?? tip.y) - tip.lateral : 0;
       const length = Math.hypot(towardX, towardDepth, towardLateral) || 1;
       score = (dx * towardX + dy * towardDepth + dl * towardLateral) /
         (Math.hypot(dx, dy, dl) * length) * 8;
@@ -595,11 +610,6 @@ export function stepNetwork(net: Network, ctx: StepContext): void {
 
 /** Recompute how wide the growth frontier may be. */
 function updateTipCeiling(net: Network): void {
-  if (net.owner === 'rival') {
-    // A saprotroph does not court trees, so it is not gated on symbiosis.
-    net.tipCeiling = 34;
-    return;
-  }
   let bonded = 0;
   for (const node of net.nodes) {
     // A cut-off junction is no longer feeding a tree, so it no longer widens
@@ -791,6 +801,8 @@ function transport(net: Network, dt: number): void {
 
 interface TransportBuffers {
   pipe: Float64Array;
+  /** Fraction of each edge's pipe that carbon used this step. */
+  load: Float64Array;
   reserve: Float64Array;
   fill: Float64Array;
   keep: Float64Array;
@@ -808,6 +820,7 @@ function transportBuffers(size: number): TransportBuffers {
     const capacity = Math.max(size, (sharedBuffers?.pipe.length ?? 0) * 2, 1024);
     sharedBuffers = {
       pipe: new Float64Array(capacity),
+      load: new Float64Array(capacity),
       reserve: new Float64Array(capacity),
       fill: new Float64Array(capacity),
       keep: new Float64Array(capacity),
@@ -912,7 +925,7 @@ function moveResource(
   // Per-node inputs, precomputed by `transport`: edge throughput, the reserve a
   // node holds before shipping inward, the level it fills a child to, and what
   // it keeps back on the outward sweep.
-  const { pipe, reserve, fill, keep, value, flow } = buffers;
+  const { pipe, reserve, fill, keep, value, flow, load } = buffers;
   const isCarbon = key === 'carbon';
   const count = order.length;
 
@@ -924,7 +937,10 @@ function moveResource(
     const id = order[i]!;
     const node = nodes[id]!;
     value[id] = node[key];
-    if (isCarbon) flow[id] = node.flow;
+    if (isCarbon) {
+      flow[id] = node.flow;
+      load[id] = 0;
+    }
   }
 
   for (let i = count - 1; i >= 0; i--) {
@@ -937,6 +953,7 @@ function moveResource(
     value[id] = value[id]! - moved;
     value[parentId] = value[parentId]! + moved;
     if (isCarbon) {
+      if (pipe[id]! > 0) load[id] = Math.max(load[id]!, moved / pipe[id]!);
       flow[id] = flow[id]! - moved;
       flow[parentId] = flow[parentId]! + moved;
     }
@@ -964,6 +981,9 @@ function moveResource(
       value[id] = value[id]! - moved;
       value[childId] = value[childId]! + moved;
       if (isCarbon) {
+        // Outward, the parent's pipe is the limit, so the parent's strand is
+        // the one running full.
+        if (edge > 0) load[id] = Math.max(load[id]!, moved / edge);
         flow[id] = flow[id]! - moved;
         flow[childId] = flow[childId]! + moved;
       }
@@ -974,7 +994,10 @@ function moveResource(
     const id = order[i]!;
     const node = nodes[id]!;
     node[key] = value[id]!;
-    if (isCarbon) node.flow = flow[id]!;
+    if (isCarbon) {
+      node.flow = flow[id]!;
+      node.load = (node.load ?? 0) + (load[id]! - (node.load ?? 0)) * 0.08;
+    }
   }
 }
 
@@ -1009,6 +1032,8 @@ function extendTips(net: Network, ctx: StepContext): void {
   for (const node of net.nodes) {
     if (!node.alive || !node.isTip) continue;
     if (grouped && restingOf(net, node.group)) continue;
+    // Arrived tips hold the objective; the rest keep growing toward it.
+    if (atGroupTarget(net, world, node)) continue;
 
     // Recheck before committing as well as moving: a rising table may have
     // flooded a target since this tip paid for it. Existing strands persist,
@@ -1167,6 +1192,7 @@ function thicken(net: Network, world: NetworkWorld, dt: number): void {
  * gets there first.
  */
 function decay(net: Network, world: NetworkWorld, dt: number): void {
+  feedFounder(net, dt);
   for (const node of net.nodes) {
     if (!node.alive) continue;
     if (!node.connected) {
@@ -1181,7 +1207,8 @@ function decay(net: Network, world: NetworkWorld, dt: number): void {
     // unprofitable network — one that grew into barren soil with no tree to
     // feed it — visibly recede rather than sitting there at zero.
     if (node.carbon <= 0.02) {
-      node.health -= dt * 0.03;
+      // The founding node holds on longest: it is the colony, not a strand.
+      node.health -= dt * 0.03 * (node.id === net.rootId ? 0.3 : 1);
       if (node.health <= 0) killNode(net, world, node, 0.5);
     } else {
       node.health = Math.min(1, node.health + dt * (net.evolution.learned.includes('living-sheath') ? 0.025 : 0.015));
@@ -1190,6 +1217,36 @@ function decay(net: Network, world: NetworkWorld, dt: number): void {
     if (node.isTip && node.age > 140 && Math.hypot(node.wx - node.gx, node.wy - node.gy) < 0.2) {
       killNode(net, world, node, 0.3);
     }
+  }
+}
+
+/** Carbon a founding node keeps for its own upkeep before it draws on the body. */
+export const FOUNDER_FLOOR = 0.9;
+/** Most carbon a founding node may draw from the body each second. */
+const FOUNDER_DRAW = 3;
+
+/**
+ * The founding node sits at the end of every inward route, so it is the last
+ * strand anything reaches: a colony whose frontier eats every surplus would
+ * starve its own founder while thousands of strands still hold their working
+ * float, and its death severs everything at once. Instead the founder draws on
+ * what connected strands hold above a thin keep, in node order, a little each
+ * second. Carbon is moved, never made. A colony that is
+ * truly spent has nothing spare, and dies back from its edges instead.
+ */
+function feedFounder(net: Network, dt: number): void {
+  const root = net.nodes[net.rootId];
+  if (!root?.alive || root.carbon >= FOUNDER_FLOOR) return;
+  let need = Math.min(FOUNDER_FLOOR - root.carbon, FOUNDER_DRAW * dt);
+  for (const node of net.nodes) {
+    if (need <= 0) break;
+    if (!node.alive || !node.connected || node === root) continue;
+    const spare = node.carbon - (node.isTip ? 0.6 : 0.3);
+    if (spare <= 0) continue;
+    const take = Math.min(spare, need);
+    node.carbon -= take;
+    root.carbon += take;
+    need -= take;
   }
 }
 
@@ -1477,6 +1534,14 @@ function waypointsOf(net: Network, id: number | undefined): Network['waypoints']
   return groupById(net, id)?.waypoints ?? net.waypoints;
 }
 
+/** A directed part of a split body holds within one cell of its destination. */
+function atGroupTarget(net: Network, world: NetworkWorld, node: HyphaNode): boolean {
+  if (!net.groups?.length) return false;
+  const target = waypointsOf(net, node.group)[0];
+  return Boolean(target && Math.hypot(target.gx + 0.5 - node.wx, target.gy + 0.5 - node.wy,
+    world.spatialGrowth ? (target.lateral ?? node.y) - node.lateral : 0) <= 1.25);
+}
+
 /** Whether the group this strand belongs to is resting. */
 function restingOf(net: Network, id: number | undefined): boolean {
   const group = groupById(net, id);
@@ -1514,11 +1579,12 @@ function sproutGroups(net: Network, ctx: StepContext): void {
     let best: HyphaNode | null = null, bestDistance = Infinity;
     for (const node of net.nodes) {
       if (!node.alive || !node.connected || node.isTip || !member(node)) continue;
-      if (node.carbon < ECON.parentReserveFloor + 0.5) continue;
-      const distance = Math.hypot(target.gx - node.gx, target.gy - node.gy);
+      if (node.carbon < ECON.parentReserveFloor + 0.5 || !ctx.world.passableFrom(node, 0, 0)) continue;
+      const distance = Math.hypot(target.gx - node.gx, target.gy - node.gy,
+        ctx.world.spatialGrowth ? (target.lateral ?? node.y) - node.y : 0);
       if (distance < bestDistance) { best = node; bestDistance = distance; }
     }
-    if (!best) continue;
+    if (!best || bestDistance <= 1.25) continue;
     group.sproutAt = net.evolution.age + 1.5;
     // Find a viable parent before borrowing a tip. Otherwise an ordered but
     // resource-starved group can repeatedly prune a different group's frontier.
@@ -1767,6 +1833,95 @@ export function tryBond(
   tip.bondedColonyId = net.colonyId ?? null;
   net.genetic += 1;
   return true;
+}
+
+/**
+ * Carbon a colony keeps back when it lays cords, so one long drag cannot spend
+ * the working reserve its frontier and partners live on.
+ */
+export const CORD_RESERVE = 6;
+/** Longest route one cord order may lay. */
+export const CORD_ROUTE_MAX = 160;
+
+/**
+ * The strands between two nodes along the colony's own graph, in order from
+ * `fromId` toward `toId`. Each id stands for the strand joining that node to its
+ * parent, which is what a cord thickens. The founding node (`toId` by default)
+ * has no strand of its own, so a route home ends one short of it.
+ */
+export function cordRoute(net: Network, fromId: number, toId = net.rootId): number[] {
+  const nodes = net.nodes;
+  const from = nodes[fromId];
+  const to = nodes[toId];
+  if (!from?.alive || !to?.alive || fromId === toId) return [];
+  const up = (start: HyphaNode): number[] => {
+    const chain: number[] = [];
+    for (let node: HyphaNode | undefined = start; node; node = node.parent >= 0 ? nodes[node.parent] : undefined) {
+      if (!node.alive) break;
+      chain.push(node.id);
+      if (chain.length > nodes.length) break;
+    }
+    return chain;
+  };
+  const a = up(from);
+  const index = new Map(a.map((id, i) => [id, i]));
+  const b: number[] = [];
+  for (const id of up(to)) {
+    const at = index.get(id);
+    if (at !== undefined) return [...a.slice(0, at), ...b.reverse()].slice(0, CORD_ROUTE_MAX);
+    b.push(id);
+  }
+  // No shared ancestor: one end is on a severed piece.
+  return [];
+}
+
+/** Carbon a connected colony can put into cords right now. */
+export function cordBudget(net: Network): number {
+  let carbon = 0;
+  for (const node of net.nodes) if (node.alive && node.connected) carbon += node.carbon;
+  return Math.max(0, carbon - CORD_RESERVE);
+}
+
+/**
+ * What a cord order along `route` would do: how many of its strands (from the
+ * start) the colony can afford, and what that costs. Strands that are already
+ * cords are free to pass along.
+ */
+export function planCord(net: Network, route: readonly number[], budget = cordBudget(net)): { affordable: number; cost: number; fresh: number } {
+  let cost = 0;
+  let fresh = 0;
+  let affordable = 0;
+  for (const id of route) {
+    const node = net.nodes[id];
+    if (!node?.alive || node.parent < 0) break;
+    if (!node.reinforced) {
+      if (cost + ECON.cordCharge > budget) break;
+      cost += ECON.cordCharge;
+      fresh++;
+    }
+    affordable++;
+  }
+  return { affordable, cost, fresh };
+}
+
+/**
+ * Lay a cord along a route: as far as the colony can afford, paid from its
+ * connected strands, and never through its last working reserve. Returns the
+ * number of strands newly thickened.
+ */
+export function layCord(net: Network, route: readonly number[]): number {
+  markConnectivity(net);
+  const plan = planCord(net, route);
+  if (plan.fresh === 0) return 0;
+  if (!payColonyFund(net, { carbon: plan.cost, water: 0, nitrogen: 0 })) return 0;
+  for (const id of route.slice(0, plan.affordable)) {
+    const node = net.nodes[id]!;
+    node.pulse = 1;
+    if (node.reinforced) continue;
+    node.reinforced = true;
+    node.thickness = Math.max(node.thickness, 0.9);
+  }
+  return plan.fresh;
 }
 
 /** Spend carbon to turn a strand into a cord: fast transport, higher upkeep. */

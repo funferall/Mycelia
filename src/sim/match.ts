@@ -109,6 +109,8 @@ export interface GrowthCrossing {
 const SPORE_BEAT = 1;
 /** Wind at or above this is a storm, and spores ride it to a further stand. */
 const STORM_STRENGTH = 1.1;
+/** Row (cm) a stalled rival strand climbs to, above groundwater lenses, before dropping to a root. */
+const RIVAL_DETOUR_ROW = 4;
 
 /**
  * A mature fruiting body holds its spores until the player releases them or a
@@ -196,6 +198,8 @@ export class RegionalMatch {
   readonly lineage: { readonly player: string[]; readonly rival: string[] } = { player: [], rival: [] };
   /** A spore daughter has its own graph and stores, even when it shares soil. */
   readonly spatialColonies = new Map<number, CrossingMatch>();
+  /** Rival bodies use the same regional growth and tree-trade coordinator. */
+  readonly rivalSpatialColonies = new Map<number, CrossingMatch>();
   /** The promoted founding body, if the player has directed it through a seam. */
   spatial: CrossingMatch | null = null;
   /** Stand the player is looking at. Presentation only; see the class note. */
@@ -205,6 +209,15 @@ export class RegionalMatch {
   private seasonIndex = 0;
   private seasonClock = 0;
   private soilClock = 0;
+  private rivalThinkClock = 0;
+  /**
+   * What each rival body is growing toward, and how close it has come. A
+   * target that stops getting closer is first approached over the top, then
+   * given up on until the season turns and the water table moves.
+   */
+  private readonly rivalPursuit = new Map<number, { key: string; best: number; stalls: number; detoured: boolean }>();
+  /** Root tips (`treeId:tipId`, per body and stand) and seams a rival body could not reach this season. */
+  private readonly rivalUnreachable = new Map<string, Set<string>>();
   private readonly corridors = new Map<number, CrossingCorridor>();
   private readonly sharedStands = new Set<number>();
   private readonly seedText: string;
@@ -250,12 +263,7 @@ export class RegionalMatch {
     }
   }
 
-  /**
-   * Bonded trees per stand for each side. A bond belongs to the player unless
-   * the root tip records a rival colony. The rival is a saprotroph and does
-   * not bond trees today, so its count is zero until it gains a measure of
-   * its own (an open question in the regional plan).
-   */
+  /** Distinct living trees with at least one root tip bonded to each side. */
   standDominance(): Array<{ standId: number; player: number; rival: number; holder: 'player' | 'rival' | null }> {
     return this.stands.map((stand) => {
       let player = 0;
@@ -316,7 +324,7 @@ export class RegionalMatch {
     const hold = this.hold.player;
     if (this.victory === 'won') return `Region taken: ${hold.tiles} stands held.`;
     if (this.victory === 'lost') return 'The rival took the region.';
-    if (hold.since === null) return `Stands held ${hold.tiles} of ${HOLD_TILES}.`;
+    if (hold.since === null) return `Stands held: you ${hold.tiles}, rival ${this.hold.rival.tiles}; ${HOLD_TILES} needed.`;
     const season = SEASONS[this.seasonIndex % SEASONS.length]!;
     const left = Math.max(0, Math.ceil(season.seconds - this.seasonClock));
     return `Holding ${hold.tiles} stands: keep ${HOLD_TILES} for ${left}s, until the season turns.`;
@@ -542,6 +550,42 @@ export class RegionalMatch {
     return spatial;
   }
 
+  /** Promote a rival's existing strands without changing their stores or XYZ. */
+  private ensureRivalSpatialColony(origin: number, direction?: CrossingDirection): CrossingMatch {
+    const existing = this.rivalSpatialColonies.get(origin);
+    if (existing) return existing;
+    const corridor = direction
+      ? chooseCrossing(this.region, this.soil, origin, direction)
+      : this.ensureSharedSoil(origin);
+    const spatial = new CrossingMatch({
+      seedText: this.seedText,
+      colonyId: `rival@${this.seedText}:stand-${origin}`,
+      region: this.region,
+      soil: this.soil,
+      corridor,
+      regionalCoordinates: true,
+      colony: this.require(origin).sim.rival,
+      worldForStand: (standId) => {
+        this.ensureSharedSoil(standId);
+        return this.require(standId).sim.world;
+      },
+      onActivate: (standId, fromStandId) => {
+        this.require(standId).rivalPresent = true;
+        if (fromStandId !== null && standId !== origin) {
+          this.broadcast(`The rival's connected strands entered stand ${standId + 1}.`);
+        }
+      },
+      originStandId: origin,
+      direction,
+      initialTime: this.time,
+      initialSeasonIndex: this.seasonIndex,
+      initialSeasonClock: this.seasonClock,
+    });
+    spatial.ashFlush = (standId) => this.fire.ashFlush(standId);
+    this.rivalSpatialColonies.set(origin, spatial);
+    return spatial;
+  }
+
   /**
    * Move the player's attention to a stand. Ground with no colony in it can be
    * entered and looked at — its soil, its roots and its rival are all there —
@@ -609,8 +653,8 @@ export class RegionalMatch {
           : this.fire.ashFlush(stand.site.id) ? { rainfall: season.rain, fruiting: true, fruitSpeed: FIRE.ashFruitSpeed } : null;
       if (stand.sim.hasColony || stand.rivalPresent) {
         const managed = this.spatialColonies.has(stand.site.id) || this.spatialOnly(stand);
-        stand.sim.step(dt, managed || !stand.sim.hasColony, this.sharedStands.has(stand.site.id));
-        if (window && stand.rivalPresent) this.prepareRival(stand, dt);
+        stand.sim.step(dt, managed || !stand.sim.hasColony,
+          this.sharedStands.has(stand.site.id), this.rivalSpatialColonies.has(stand.site.id));
       }
     }
     for (const spatial of [...this.spatialColonies.values()].sort((a, b) => a.originStandId - b.originStandId)) {
@@ -620,11 +664,20 @@ export class RegionalMatch {
         ? 'fruited'
         : spatial.colony.extinct ? 'extinct' : 'playing';
     }
+    for (const spatial of [...this.rivalSpatialColonies.values()].sort((a, b) => a.originStandId - b.originStandId)) {
+      spatial.step(dt, false, window ? rainfall : undefined);
+    }
+    this.rivalThinkClock += dt;
+    if (this.rivalThinkClock >= 4) {
+      this.rivalThinkClock = 0;
+      this.stepRivalStrategy();
+    }
     this.elapsed += dt;
     this.seasonClock += dt;
     while (this.seasonClock >= SEASONS[this.seasonIndex % SEASONS.length].seconds) {
       this.seasonClock -= SEASONS[this.seasonIndex % SEASONS.length].seconds;
       this.seasonIndex++;
+      this.rivalUnreachable.clear();
     }
     // Weather belongs to the region, including ground awaiting a spore and
     // colonies whose local outcome has stopped growth. No dormant soil is run.
@@ -682,7 +735,9 @@ export class RegionalMatch {
     }
     const networks = [
       ...this.stands.map(s => s.sim.player),
+      ...this.stands.map(s => s.sim.rival),
       ...[...this.spatialColonies.values()].flatMap(spatial => spatial.colonies.map(view => view.net)),
+      ...[...this.rivalSpatialColonies.values()].flatMap(spatial => spatial.colonies.map(view => view.net)),
     ];
     const severed: Windfall['severed'] = [];
     for (const tip of tree.rootTips) {
@@ -1051,23 +1106,177 @@ export class RegionalMatch {
     for (const stand of this.stands) stand.sim.events.unshift({at:this.time,text});
   }
 
-  private prepareRival(stand: StandState, dt: number): void {
+  /** Let the rival earn its first bloom from the same tree trade as the player. */
+  private prepareRival(stand: StandState, body?: CrossingMatch): boolean {
     const net = stand.sim.rival;
-    if (net.extinct || net.fruit.active) return;
+    if (net.extinct) return false;
+    if (net.fruit.active) { net.resting = false; return false; }
     markConnectivity(net);
-    // Move real carbon into reproduction, leaving a founding kit in the body.
-    const saved = Math.min(4 * dt, Math.max(0,ECON.fruitThreshold-net.surplus));
-    if (saved > 0 && net.carbon > ECON.colonyFund.carbon + saved && payColonyFund(net,{carbon:saved,water:0,nitrogen:0})) net.surplus += saved;
-    const node = net.nodes.find(n => n.alive && n.connected && n.gy <= 12 && n.water > ECON.fruitWaterDraw && n.nitrogen > ECON.fruitNitrogenDraw);
-    if (node && net.surplus >= ECON.fruitThreshold) startFruiting(net,stand.sim.world,node.gx,node.gy);
+    if (net.surplus >= ECON.fruitThreshold) {
+      for (const node of net.nodes) {
+        if (!node.alive || !node.connected || node.gy > 12 ||
+          node.water <= ECON.fruitWaterDraw || node.nitrogen <= ECON.fruitNitrogenDraw) continue;
+        const started = body
+          ? body.fruitAt(body.nodePosition(node)).ok
+          : Boolean(startFruiting(net, stand.sim.world, node.gx, node.gy));
+        if (started) { net.resting = false; return false; }
+      }
+    }
+    // Rest diverts actual photosynthate into surplus. No starting carbon or
+    // decomposer income is converted into a free spore.
+    const bonded = net.nodes.some((node) => node.alive && node.connected && node.bondedTree >= 0);
+    if (net.fruited === 0 && bonded) {
+      net.resting = true;
+      return true;
+    }
+    net.resting = false;
+    return false;
+  }
+
+  /** Deterministic rival choices: earn a bloom, claim roots, then cross seams. */
+  private stepRivalStrategy(): void {
+    for (const stand of this.stands) {
+      if (!stand.sim.rivalEnabled || !stand.rivalPresent || stand.sim.rival.extinct) continue;
+      const body = this.rivalSpatialColonies.get(stand.site.id);
+      if (this.prepareRival(stand, body)) continue;
+      if (!body) {
+        if (stand.sim.rival.fruited === 0) continue;
+        const target = stand.site.neighbours.find((id) => !this.rivalSpatialColonies.has(id) && !this.stands[id]?.rivalPresent);
+        if (target === undefined) continue;
+        const neighbour = this.region.stands[target]!;
+        const direction: CrossingDirection = neighbour.sx > stand.site.sx ? 'east'
+          : neighbour.sx < stand.site.sx ? 'west'
+            : neighbour.sy > stand.site.sy ? 'south' : 'north';
+        try { this.ensureRivalSpatialColony(stand.site.id, direction); } catch { /* no passable corridor */ }
+        continue;
+      }
+      const dominance = this.standDominance();
+      let soughtRoot = false;
+      for (const id of body.reachedStandIds().sort((a, b) => a - b)) {
+        const held = dominance[id]!;
+        if (held.rival > held.player) continue;
+        const excluded = this.rivalUnreachable.get(`${stand.site.id}:${id}`);
+        const tip = body.nearestUnbondedTip(id, excluded, true);
+        if (!tip) continue;
+        if (tip.distanceCm <= 3.5 * GRID.cmPerRow && body.bond(tip.treeRef, tip.tipId).ok) {
+          this.rivalPursuit.delete(stand.site.id);
+          soughtRoot = true;
+          break;
+        }
+        this.pursueRoot(body, id, tip);
+        soughtRoot = true;
+        break;
+      }
+      if (soughtRoot) continue;
+      // Nothing left to court: drop a root order that has been given up on,
+      // and carry on toward (or pick) a seam into new ground.
+      const pursuit = this.rivalPursuit.get(stand.site.id);
+      if (pursuit && !pursuit.key.startsWith('seam:')) {
+        this.rivalPursuit.delete(stand.site.id);
+        body.colony.waypoints.length = 0;
+      }
+      const seams = this.unreachableFor(stand.site.id, 'seams');
+      const reached = new Set(body.reachedStandIds());
+      let best: { key: string; point: { x: number; y: number; z: number }; distance: number } | null = null;
+      for (const source of [...reached].sort((a, b) => a - b)) {
+        const site = this.region.stands[source]!;
+        for (const target of site.neighbours) {
+          if (reached.has(target) || this.stands[target]?.rivalPresent) continue;
+          const key = `seam:${source}:${target}`;
+          if (seams.has(key)) continue;
+          const neighbour = this.region.stands[target]!;
+          const direction: CrossingDirection = neighbour.sx > site.sx ? 'east'
+            : neighbour.sx < site.sx ? 'west'
+              : neighbour.sy > site.sy ? 'south' : 'north';
+          let corridor: CrossingCorridor;
+          try { corridor = chooseCrossing(this.region, this.soil, source, direction); }
+          catch { continue; }
+          const x = corridor.alongIsX ? corridor.seam + corridor.sign * 3 : corridor.fixed;
+          const y = corridor.alongIsX ? corridor.fixed : corridor.seam + corridor.sign * 3;
+          const point = { x, y, z: elevationAtDepthCm(this.region, x, y, corridor.depthCm) };
+          if (!this.soil.passableAt(point.x, point.y, point.z)) continue;
+          let distance = Infinity;
+          for (const node of body.colony.nodes) {
+            if (!node.alive || !node.connected || body.standOf(node) !== source) continue;
+            const at = body.nodePosition(node);
+            distance = Math.min(distance, Math.hypot(at.x - x, at.y - y, at.z - point.z));
+          }
+          if (!best || distance < best.distance) best = { key, point, distance };
+        }
+      }
+      if (!best) {
+        this.rivalPursuit.delete(stand.site.id);
+        continue;
+      }
+      const current = this.rivalPursuit.get(stand.site.id);
+      if (!current || current.key !== best.key || !body.colony.waypoints.length) {
+        this.rivalPursuit.set(stand.site.id, { key: best.key, best: best.distance, stalls: 0, detoured: false });
+        body.growAt(best.point, 'x', best.point.y);
+      } else if (this.stalled(current, best.distance)) {
+        // A seam the frontier cannot get to: try the next one.
+        seams.add(best.key);
+        this.rivalPursuit.delete(stand.site.id);
+        body.colony.waypoints.length = 0;
+      }
+    }
+  }
+
+  /** How many rival thinks without a centimetre of progress count as stuck. */
+  private static readonly RIVAL_STALL_THINKS = 3;
+
+  private unreachableFor(origin: number, scope: number | 'seams'): Set<string> {
+    const key = `${origin}:${scope}`;
+    let set = this.rivalUnreachable.get(key);
+    if (!set) this.rivalUnreachable.set(key, set = new Set());
+    return set;
+  }
+
+  /** Record one think of progress toward a pursuit; true once it has stalled. */
+  private stalled(pursuit: { best: number; stalls: number }, distance: number): boolean {
+    if (distance < pursuit.best - 1) {
+      pursuit.best = distance;
+      pursuit.stalls = 0;
+      return false;
+    }
+    pursuit.stalls++;
+    return pursuit.stalls >= RegionalMatch.RIVAL_STALL_THINKS;
+  }
+
+  /**
+   * Grow a rival body toward one root tip. The same order the player gives
+   * from a root label; when a straight heading stops closing in, the body
+   * goes over the top through shallow soil, and after that it tries another tip.
+   */
+  private pursueRoot(body: CrossingMatch, standId: number, tip: { treeRef: { standId: number; treeId: number }; tipId: number; distanceCm: number }): void {
+    const origin = body.originStandId;
+    const key = `root:${standId}:${tip.treeRef.treeId}:${tip.tipId}`;
+    const pursuit = this.rivalPursuit.get(origin);
+    if (!pursuit || pursuit.key !== key) {
+      this.rivalPursuit.set(origin, { key, best: tip.distanceCm, stalls: 0, detoured: false });
+      body.orderTowardTip(tip.treeRef, tip.tipId);
+      return;
+    }
+    if (!this.stalled(pursuit, tip.distanceCm)) {
+      // Arrived but not yet bonded (a short purse, say): keep the order alive.
+      if (!body.colony.waypoints.length) body.orderTowardTip(tip.treeRef, tip.tipId);
+      return;
+    }
+    if (!pursuit.detoured) {
+      pursuit.detoured = true;
+      pursuit.stalls = 0;
+      body.orderTowardTip(tip.treeRef, tip.tipId, RIVAL_DETOUR_ROW);
+      return;
+    }
+    this.unreachableFor(origin, standId).add(`${tip.treeRef.treeId}:${tip.tipId}`);
+    this.rivalPursuit.delete(origin);
+    body.colony.waypoints.length = 0;
   }
 
   private foundRival(target: StandState, from: StandState, cost: {carbon:number;water:number;nitrogen:number}, wind: number): void {
     const old = target.sim.rival.nodes[target.sim.rival.rootId];
     this.ensureSharedSoil(target.site.id);
-    target.sim.rival = createNetwork('rival','Storm-born decomposer',old.gx,old.gy,mulberry32(hashString(`${this.seedText}:rival:${target.site.id}:${this.storm.sequence}`)),cost.carbon,{water:cost.water,nitrogen:cost.nitrogen});
+    target.sim.rival = createNetwork('rival','Rival mycorrhizal colony',old.gx,old.gy,mulberry32(hashString(`${this.seedText}:rival:${target.site.id}:${this.storm.sequence}`)),cost.carbon,{water:cost.water,nitrogen:cost.nitrogen});
     target.sim.rival.colonyId = `rival@${this.seedText}:stand-${target.site.id}`;
-    target.sim.rival.traits = { decomposer: true };
     this.shareLineage(target);
     target.rivalPresent = true;
     target.sim.rivalEnabled = true;

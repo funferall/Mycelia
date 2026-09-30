@@ -73,7 +73,10 @@ export function deriveJourney(sim: Simulation): Journey {
   for (const tree of sim.world.trees) {
     if (tree.dead) continue;
     livingTrees++;
-    const bond = tree.rootTips.find((tip) => tip.bondedTo !== null);
+    // Bonded means bonded to this colony: a tree the rival holds is still
+    // open to this colony through its free tips.
+    const bond = tree.rootTips.find((tip) => tip.bondedTo !== null &&
+      (tip.bondedColonyId ?? null) === (net.colonyId ?? null));
     if (bond) {
       bondedTrees++;
       roots.push({

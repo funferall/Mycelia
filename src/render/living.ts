@@ -26,6 +26,7 @@ export class LivingView {
   readonly group = new THREE.Group();
   private readonly founder: THREE.Sprite;
   private readonly target: THREE.LineLoop;
+  private readonly groupTargets = new Map<number, THREE.LineLoop>();
   private readonly pulse: THREE.LineLoop;
   private readonly bodies: Body[] = [];
   private readonly spores: THREE.Points;
@@ -41,6 +42,8 @@ export class LivingView {
     this.founder = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: '#ffc16c', blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, opacity: 0.85 }));
     const root = sim.player.nodes[0];
     this.founder.position.set(root.wx - GRID.cols / 2, GRID.rows / 2 - root.wy, 3);
+    // A stand the colony grew into, or ground with no colony, has no founder of its own.
+    this.founder.visible = Boolean(root?.alive);
     this.group.add(this.founder);
     const circle = new THREE.BufferGeometry().setFromPoints(Array.from({ length: 64 }, (_, i) => new THREE.Vector3(Math.cos(i / 64 * Math.PI * 2), Math.sin(i / 64 * Math.PI * 2), 0)));
     this.target = new THREE.LineLoop(circle, new THREE.LineBasicMaterial({ color: '#dfb875', transparent: true, opacity: 0.65, depthTest: false }));
@@ -68,7 +71,7 @@ export class LivingView {
    * material here that animates its own opacity; the rest are faded by
    * `OverlayFade` along with the networks and the roots.
    */
-  update(sim: Simulation, dt: number, reduced: boolean, fade = 1): void {
+  update(sim: Simulation, dt: number, reduced: boolean, fade = 1, selectedGroup = 0): void {
     this.time += reduced ? 0 : dt;
     this.bodyClock += dt;
     this.pulseAge += dt;
@@ -78,6 +81,29 @@ export class LivingView {
     if (waypoint) {
       this.target.position.set(waypoint.gx - GRID.cols / 2, GRID.rows / 2 - waypoint.gy, 4);
       this.target.scale.setScalar(1.4 + Math.sin(this.time * 1.5) * 0.2);
+    }
+    const groups = sim.player.groups ?? [];
+    for (const [id, mark] of this.groupTargets) {
+      if (groups.some((group) => group.id === id)) continue;
+      this.group.remove(mark);
+      (mark.material as THREE.Material).dispose();
+      this.groupTargets.delete(id);
+    }
+    for (const group of groups) {
+      let mark = this.groupTargets.get(group.id);
+      if (!mark) {
+        const material = new THREE.LineBasicMaterial({ color: '#9fe6ff', transparent: true, depthTest: false, depthWrite: false });
+        material.userData.animatedOpacity = true;
+        mark = new THREE.LineLoop(this.target.geometry, material);
+        this.groupTargets.set(group.id, mark);
+        this.group.add(mark);
+      }
+      const destination = group.waypoints[0];
+      mark.visible = Boolean(destination);
+      if (!destination) continue;
+      mark.position.set(destination.gx - GRID.cols / 2, GRID.rows / 2 - destination.gy, 4);
+      mark.scale.setScalar(group.id === selectedGroup ? 1.8 : 1.2);
+      (mark.material as THREE.LineBasicMaterial).opacity = (group.id === selectedGroup ? 0.9 : 0.4) * fade;
     }
     this.pulse.scale.setScalar(1 + this.pulseAge * 4);
     (this.pulse.material as THREE.LineBasicMaterial).opacity = Math.max(0, 0.75 - this.pulseAge * 0.4) * fade;

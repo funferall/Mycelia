@@ -247,6 +247,7 @@ const cell = (world, gx, gy) => world.cells[gy * GRID.cols + gx];
   // The rival burns by the same rules; the aftermath is a fruiting flush on burned ground.
   const { m, id, from } = fixture();
   from.rivalPresent = true;
+  from.sim.rivalEnabled = true;
   const rival = from.sim.rival;
   for (const n of rival.nodes) {
     n.gy = 2; n.isTip = true; n.thickness = 0.1; n.reinforced = false;
@@ -428,8 +429,10 @@ const { mulberry32 } = await load('rng');
   console.log(`PASS decay: ${tree.burned.nitrogen0.toFixed(2)} nitrogen moved into the soil around the trunk, conserved, then a stump`);
 }
 {
-  // A decomposer's strands double the pace; the trait is the placeholder rival's.
+  // Decomposer decay remains available as a trait for a future species.
   const { m, from } = fixture('ember-decomposer');
+  assert.notEqual(from.sim.rival.traits?.decomposer, true, 'the regional rival is a mutualist');
+  from.sim.rival.traits = { decomposer: true };
   const world = from.sim.world;
   for (const c of world.cells) { c.nitrogen = 0; c.organic = 0; }
   const [a, b] = world.trees.filter(t => !t.dead && t.gx > 5 && t.gx < 130);
@@ -438,7 +441,7 @@ const { mulberry32 } = await load('rng');
   const spentA = a.burned.nitrogen0 - a.burned.nitrogen;
   const spentB = b.burned.nitrogen0 - b.burned.nitrogen;
   assert(Math.abs(spentA / spentB - 2) < 0.05, `a decomposer doubles decay (${(spentA / spentB).toFixed(2)}x)`);
-  assert.equal(from.sim.rival.traits?.decomposer, true, 'the placeholder opponent is a decomposer by trait');
+  assert.equal(from.sim.rival.traits?.decomposer, true, 'the decomposer trait can be assigned independently of owner');
   assert.notEqual(from.sim.player.traits?.decomposer, true, 'the player colony is not');
   void m;
   console.log(`PASS decomposers: ${spentA.toFixed(3)} against ${spentB.toFixed(3)} nitrogen released in a minute; a trait, not a side`);

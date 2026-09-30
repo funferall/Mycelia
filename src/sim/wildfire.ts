@@ -120,6 +120,7 @@ export interface FireHost {
   readonly region: Region;
   readonly stands: StandState[];
   readonly spatialColonies: Map<number, CrossingMatch>;
+  readonly rivalSpatialColonies?: Map<number, CrossingMatch>;
   readonly storm: { phase: string; direction: number; activeAt: number; endsAt: number };
 }
 
@@ -149,12 +150,19 @@ export function regionNetworks(host: FireHost): RegionNetwork[] {
       out.push({ net: view.net, world: view.view, rival: false, local: null });
     }
   }
+  for (const spatial of [...(host.rivalSpatialColonies?.values() ?? [])].sort((a, b) => a.originStandId - b.originStandId)) {
+    for (const view of spatial.colonies) {
+      if (seen.has(view.net) || view.net.extinct) continue;
+      seen.add(view.net);
+      out.push({ net: view.net, world: view.view, rival: true, local: null });
+    }
+  }
   for (const stand of host.stands) {
     if (stand.sim.hasColony && !seen.has(stand.sim.player) && !stand.sim.player.extinct) {
       seen.add(stand.sim.player);
       out.push({ net: stand.sim.player, world: stand.sim.world, rival: false, local: stand });
     }
-    if (stand.rivalPresent && !seen.has(stand.sim.rival) && !stand.sim.rival.extinct) {
+    if (stand.rivalPresent && stand.sim.rivalEnabled && !seen.has(stand.sim.rival) && !stand.sim.rival.extinct) {
       seen.add(stand.sim.rival);
       out.push({ net: stand.sim.rival, world: stand.sim.world, rival: true, local: stand });
     }

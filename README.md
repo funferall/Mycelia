@@ -132,7 +132,7 @@ chemical is paid for from your strands nearby:
 
 Under **Opponent** in the side panel you choose who plays the rival:
 
-- a simple built-in bot;
+- a built-in mutualist rival that bonds trees and grows between stands;
 - an offline heuristic agent;
 - an AI decision model (TypeSafe Jev, or OpenAI Decisions once it is
   available), which makes about four decisions a second.
@@ -150,14 +150,18 @@ region is yours. If the rival does the same, you lose. **Survey the region**
 
 - **Split your network.** Hold the mouse still on the soil to draw a circle,
   and the strands inside become a subcluster you can order separately. The
-  number keys then pick a subcluster.
+  number keys then pick a subcluster and activate Grow. Click soil to give that
+  part of the network its own destination, then select another and point it
+  elsewhere. Each keeps growing toward its destination while you command the
+  others, holds there on arrival, and shows a blue destination ring. Rest/Wake
+  affects the selected part; Esc returns to the colony's own orders.
 - **Pause and change speed.** Space pauses; the speed buttons run from
   1× to 4×.
-- **Sections.** In a regional colony, `[` and `]` move through cross-sections
-  of the soil and continue into adjacent stands. Drag along a section to follow
-  the same cut through a stand boundary; `X` turns the cut, and `G` follows a
-  strand. Return to forest rises to the saved view, while Surface here rises
-  over the stand below.
+- **Every stand looks the same below ground.** Once your colony grows across a
+  stand edge, going below the stand it grew into (its colony tile, **Follow**,
+  or **Explore beneath**) shows the same side-on view as your first stand: that
+  stand's soil, trees, roots and labels, with your strands drawn where they
+  reach it. Grow, Share, Cord and Fruit work there exactly as at home.
 - **Watch the seasons.** Mushrooms only rise in warm, wet weather, which
   means spring and autumn. Summer is too dry and winter too cold, unless a
   storm or the ash after a fire changes the weather. Autumn also drops leaf
@@ -257,7 +261,6 @@ written down under "Authored 3D assets" in `DESIGN.md`.
 | `H` | Hide or restore field notes |
 | `S` | Open or close the regional survey |
 | `1`–`4` | Grow / Bond / Cord / Fruit |
-| `[` / `]` / `X` / `G` | Previous / next section, flip orientation, follow a strand in a regional section |
 | `N` | Toggle the forest Network projection when a spatial colony is present |
 | `Q` `W` `E` | Light chemicals at the cursor, underground: lysing enzymes, leachate, ammonia |
 | `A` `D` `C` | Heavy chemicals at the cursor: oxalate burst, coil, barrage |
@@ -274,8 +277,8 @@ in the stand, so a network that reaches the stream drinks from it rather than
 crossing it. **Grow** tells you which of the two it met if an order is refused.
 
 Use **Survey a stand** in the forest to select a community. **Explore beneath**
-opens an underground section in any of the nine stands, even before it holds a
-colony; the section's **Forest stand** selector moves directly between them.
+opens the underground view of any of the nine stands, even before it holds a
+colony; the colony tiles move directly between the stands you hold.
 Selecting a crown follows that tree's roots in an occupied stand. Fruiting
 can send a paid spore to another stand. The daughter starts its own network on
 the same regional soil, with no physical or resource link to its parent.
@@ -287,15 +290,11 @@ exists. A regional victory condition is still being designed.
 **Grow through a stand edge** in the forest directs the selected colony toward a
 passable neighboring stand. Its existing network becomes one regional body with
 one resource inventory; its strands keep their physical positions when regional
-growth begins. Crossing the edge is growth, not spore founding. The
-underground **Section** controls browse that body. A spore daughter gets its own
-spatial body and can be selected and directed separately. **Seek a root** directs growth
-toward an unbonded partner in the open stand, or bonds when a strand is close
-enough. **Return to forest** restores the view from which you descended;
-**Network** then projects the same strands over the ground, and selecting one
-opens its section. Flip a section and click **Grow** to steer toward a passable
-point in any horizontal direction or depth; the frontier checks the intervening
-3D soil as it goes. Comparing two sections at once remains in development.
+growth begins. Crossing the edge is growth, not spore founding. Below
+each stand the body reaches, the underground view is that stand's own, and
+orders placed there go to the same body. A spore daughter gets its own body and
+can be visited and directed separately. **Network** in the forest projects the
+same strands over the ground, and selecting one goes below its stand.
 
 **Survey the region** (or `S`) opens a printed ledger of all nine stands: what
 each one holds, its water, its broad forest health once a colony has held it, and
@@ -359,8 +358,9 @@ that grows one colony across a stand boundary. It includes a live water-depth
 slider and a ten-second fixed-step advance. These are explicitly synthetic
 fixtures; ordinary URLs keep the normal opening and economy.
 
-Going **Underground** opens a vertical section through the selected stand, and
-the sheet carries a **Section** panel with **Previous**,
+On the crossing bench, going **Underground** opens a vertical section through
+the selected stand (the regular game no longer uses sections), and the sheet
+carries a **Section** panel with **Previous**,
 **Next**, **Flip**, **Follow**, **Seek a root**, **Return to forest**, **Surface here** and a stand selector - or
 `[`, `]`, `X`, `G` and `Escape` on the keyboard. The panel names the stand, the
 community, the orientation, the position in the family and the strand count, and
@@ -452,7 +452,7 @@ seasonal foliage; procedural soil transects with warped horizons and a water tab
 hyphal growth that reads the soil and pays for every centimetre; mycorrhizal
 bonding with a real trade obligation a tree can sever; carbon, water, nitrogen
 and genetic-potential economies with spatial transport through the network;
-cords; a saprotroph rival; six learnable adaptations and three ecological powers;
+cords; a competing mycorrhizal rival; six learnable adaptations and three ecological powers;
 seasons with a drought that moves the water table and a wind-driven wildfire
 that burns crowns and shallow mycelium, then leaves ash, pioneer wildflowers
 and slowly returning grass; summoning a hurricane into the fire throws embers

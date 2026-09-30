@@ -506,7 +506,7 @@ export function createRegion(seedText: string, cols = REGION_COLS, rows = REGION
   const startRng = mulberry32(seed ^ 0x5eed57a7);
   if (starts === 'best') {
     region.foundingStand = bestStart(region);
-    region.rivalStand = region.foundingStand;
+    region.rivalStand = chooseRivalStand(region, startRng);
   } else {
     region.foundingStand = chooseFoundingStand(region, startRng);
     region.rivalStand = chooseRivalStand(region, startRng);
@@ -683,13 +683,16 @@ function chooseRivalStand(region: Region, rng: Rng): number {
   if (!home) return 0;
   const steps = (stand: StandSite) => Math.abs(stand.sx - home.sx) + Math.abs(stand.sy - home.sy);
   const others = region.stands.filter((stand) => stand.id !== home.id);
-  // A decomposer does not need the player's dry, well-drained ground: any
-  // stand with water in reach will do, so a fair distance is almost always found.
-  const livable = (stand: StandSite) => stand.moisture >= 0.2 && stand.waterTableCm <= MAX_DEPTH_CM * 0.86;
+  // Both mycorrhizal colonies need habitable ground and roots within reach.
+  const livable = canStart;
   const fair = others.filter((stand) => livable(stand) && steps(stand) >= 2);
   if (fair.length > 0) return fair[Math.floor(rng() * fair.length) % fair.length]!.id;
-  const habitable = others.filter(livable).sort((a, b) => (steps(b) - steps(a)) || (a.id - b.id));
-  return (habitable[0] ?? others[0] ?? home).id;
+  // If this seed has no ideal distant stand, keep the promised separation and
+  // take the best of the distant sites. Moisture is a preference here: sharing
+  // an edge would undo the separate-start rule altogether.
+  const distant = others.filter((stand) => steps(stand) >= 2)
+    .sort((a, b) => Number(livable(b)) - Number(livable(a)) || startScore(b) - startScore(a) || a.id - b.id);
+  return (distant[0] ?? others[0] ?? home).id;
 }
 
 export function validateRegion(region: Region): RegionValidation {
