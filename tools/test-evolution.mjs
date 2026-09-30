@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
 
 const output = mkdtempSync(join(tmpdir(), 'mycelia-evolution-'));
-for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'evolution']) {
+for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'segments', 'network', 'evolution']) {
   writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8')).replace(/from '(.+?)'/g, "from '$1.mjs'"));
 }
 const load = name => import(pathToFileURL(join(output, `${name}.mjs`)));

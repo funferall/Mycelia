@@ -26,7 +26,7 @@ function check(name, fn) {
 }
 
 try {
-  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim']) {
+  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'segments', 'network', 'sim']) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '(.+?)'/g, "from '$1.mjs'"));
   }

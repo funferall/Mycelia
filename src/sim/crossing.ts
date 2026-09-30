@@ -50,6 +50,7 @@ import {
   type HyphaNode,
   type Network,
 } from './network';
+import { forEachMovedStrand, markStrandsStale, strandsCurrent } from './segments';
 import {
   ASH_FRUIT_SPEED,
   createStandWorld,
@@ -712,6 +713,9 @@ export class CrossingMatch {
     const a = this.colony;
     const b = other.colony;
     if (a === b || !a.nodes[mine]?.alive || !b.nodes[theirs]?.alive) return { nodes: 0, bonds: 0 };
+    // Both graphs change shape: their runs are found again at the next step.
+    markStrandsStale(a);
+    markStrandsStale(b);
     const offset = a.nodes.length;
     // Both graphs keep regional x as origin + column; y, lateral and depth are
     // already absolute, so only the along axis shifts.
@@ -729,6 +733,8 @@ export class CrossingMatch {
         wx: node.wx + dx,
         targetGx: node.targetGx + dx,
         group: 0,
+        // Tended on the other colony's clock; start afresh on ours.
+        tendedAt: undefined,
       };
       if (node.bondedTree >= 0) {
         const ref = other.view.treeRefAt(node.bondedTree);
@@ -1028,6 +1034,7 @@ export class CrossingMatch {
   cut(nodeId: number): boolean {
     const node = this.colony.nodes[nodeId];
     if (!node || !node.alive || node.parent < 0) return false;
+    markStrandsStale(this.colony);
     node.alive = false;
     node.health = 0;
     if (node.isTip) this.colony.tipCount = Math.max(0, this.colony.tipCount - 1);
@@ -1064,7 +1071,8 @@ export class CrossingMatch {
     });
     // 2. Per colony, in stable id order.
     for (const colony of this.colonies) {
-      markConnectivity(colony.net);
+      // Nothing has cut the network since its last step marked what the founder reaches.
+      if (!strandsCurrent(colony.net)) markConnectivity(colony.net);
       this.tradeTrees(colony, dt);
       // A body rising from burned ground in its flush fruits in any weather, faster.
       const fruit = colony.net.fruit;
@@ -1081,8 +1089,10 @@ export class CrossingMatch {
         log: (text) => this.log(text),
         dt,
       });
-      if (this.regionalCoordinates) for (const node of colony.net.nodes) {
-        node.spatial = this.nodePosition(node);
+      if (this.regionalCoordinates) {
+        // Only tips and strands that just settled have moved.
+        const place = (node: HyphaNode): void => { node.spatial = this.nodePosition(node); };
+        if (!forEachMovedStrand(colony.net, place)) for (const node of colony.net.nodes) place(node);
       }
       this.activateReached();
     }

@@ -39,9 +39,11 @@ export interface HyphaeOptions {
  * One network, drawn as instanced segments.
  *
  * Committed strands never move, so only growing tips need their matrix rebuilt
- * per frame; new nodes claim a free instance slot when they are created. That
- * keeps a large network cheap enough to animate at 60fps while still letting
- * every filament exist as real geometry rather than a texture.
+ * per frame; new nodes claim a free instance slot when they are created. Only
+ * the span of slots written this frame is sent to the GPU, not the whole
+ * instance buffer. That keeps a large network cheap enough to animate at 60fps
+ * while still letting every filament exist as real geometry rather than a
+ * texture.
  */
 export class HyphaeMesh {
   readonly group = new THREE.Group();
@@ -54,6 +56,11 @@ export class HyphaeMesh {
   private slotOf: Int32Array;
   private nodeOf: Int32Array;
   private slotCount = 0;
+  /** Slots below `slotCount` given back by dead strands, reused before new ones. */
+  private freeSlots: number[] = [];
+  /** The span of slots written since the last upload. */
+  private dirtyFrom = Infinity;
+  private dirtyTo = -1;
   private readonly tipCapacity: number;
 
   private readonly dummy = new THREE.Object3D();
@@ -165,8 +172,8 @@ export class HyphaeMesh {
       old.getColorAt(i, c);
       replacement.setColorAt(i, c);
     }
-    replacement.instanceMatrix.needsUpdate = true;
-    if (replacement.instanceColor) replacement.instanceColor.needsUpdate = true;
+    this.markDirty(0);
+    this.markDirty(Math.max(0, this.slotCount - 1));
 
     this.group.remove(old);
     this.group.add(replacement);
@@ -184,6 +191,9 @@ export class HyphaeMesh {
     this.slotOf.fill(-1);
     this.nodeOf.fill(-1);
     this.slotCount = 0;
+    this.freeSlots = [];
+    this.dirtyFrom = Infinity;
+    this.dirtyTo = -1;
     this.mesh.count = 0;
     this.tips.geometry.setDrawRange(0, 0);
   }
@@ -228,19 +238,41 @@ export class HyphaeMesh {
     }
 
     this.mesh.count = this.slotCount;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.upload();
     this.syncTips(nodes);
   }
 
-  private claimSlot(): number {
-    for (let slot = 0; slot < this.capacity; slot++) {
-      if ((this.nodeOf[slot] as number) === -1) {
-        if (slot + 1 > this.slotCount) this.slotCount = slot + 1;
-        return slot;
-      }
+  /** Send only the slots written since the last upload to the GPU. */
+  private upload(): void {
+    if (this.dirtyTo < 0) return;
+    const from = this.dirtyFrom;
+    const count = this.dirtyTo - from + 1;
+    const matrix = this.mesh.instanceMatrix;
+    matrix.clearUpdateRanges();
+    matrix.addUpdateRange(from * 16, count * 16);
+    matrix.needsUpdate = true;
+    const color = this.mesh.instanceColor;
+    if (color) {
+      color.clearUpdateRanges();
+      color.addUpdateRange(from * 3, count * 3);
+      color.needsUpdate = true;
     }
-    return -1;
+    this.dirtyFrom = Infinity;
+    this.dirtyTo = -1;
+  }
+
+  private markDirty(slot: number): void {
+    if (slot < this.dirtyFrom) this.dirtyFrom = slot;
+    if (slot > this.dirtyTo) this.dirtyTo = slot;
+  }
+
+  private claimSlot(): number {
+    while (this.freeSlots.length > 0) {
+      const slot = this.freeSlots.pop()!;
+      if ((this.nodeOf[slot] as number) === -1) return slot;
+    }
+    if (this.slotCount >= this.capacity) return -1;
+    return this.slotCount++;
   }
 
   private hideSlot(slot: number): void {
@@ -252,10 +284,13 @@ export class HyphaeMesh {
     const occupant = this.nodeOf[slot] as number;
     if (occupant >= 0) this.slotOf[occupant] = -1;
     this.nodeOf[slot] = -1;
+    this.freeSlots.push(slot);
+    this.markDirty(slot);
   }
 
   private writeSegment(node: HyphaNode, parent: HyphaNode, slot: number): void {
     if (slot >= this.capacity) return;
+    this.markDirty(slot);
     nodePosition(node, this.a);
     nodePosition(parent, this.b);
     this.mid.copy(this.a).add(this.b).multiplyScalar(0.5);

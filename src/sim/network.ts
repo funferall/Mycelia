@@ -3,6 +3,10 @@ import { passableAt, type NetworkWorld, type Tree, type World } from './world';
 import type { Rng } from './rng';
 import { distanceCm } from './spatial';
 import type { Vec3 } from './spatial';
+import {
+  TEND_SLICES, buildStrands, drawHeld, economyOf, forEachJunction, heldBy, joinStrand, markStrandsStale,
+  pipeRate, poolStrands, segmentIndexOf, spreadStrands, upkeepWeight, type Segment, type StrandEconomy,
+} from './segments';
 
 export type Owner = 'player' | 'rival';
 
@@ -82,6 +86,12 @@ export interface HyphaNode {
    * the colony at large; new tips inherit their parent's group.
    */
   group?: number;
+  /**
+   * Colony age (`evolution.age`) when this strand's slow bookkeeping was last
+   * brought up to date. A strand inside a run is tended every few ticks with
+   * the time since, so its ageing, health and uptake keep their rates.
+   */
+  tendedAt?: number;
 }
 
 /**
@@ -328,16 +338,17 @@ export function spawnTip(
   // Draw the child's starting body out of the parent. Water and mineral are
   // taken proportionally and may be thin; carbon is what a strand really has to
   // give up, so the parent keeps a floor it cannot be pushed below.
+  // A strand inside a run gives from its share of the run's pool.
   const carbonGive = Math.min(
     ECON.birthReserve,
-    Math.max(0, from.carbon - ECON.parentReserveFloor)
+    Math.max(0, heldBy(net, from, 'carbon') - ECON.parentReserveFloor)
   );
   const share = carbonGive / ECON.birthReserve;
-  const waterGive = Math.min(0.6 * share, from.water);
-  const nitrogenGive = Math.min(0.3 * share, from.nitrogen);
-  from.carbon -= carbonGive;
-  from.water -= waterGive;
-  from.nitrogen -= nitrogenGive;
+  const waterGive = Math.min(0.6 * share, heldBy(net, from, 'water'));
+  const nitrogenGive = Math.min(0.3 * share, heldBy(net, from, 'nitrogen'));
+  drawHeld(net, from, 'carbon', carbonGive);
+  drawHeld(net, from, 'water', waterGive);
+  drawHeld(net, from, 'nitrogen', nitrogenGive);
 
   const node: HyphaNode = {
     id: net.nodes.length,
@@ -362,7 +373,9 @@ export function spawnTip(
     water: waterGive,
     nitrogen: nitrogenGive,
     health: 1,
-    connected: true,
+    // What the founder reaches is marked each rebuild; until then a new tip
+    // is reached exactly when the strand it grew from is.
+    connected: from.connected,
     bondedTree: -1,
     bondedRootTip: -1,
     flow: 0,
@@ -371,11 +384,13 @@ export function spawnTip(
     ordered: false,
     retargetAt: 0,
     paid: false,
+    tendedAt: net.evolution.age,
   };
   if (from.group) node.group = from.group;
   net.nodes.push(node);
   from.children.push(node.id);
   net.tipCount++;
+  joinStrand(net, node);
   return node;
 }
 
@@ -571,51 +586,69 @@ export function stepNetwork(net: Network, ctx: StepContext): void {
   const { world, dt } = ctx;
   if (net.extinct) return;
 
-  const nodes = net.nodes;
-  for (const n of nodes) {
-    if (!n.alive) continue;
-    n.age += dt;
-    n.pulse = Math.max(0, n.pulse - dt * 0.9);
-    n.flow *= 0.86;
+  // The economy runs on junctions and runs of strands (`segments.ts`). It is
+  // rebuilt after the graph changes shape, and every few ticks so strands that
+  // have settled behind the frontier fold into their runs.
+  let economy = economyOf(net);
+  if (!economy || economy.stale || economy.ticks >= TEND_SLICES) {
+    economy = buildStrands(net, ECON.cordThroughput);
+    markConnectivity(net);
   }
+  economy.ticks++;
+  economy.tick++;
+  economy.settled.length = 0;
+  poolStrands(net, economy);
 
-  markConnectivity(net);
   net.evolution.age += dt;
+  const now = net.evolution.age;
+  forEachJunction(net, economy, (n) => {
+    // A strand that has just left a run catches up on the time it was untended.
+    const since = n.tendedAt === undefined ? dt : Math.max(dt, now - n.tendedAt);
+    n.age += since;
+    n.pulse = Math.max(0, n.pulse - since * 0.9);
+    n.flow *= 0.86;
+    n.tendedAt = now;
+  });
+  for (const segment of economy.segments) segment.flow *= 0.86;
+
   for (const key of Object.keys(net.evolution.active)) net.evolution.active[key] = Math.max(0, net.evolution.active[key]! - dt);
   for (const key of Object.keys(net.evolution.cooldown)) net.evolution.cooldown[key] = Math.max(0, net.evolution.cooldown[key]! - dt);
-  if (net.evolution.active.mend) for (const node of nodes) {
-    if (!node.alive || !node.connected || node.health >= 1) continue;
+  if (net.evolution.active.mend) forEachJunction(net, economy, (node) => {
+    if (!node.connected || node.health >= 1) return;
     const repair = Math.min(1 - node.health, dt * 0.08, node.carbon / 2);
     node.health += repair;
     node.carbon -= repair * 2;
     node.pulse = 1;
-  }
-  updateTipCeiling(net);
-  harvest(net, world, ctx);
-  transport(net, dt * (net.evolution.learned.includes('cord-memory') ? 1.25 : 1) * (net.evolution.active.pulse ? 2 : 1));
-  respire(net);
+  });
+  updateTipCeiling(net, economy);
+  harvest(net, economy, world, ctx);
+  transport(net, economy, dt * (net.evolution.learned.includes('cord-memory') ? 1.25 : 1) * (net.evolution.active.pulse ? 2 : 1));
+  respire(net, economy);
   // Each subcluster rests or grows on its own orders. Without any, this is the
   // colony-wide rest it always was.
   if (net.groups?.length) {
-    sproutGroups(net, ctx);
-    extendTips(net, ctx);
+    sproutGroups(net, economy, ctx);
+    extendTips(net, economy, ctx);
   } else if (!net.resting) {
-    extendTips(net, ctx);
+    extendTips(net, economy, ctx);
   }
-  thicken(net, world, dt);
-  decay(net, world, dt);
+  thicken(net, economy, world, dt);
+  decay(net, economy, world, dt);
+  tendRuns(net, economy, world, now);
   progressFruiting(net, ctx);
   updateTotals(net);
+  spreadStrands(net, economy);
 }
 
 /** Recompute how wide the growth frontier may be. */
-function updateTipCeiling(net: Network): void {
+function updateTipCeiling(net: Network, economy: StrandEconomy): void {
   let bonded = 0;
-  for (const node of net.nodes) {
+  // Tree junctions are never pooled into a run.
+  forEachJunction(net, economy, (node) => {
     // A cut-off junction is no longer feeding a tree, so it no longer widens
     // the frontier either. Growth capacity has to be paid for with live trade.
-    if (node.alive && node.connected && node.bondedTree >= 0) bonded++;
-  }
+    if (node.connected && node.bondedTree >= 0) bonded++;
+  });
   net.tipCeiling = Math.min(MAX_TIPS, 6 + bonded * 13);
 }
 
@@ -651,54 +684,30 @@ export function markConnectivity(net: Network): void {
  * Take in what the network is standing in. Two sources: bonded tree roots ship
  * carbon down, and every node draws a little water and nitrogen from its cell.
  */
-function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
+function harvest(net: Network, economy: StrandEconomy, world: NetworkWorld, ctx: StepContext): void {
   const { dt } = ctx;
   // Adaptations are per network, not per node: look them up once per step.
   const deepDrink = net.evolution.learned.includes('deep-drink') ? 1.2 : 1;
   const mineralWeave = net.evolution.learned.includes('mineral-weave') ? 1.2 : 1;
-  for (const node of net.nodes) {
-    if (!node.alive || !node.connected) continue;
+  // Junctions drink every tick; strands inside a run drink when tended (`tendRuns`).
+  forEachJunction(net, economy, (node) => {
+    if (!node.connected) return;
     const cell = world.cellOf(node);
-    if (!cell) continue;
-
-    // Water: drawn from the soil, replenished by rain and the water table.
-    const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2) * deepDrink;
-    const got = Math.min(draw, cell.water);
-    cell.water -= got * 0.06;
-    node.water = Math.min(ECON.nodeWaterCap, node.water + got);
-
-    // Nitrogen and phosphorus: mined from the cell the node stands in. The
-    // horizon holds a finite standing stock and rebuilds it slowly, so a pocket
-    // that has been worked over goes quiet until either the network grows on or
-    // the soil has had time to mineralise again.
-    const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness) * mineralWeave);
-    cell.nitrogen = Math.max(0, cell.nitrogen - uptake * ECON.nitrogenSoilCost);
-    node.nitrogen = Math.min(ECON.nodeNitrogenCap, node.nitrogen + uptake);
-
-    // Decomposition: hyphae metabolise the organic matter they are sitting in.
-    // The rate scales with how rich the material is, so the litter layer is a
-    // real income stream and barren clay is somewhere you pass through.
-    if (cell.organic > 0.15) {
-      const bite = Math.min(cell.organic, 0.02 * dt) * (0.35 + cell.organic);
-      cell.organic -= bite * 0.05;
-      // Held resources are capped: the excess is simply lost, which is what
-      // forces the player to keep investing rather than banking.
-      node.carbon += Math.min(bite * 3.2, Math.max(0, ECON.nodeCarbonCap - node.carbon));
-    }
-  }
+    if (cell) takeFromSoil(node, cell, dt, node, 1, deepDrink, mineralWeave);
+  });
 
   // Symbiosis: bonded trees pay in sugar, and only while they are healthy.
   const world_trees = ctx.world.trees;
-  for (const node of net.nodes) {
+  forEachJunction(net, economy, (node) => {
     // Only a strand still joined to the root can trade on the network's behalf.
     // A junction that has been cut off is not delivering anything to the tree,
     // and must not keep paying the player for a bond the tree cannot feel.
-    if (!node.alive || !node.connected || node.bondedTree < 0) continue;
+    if (!node.connected || node.bondedTree < 0) return;
     const tree = world_trees[node.bondedTree];
     if (!tree || tree.dead) {
       node.bondedTree = -1;
       node.bondedRootTip = -1;
-      continue;
+      return;
     }
     const spec = (ctx.world.trees[node.bondedTree] as { species: string }).species;
     const rate = tree.health * ctx.light * (0.6 + tree.maturity * 0.6);
@@ -710,6 +719,44 @@ function harvest(net: Network, world: NetworkWorld, ctx: StepContext): void {
     net.surplus = Math.min(ECON.fruitThreshold, net.surplus + saved);
     node.carbon += Math.min(income - saved, Math.max(0, ECON.nodeCarbonCap * 1.6 - node.carbon));
     node.pulse = Math.min(1, node.pulse + dt * 0.6);
+  });
+}
+
+/** Stores a strand draws into: its own, or the pool of the run it belongs to. */
+type Store = { carbon: number; water: number; nitrogen: number };
+
+/**
+ * Take in what one strand is standing in over `dt`: water, mineral, and the
+ * carbon of decomposing organic matter. `strands` is how many strands share
+ * `store`, so a run's pool is capped at what its strands could each hold.
+ */
+function takeFromSoil(
+  node: HyphaNode, cell: NonNullable<ReturnType<NetworkWorld['cellOf']>>, dt: number,
+  store: Store, strands: number, deepDrink: number, mineralWeave: number
+): void {
+  // Water: drawn from the soil, replenished by rain and the water table.
+  const draw = ECON.waterDrawPerNode * dt * (1 + node.thickness * 2) * deepDrink;
+  const got = Math.min(draw, cell.water);
+  cell.water -= got * 0.06;
+  store.water = Math.min(ECON.nodeWaterCap * strands, store.water + got);
+
+  // Nitrogen and phosphorus: mined from the cell the node stands in. The
+  // horizon holds a finite standing stock and rebuilds it slowly, so a pocket
+  // that has been worked over goes quiet until either the network grows on or
+  // the soil has had time to mineralise again.
+  const uptake = Math.min(cell.nitrogen, 0.09 * dt * (0.6 + node.thickness) * mineralWeave);
+  cell.nitrogen = Math.max(0, cell.nitrogen - uptake * ECON.nitrogenSoilCost);
+  store.nitrogen = Math.min(ECON.nodeNitrogenCap * strands, store.nitrogen + uptake);
+
+  // Decomposition: hyphae metabolise the organic matter they are sitting in.
+  // The rate scales with how rich the material is, so the litter layer is a
+  // real income stream and barren clay is somewhere you pass through.
+  if (cell.organic > 0.15) {
+    const bite = Math.min(cell.organic, 0.02 * dt) * (0.35 + cell.organic);
+    cell.organic -= bite * 0.05;
+    // Held resources are capped: the excess is simply lost, which is what
+    // forces the player to keep investing rather than banking.
+    store.carbon += Math.min(bite * 3.2, Math.max(0, ECON.nodeCarbonCap * strands - store.carbon));
   }
 }
 
@@ -732,41 +779,61 @@ function carbonPerSecond(species: string): number {
  * ceiling set by its thickness, so a thin strand is a bottleneck and a cord is
  * a highway. This is what makes the shape of the network a real decision.
  */
-function transport(net: Network, dt: number): void {
+function transport(net: Network, economy: StrandEconomy, dt: number): void {
   const nodes = net.nodes;
-  const order = traversalOrder(net);
-  const buffers = transportBuffers(nodes.length);
-  const { pipe, reserve, fill, keep } = buffers;
+  const { order, segments } = economy;
+  const count = order.length;
+  const buffers = transportBuffers(count);
+  const { pipe, reserve, fill, keep, live } = buffers;
 
-  // Nothing a sweep reads about a node's shape changes during transport, so
-  // each edge's throughput is worked out once rather than once per resource.
-  for (const id of order) {
-    const node = nodes[id]!;
-    pipe[id] = (1.2 + node.thickness * 9) * (node.reinforced ? ECON.cordThroughput : 1) * dt;
+  // Each entity is a junction strand or a run (`segments.ts`). A run is one
+  // pipe as wide as its narrowest strand, holding what its strands would each
+  // hold. Nothing a sweep reads about shape changes during transport, so each
+  // edge's throughput is worked out once rather than once per resource.
+  for (let at = 0; at < count; at++) {
+    const entity = order[at]!;
+    if (entity >= 0) {
+      const node = nodes[entity]!;
+      live[at] = node.alive ? 1 : 0;
+      pipe[at] = pipeRate(node, ECON.cordThroughput) * dt;
+    } else {
+      const segment = segments[-entity - 1]!;
+      live[at] = segment.alive > 0 ? 1 : 0;
+      pipe[at] = segment.pipeRate * dt;
+    }
   }
 
   // Carbon travels up from strands holding more than they need, and back down
   // to any node below its working reserve. A growing tip needs real fuel, so
   // the frontier is topped up rather than merely rescued; only what nobody
   // needs reaches the root, and only what the root cannot use becomes surplus.
-  for (const id of order) {
-    const node = nodes[id]!;
-    const r = carbonReserve(node);
-    reserve[id] = r;
-    fill[id] = r;
-    keep[id] = r * (node.parent < 0 ? 3 : 0.35);
+  for (let at = 0; at < count; at++) {
+    const entity = order[at]!;
+    if (entity >= 0) {
+      const node = nodes[entity]!;
+      const r = carbonReserve(node);
+      reserve[at] = r;
+      fill[at] = r;
+      keep[at] = r * (node.parent < 0 ? 3 : 0.35);
+    } else {
+      const r = segments[-entity - 1]!.members.length * STRUT_CARBON_RESERVE;
+      reserve[at] = r;
+      fill[at] = r;
+      keep[at] = r * 0.35;
+    }
   }
-  moveResource(nodes, order, 'carbon', buffers);
+  moveResource(net, economy, 'carbon', buffers);
 
   // Mark the strands that stand between the root and a tree. A partner is an
   // obligation rather than an option, so these are the routes that get fed.
   const supply = buffers.supply;
-  for (const id of order) supply[id] = 0;
-  for (let i = order.length - 1; i >= 0; i--) {
-    const node = nodes[order[i] as number]!;
-    if (node.bondedTree >= 0 || supply[node.id]) {
-      supply[node.id] = 1;
-      if (node.parent >= 0) supply[node.parent] = 1;
+  for (let at = 0; at < count; at++) supply[at] = 0;
+  for (let at = count - 1; at >= 0; at--) {
+    const entity = order[at]!;
+    if ((entity >= 0 && nodes[entity]!.bondedTree >= 0) || supply[at]) {
+      supply[at] = 1;
+      const parentAt = economy.parentAt[at]!;
+      if (parentAt >= 0) supply[parentAt] = 1;
     }
   }
 
@@ -780,22 +847,31 @@ function transport(net: Network, dt: number): void {
   // resource pools in a thousand small reserves and a tree dies of thirst inside
   // a network holding enough to save it: every strand sits exactly on its own
   // keeping level, nothing is in transit, and demand has nothing to pull from.
-  const thirsty = wantsSupply(nodes);
+  const thirsty = wantsSupply(net, economy);
 
   for (const key of ['water', 'nitrogen'] as const) {
     const cap = key === 'water' ? ECON.nodeWaterCap : ECON.nodeNitrogenCap;
-    for (const id of order) {
-      const node = nodes[id]!;
-      const r = standingReserve(node, key, thirsty);
-      reserve[id] = r;
-      // A junction is filled to its whole capacity, and so is every strand on
-      // the route to it: a strut is a pipe, not a cistern, and it passes what it
-      // receives straight on to the tree.
-      fill[id] = node.bondedTree >= 0 || supply[id] ? cap : r;
-      // A strand carrying a partner's supply keeps nothing back for itself.
-      keep[id] = supply[id] ? 0 : r * 0.35;
+    for (let at = 0; at < count; at++) {
+      const entity = order[at]!;
+      if (entity >= 0) {
+        const node = nodes[entity]!;
+        const r = standingReserve(node, key, thirsty);
+        reserve[at] = r;
+        // A junction is filled to its whole capacity, and so is every strand on
+        // the route to it: a strut is a pipe, not a cistern, and it passes what it
+        // receives straight on to the tree.
+        fill[at] = node.bondedTree >= 0 || supply[at] ? cap : r;
+        // A strand carrying a partner's supply keeps nothing back for itself.
+        keep[at] = supply[at] ? 0 : r * 0.35;
+      } else {
+        const strands = segments[-entity - 1]!.members.length;
+        const r = strands * strutReserve(key, thirsty);
+        reserve[at] = r;
+        fill[at] = supply[at] ? strands * cap : r;
+        keep[at] = supply[at] ? 0 : r * 0.35;
+      }
     }
-    moveResource(nodes, order, key, buffers);
+    moveResource(net, economy, key, buffers);
   }
 }
 
@@ -810,6 +886,8 @@ interface TransportBuffers {
   value: Float64Array;
   flow: Float64Array;
   supply: Uint8Array;
+  /** Whether each entity is still standing (a junction may have died since the build). */
+  live: Uint8Array;
 }
 
 let sharedBuffers: TransportBuffers | null = null;
@@ -827,6 +905,7 @@ function transportBuffers(size: number): TransportBuffers {
       value: new Float64Array(capacity),
       flow: new Float64Array(capacity),
       supply: new Uint8Array(capacity),
+      live: new Uint8Array(capacity),
     };
   }
   return sharedBuffers;
@@ -836,8 +915,11 @@ type ResourceKey = 'carbon' | 'water' | 'nitrogen';
 
 /** Carbon a strand refuses to give up: fuel for a tip, and a junction's float. */
 function carbonReserve(node: HyphaNode): number {
-  return (node.isTip ? 2.2 : 0.9) + (node.bondedTree >= 0 ? 1 : 0);
+  return (node.isTip ? 2.2 : STRUT_CARBON_RESERVE) + (node.bondedTree >= 0 ? 1 : 0);
 }
+
+/** A plain strut's carbon reserve; every strand in a run is one. */
+const STRUT_CARBON_RESERVE = 0.9;
 
 /**
  * Respiration: carbon a strand cannot use is lost rather than banked.
@@ -848,13 +930,16 @@ function carbonReserve(node: HyphaNode): number {
  * their income evaporate instead of sitting on a fortune, which is what keeps
  * every match a series of investments rather than a slow accumulation.
  */
-function respire(net: Network): void {
-  for (const node of net.nodes) {
-    if (!node.alive) continue;
+function respire(net: Network, economy: StrandEconomy): void {
+  forEachJunction(net, economy, (node) => {
     const cap = node.id === net.rootId
       ? Math.max(ECON.nodeCarbonCap, net.carbonCeiling)
       : ECON.nodeCarbonCap * (node.bondedTree >= 0 ? 1.6 : 1);
     if (node.carbon > cap) node.carbon = cap;
+  });
+  for (const segment of economy.segments) {
+    const cap = ECON.nodeCarbonCap * segment.members.length;
+    if (segment.carbon > cap) segment.carbon = cap;
   }
 }
 
@@ -885,6 +970,11 @@ function standingReserve(node: HyphaNode, key: ResourceKey, thirsty = false): nu
     if (thirsty) return key === 'water' ? 0.15 : 0.05;
     return key === 'water' ? 0.6 : 0.15;
   }
+  return strutReserve(key, thirsty);
+}
+
+/** What a plain strut keeps of water or mineral; every strand in a run is one. */
+function strutReserve(key: 'water' | 'nitrogen', thirsty: boolean): number {
   if (thirsty) return 0;
   return key === 'water' ? 0.1 : 0.04;
 }
@@ -895,12 +985,14 @@ function standingReserve(node: HyphaNode, key: ResourceKey, thirsty = false): nu
  * A junction that is not holding its full store is a tree that is not being
  * fully served, which is the signal the rest of the network answers.
  */
-function wantsSupply(nodes: HyphaNode[]): boolean {
-  for (const node of nodes) {
-    if (!node.alive || !node.connected || node.bondedTree < 0) continue;
-    if (node.water < ECON.nodeWaterCap * 0.9 || node.nitrogen < ECON.nodeNitrogenCap * 0.9) return true;
-  }
-  return false;
+function wantsSupply(net: Network, economy: StrandEconomy): boolean {
+  let short = false;
+  // Tree junctions are never pooled into a run.
+  forEachJunction(net, economy, (node) => {
+    if (short || !node.connected || node.bondedTree < 0) return;
+    if (node.water < ECON.nodeWaterCap * 0.9 || node.nitrogen < ECON.nodeNitrogenCap * 0.9) short = true;
+  });
+  return short;
 }
 
 /**
@@ -917,104 +1009,86 @@ function wantsSupply(nodes: HyphaNode[]): boolean {
  * waiting at the end of the route outranks the reserve of every strand on it.
  */
 function moveResource(
-  nodes: HyphaNode[],
-  order: number[],
+  net: Network,
+  economy: StrandEconomy,
   key: ResourceKey,
   buffers: TransportBuffers
 ): void {
-  // Per-node inputs, precomputed by `transport`: edge throughput, the reserve a
-  // node holds before shipping inward, the level it fills a child to, and what
-  // it keeps back on the outward sweep.
-  const { pipe, reserve, fill, keep, value, flow, load } = buffers;
+  // Per-entity inputs, precomputed by `transport`: edge throughput, the reserve
+  // an entity holds before shipping inward, the level it fills a child to, and
+  // what it keeps back on the outward sweep.
+  const { pipe, reserve, fill, keep, value, flow, load, live } = buffers;
+  const nodes = net.nodes;
+  const { order, segments, parentAt, childrenAt } = economy;
   const isCarbon = key === 'carbon';
   const count = order.length;
 
   // The amounts live in typed arrays for the two sweeps: a keyed property
-  // (`node[key]`) is the slow path in the hottest loop of the simulation. Every
-  // node in `order` is alive and so is its parent; each amount is read once and
-  // written back once, and the arithmetic is the same, in the same order.
-  for (let i = 0; i < count; i++) {
-    const id = order[i]!;
-    const node = nodes[id]!;
-    value[id] = node[key];
+  // (`node[key]`) is the slow path in the hottest loop of the simulation. Each
+  // amount is read once and written back once.
+  for (let at = 0; at < count; at++) {
+    const entity = order[at]!;
+    const holder: Store & { flow: number } = entity >= 0 ? nodes[entity]! : segments[-entity - 1]!;
+    value[at] = holder[key];
     if (isCarbon) {
-      flow[id] = node.flow;
-      load[id] = 0;
+      flow[at] = holder.flow;
+      load[at] = 0;
     }
   }
 
-  for (let i = count - 1; i >= 0; i--) {
-    const id = order[i]!;
-    const parentId = nodes[id]!.parent;
-    if (parentId < 0) continue;
-    const surplus = value[id]! - reserve[id]!;
+  for (let at = count - 1; at >= 0; at--) {
+    const up = parentAt[at]!;
+    if (up < 0 || !live[at] || !live[up]) continue;
+    const surplus = value[at]! - reserve[at]!;
     if (surplus <= 0) continue;
-    const moved = Math.min(surplus, pipe[id]!);
-    value[id] = value[id]! - moved;
-    value[parentId] = value[parentId]! + moved;
+    const moved = Math.min(surplus, pipe[at]!);
+    value[at] = value[at]! - moved;
+    value[up] = value[up]! + moved;
     if (isCarbon) {
-      if (pipe[id]! > 0) load[id] = Math.max(load[id]!, moved / pipe[id]!);
-      flow[id] = flow[id]! - moved;
-      flow[parentId] = flow[parentId]! + moved;
+      if (pipe[at]! > 0) load[at] = Math.max(load[at]!, moved / pipe[at]!);
+      flow[at] = flow[at]! - moved;
+      flow[up] = flow[up]! + moved;
     }
   }
 
-  for (let i = 0; i < count; i++) {
-    const id = order[i]!;
-    const children = nodes[id]!.children;
-    if (children.length === 0) continue;
+  for (let at = 0; at < count; at++) {
+    const children = childrenAt[at]!;
+    if (children.length === 0 || !live[at]) continue;
     // A parent must keep strictly less than the level it fills its children
     // to, or a node sitting exactly at its reserve could never be topped up
     // and would slowly die of upkeep. The root keeps more than everyone else,
     // so supply flows outward down a gradient instead of pooling at the base.
-    const kept = keep[id]!;
-    const edge = pipe[id]!;
+    const kept = keep[at]!;
+    const edge = pipe[at]!;
     for (let c = 0; c < children.length; c++) {
-      const childId = children[c]!;
-      const child = nodes[childId];
-      if (!child || !child.alive) continue;
-      const deficit = fill[childId]! - value[childId]!;
+      const child = children[c]!;
+      if (!live[child]) continue;
+      const deficit = fill[child]! - value[child]!;
       if (deficit <= 0) continue;
-      const movable = Math.max(0, value[id]! - kept);
+      const movable = Math.max(0, value[at]! - kept);
       const moved = Math.min(deficit, movable, edge);
       if (moved <= 0) continue;
-      value[id] = value[id]! - moved;
-      value[childId] = value[childId]! + moved;
+      value[at] = value[at]! - moved;
+      value[child] = value[child]! + moved;
       if (isCarbon) {
         // Outward, the parent's pipe is the limit, so the parent's strand is
         // the one running full.
-        if (edge > 0) load[id] = Math.max(load[id]!, moved / edge);
-        flow[id] = flow[id]! - moved;
-        flow[childId] = flow[childId]! + moved;
+        if (edge > 0) load[at] = Math.max(load[at]!, moved / edge);
+        flow[at] = flow[at]! - moved;
+        flow[child] = flow[child]! + moved;
       }
     }
   }
 
-  for (let i = 0; i < count; i++) {
-    const id = order[i]!;
-    const node = nodes[id]!;
-    node[key] = value[id]!;
+  for (let at = 0; at < count; at++) {
+    const entity = order[at]!;
+    const holder: Store & { flow: number; load?: number } = entity >= 0 ? nodes[entity]! : segments[-entity - 1]!;
+    holder[key] = value[at]!;
     if (isCarbon) {
-      node.flow = flow[id]!;
-      node.load = (node.load ?? 0) + (load[id]! - (node.load ?? 0)) * 0.08;
+      holder.flow = flow[at]!;
+      holder.load = (holder.load ?? 0) + (load[at]! - (holder.load ?? 0)) * 0.08;
     }
   }
-}
-
-/** Root-first order over living nodes. */
-function traversalOrder(net: Network): number[] {
-  const order: number[] = [];
-  const stack: number[] = [net.rootId];
-  while (stack.length > 0) {
-    const id = stack.pop() as number;
-    const node = net.nodes[id];
-    if (!node || !node.alive) continue;
-    order.push(id);
-    for (let i = node.children.length - 1; i >= 0; i--) {
-      stack.push(node.children[i] as number);
-    }
-  }
-  return order;
 }
 
 /**
@@ -1022,96 +1096,103 @@ function traversalOrder(net: Network): number[] {
  * it commits to entering new soil; until it can afford the entry it waits,
  * which is what makes nutrient supply the real limit on expansion speed.
  */
-function extendTips(net: Network, ctx: StepContext): void {
-  const { world, dt } = ctx;
+function extendTips(net: Network, economy: StrandEconomy, ctx: StepContext): void {
+  const { world } = ctx;
   if (net.tipCount <= 0) return;
 
   const speed = ECON.tipSpeedCm * (0.45 + ctx.warmth * 0.75);
 
   const grouped = Boolean(net.groups?.length);
-  for (const node of net.nodes) {
-    if (!node.alive || !node.isTip) continue;
-    if (grouped && restingOf(net, node.group)) continue;
+  // Tips are always junctions; a tip grown this tick is visited too.
+  forEachJunction(net, economy, (node) => {
+    if (!node.isTip) return;
+    if (grouped && restingOf(net, node.group)) return;
     // Arrived tips hold the objective; the rest keep growing toward it.
-    if (atGroupTarget(net, world, node)) continue;
+    if (atGroupTarget(net, world, node)) return;
+    growTip(net, world, node, ctx, speed);
+  });
+}
 
-    // Recheck before committing as well as moving: a rising table may have
-    // flooded a target since this tip paid for it. Existing strands persist,
-    // but flooded tips cannot extend until the water recedes.
-    if (!world.passableFrom(node, 0, 0)) continue;
-    const toTargetX = node.targetGx - node.gx;
-    const toTargetY = node.targetGy - node.gy;
-    const toTargetLateral = world.spatialGrowth ? node.targetLateral - node.y : 0;
-    if (!world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
-      node.wx = node.gx + 0.5;
-      node.wy = node.gy + 0.5;
-      node.lateral = node.y;
-      chooseTarget(net, world, node, net.rng);
-      continue;
-    }
+/** One tip's step toward its target cell. */
+function growTip(net: Network, world: NetworkWorld, node: HyphaNode, ctx: StepContext, speed: number): void {
+  const { dt } = ctx;
 
-    const tx = node.targetGx + 0.5;
-    const ty = node.targetGy + 0.5;
-    const dx = tx - node.wx;
-    const dy = ty - node.wy;
-    const dl = world.spatialGrowth ? node.targetLateral - node.lateral : 0;
-    const dist = Math.hypot(dx, dy, dl);
+  // Recheck before committing as well as moving: a rising table may have
+  // flooded a target since this tip paid for it. Existing strands persist,
+  // but flooded tips cannot extend until the water recedes.
+  if (!world.passableFrom(node, 0, 0)) return;
+  const toTargetX = node.targetGx - node.gx;
+  const toTargetY = node.targetGy - node.gy;
+  const toTargetLateral = world.spatialGrowth ? node.targetLateral - node.y : 0;
+  if (!world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
+    node.wx = node.gx + 0.5;
+    node.wy = node.gy + 0.5;
+    node.lateral = node.y;
+    chooseTarget(net, world, node, net.rng);
+    return;
+  }
 
-    if (dist < 0.04) {
-      commitTip(net, world, node, ctx);
-      continue;
-    }
+  const tx = node.targetGx + 0.5;
+  const ty = node.targetGy + 0.5;
+  const dx = tx - node.wx;
+  const dy = ty - node.wy;
+  const dl = world.spatialGrowth ? node.targetLateral - node.lateral : 0;
+  const dist = Math.hypot(dx, dy, dl);
 
-    // Entering a new cell has a one-time cost; moving within the current cell
-    // is cheap. Pay on the frame the tip crosses the boundary.
-    const entering = toTargetX !== 0 || toTargetY !== 0 || toTargetLateral !== 0;
-    const { cost, stratum } = world.costFrom(node, toTargetX, toTargetY, toTargetLateral);
-    if (!Number.isFinite(cost) || !world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
-      // Impassable target: pick again rather than stalling against stone.
-      chooseTarget(net, world, node, net.rng);
-      node.retargetAt = nextRetarget(net);
-      continue;
-    }
+  if (dist < 0.04) {
+    commitTip(net, world, node, ctx);
+    return;
+  }
 
-    if (entering) {
-      if (!node.paid) {
-        // Cost rises sharply as the network approaches its ceiling, so growth
-        // stalls out rather than stopping dead. Tips stay alive and can still
-        // creep, but widening the network stops being free.
-        const crowding = net.nodes.length / MAX_NODES;
-        const pressure = 1 + Math.pow(Math.max(0, crowding), 4) * 14;
-        const total = cost * ECON.growthPerCm * ECON.entryCharge * pressure;
-        if (
-          node.carbon < total ||
-          node.nitrogen < total * ECON.nitrogenPerCm ||
-          node.water < total * ECON.waterPerCm
-        ) {
-          continue; // Starved of carbon or nitrogen: sit and wait.
-        }
-        node.carbon -= total;
-        node.nitrogen -= total * ECON.nitrogenPerCm;
-        node.water -= total * ECON.waterPerCm;
-        node.paid = true;
-        node.pulse = Math.min(1, node.pulse + 0.35);
+  // Entering a new cell has a one-time cost; moving within the current cell
+  // is cheap. Pay on the frame the tip crosses the boundary.
+  const entering = toTargetX !== 0 || toTargetY !== 0 || toTargetLateral !== 0;
+  const { cost, stratum } = world.costFrom(node, toTargetX, toTargetY, toTargetLateral);
+  if (!Number.isFinite(cost) || !world.passableFrom(node, toTargetX, toTargetY, toTargetLateral)) {
+    // Impassable target: pick again rather than stalling against stone.
+    chooseTarget(net, world, node, net.rng);
+    node.retargetAt = nextRetarget(net);
+    return;
+  }
+
+  if (entering) {
+    if (!node.paid) {
+      // Cost rises sharply as the network approaches its ceiling, so growth
+      // stalls out rather than stopping dead. Tips stay alive and can still
+      // creep, but widening the network stops being free.
+      const crowding = net.nodes.length / MAX_NODES;
+      const pressure = 1 + Math.pow(Math.max(0, crowding), 4) * 14;
+      const total = cost * ECON.growthPerCm * ECON.entryCharge * pressure;
+      if (
+        node.carbon < total ||
+        node.nitrogen < total * ECON.nitrogenPerCm ||
+        node.water < total * ECON.waterPerCm
+      ) {
+        return; // Starved of carbon or nitrogen: sit and wait.
       }
-      // Hard strata also slow the tip down as it works through them.
-      node.wx += (dx / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
-      node.wy += (dy / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
-      node.lateral += (dl / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
-      continue;
+      node.carbon -= total;
+      node.nitrogen -= total * ECON.nitrogenPerCm;
+      node.water -= total * ECON.waterPerCm;
+      node.paid = true;
+      node.pulse = Math.min(1, node.pulse + 0.35);
     }
+    // Hard strata also slow the tip down as it works through them.
+    node.wx += (dx / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
+    node.wy += (dy / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
+    node.lateral += (dl / dist) * Math.min(dist, speed * dt * (1 / (1 + stratum.hardness * 0.8)));
+    return;
+  }
 
-    const stepLen = Math.min(dist, speed * dt);
-    node.wx += (dx / dist) * stepLen;
-    node.wy += (dy / dist) * stepLen;
-    node.lateral += (dl / dist) * stepLen;
+  const stepLen = Math.min(dist, speed * dt);
+  node.wx += (dx / dist) * stepLen;
+  node.wy += (dy / dist) * stepLen;
+  node.lateral += (dl / dist) * stepLen;
 
-    // Re-read the soil on a timer, so growth tracks depletion and a rival's
-    // arrival without rescanning the whole network every time a tip commits.
-    if (net.lengthCm > 0 && node.age > node.retargetAt) {
-      chooseTarget(net, world, node, net.rng);
-      node.retargetAt = nextRetarget(net);
-    }
+  // Re-read the soil on a timer, so growth tracks depletion and a rival's
+  // arrival without rescanning the whole network every time a tip commits.
+  if (net.lengthCm > 0 && node.age > node.retargetAt) {
+    chooseTarget(net, world, node, net.rng);
+    node.retargetAt = nextRetarget(net);
   }
 }
 
@@ -1130,6 +1211,7 @@ function commitTip(net: Network, world: NetworkWorld, node: HyphaNode, ctx: Step
   node.lateral = node.y;
   node.isTip = false;
   net.tipCount--;
+  economyOf(net)?.settled.push(node.id);
 
   const cell = world.cellOf(node);
   if (cell) cell.occupancy = Math.min(1, cell.occupancy + 0.34);
@@ -1169,20 +1251,24 @@ function commitTip(net: Network, world: NetworkWorld, node: HyphaNode, ctx: Step
  * starts to matter: the cords that emerge follow the routes the economy
  * actually uses, so the picture of the network is a picture of the decisions.
  */
-function thicken(net: Network, world: NetworkWorld, dt: number): void {
-  for (const node of net.nodes) {
-    if (!node.alive || node.isTip) continue;
-    const traffic = Math.abs(node.flow);
-    const target = Math.max(node.reinforced ? 0.9 : 0, Math.min(1, 0.08 + traffic * 0.22 + node.age * 0.004));
-    if (target > node.thickness) {
-      node.thickness += (target - node.thickness) * Math.min(1, dt * 0.5);
-    } else {
-      node.thickness += (target - node.thickness) * Math.min(1, dt * 0.08);
-    }
-    if (node.thickness > 0.62 && Math.abs(node.flow) > 0.05) {
-      const cell = world.cellOf(node);
-      if (cell) cell.occupancy = Math.min(1, cell.occupancy + 0.02 * dt);
-    }
+function thicken(net: Network, economy: StrandEconomy, world: NetworkWorld, dt: number): void {
+  // Strands inside a run thicken when tended (`tendRuns`).
+  forEachJunction(net, economy, (node) => {
+    if (!node.isTip) thickenStrand(node, world, dt);
+  });
+}
+
+function thickenStrand(node: HyphaNode, world: NetworkWorld, dt: number): void {
+  const traffic = Math.abs(node.flow);
+  const target = Math.max(node.reinforced ? 0.9 : 0, Math.min(1, 0.08 + traffic * 0.22 + node.age * 0.004));
+  if (target > node.thickness) {
+    node.thickness += (target - node.thickness) * Math.min(1, dt * 0.5);
+  } else {
+    node.thickness += (target - node.thickness) * Math.min(1, dt * 0.08);
+  }
+  if (node.thickness > 0.62 && Math.abs(node.flow) > 0.05) {
+    const cell = world.cellOf(node);
+    if (cell) cell.occupancy = Math.min(1, cell.occupancy + 0.02 * dt);
   }
 }
 
@@ -1191,17 +1277,17 @@ function thicken(net: Network, world: NetworkWorld, dt: number): void {
  * being nodes and become the soil's problem — decomposable matter for whoever
  * gets there first.
  */
-function decay(net: Network, world: NetworkWorld, dt: number): void {
-  feedFounder(net, dt);
-  for (const node of net.nodes) {
-    if (!node.alive) continue;
+function decay(net: Network, economy: StrandEconomy, world: NetworkWorld, dt: number): void {
+  feedFounder(net, economy, dt);
+  const healing = net.evolution.learned.includes('living-sheath') ? 0.025 : 0.015;
+  forEachJunction(net, economy, (node) => {
     if (!node.connected) {
       node.health -= dt * 0.055 * (1 + (1 - node.thickness));
       if (node.health <= 0) killNode(net, world, node, 0);
-      continue;
+      return;
     }
     // Upkeep. Nodes in poor soil with no supply bleed out slowly.
-    const drain = ECON.upkeepPerNode * dt * (0.5 + node.thickness * 1.6);
+    const drain = ECON.upkeepPerNode * dt * upkeepWeight(node);
     node.carbon = Math.max(0, node.carbon - drain);
     // A node with nothing left starts to die. This is what makes an
     // unprofitable network — one that grew into barren soil with no tree to
@@ -1211,12 +1297,78 @@ function decay(net: Network, world: NetworkWorld, dt: number): void {
       node.health -= dt * 0.03 * (node.id === net.rootId ? 0.3 : 1);
       if (node.health <= 0) killNode(net, world, node, 0.5);
     } else {
-      node.health = Math.min(1, node.health + dt * (net.evolution.learned.includes('living-sheath') ? 0.025 : 0.015));
+      node.health = Math.min(1, node.health + dt * healing);
     }
     // Very old tips that never found anything are pruned back.
-    if (node.isTip && node.age > 140 && Math.hypot(node.wx - node.gx, node.wy - node.gy) < 0.2) {
+    if (node.alive && node.isTip && node.age > 140 && Math.hypot(node.wx - node.gx, node.wy - node.gy) < 0.2) {
       killNode(net, world, node, 0.3);
     }
+  });
+  // A run pays the same upkeep its strands would, out of its pool; each
+  // strand's health answers to its share when it is tended.
+  for (const segment of economy.segments) {
+    if (segment.alive <= 0 || !net.nodes[segment.members[0]!]!.connected) continue;
+    segment.carbon = Math.max(0, segment.carbon - ECON.upkeepPerNode * dt * segment.upkeepWeight);
+  }
+}
+
+/**
+ * Bring one slice of the strands inside runs up to date: every strand is
+ * tended once in `TEND_SLICES` ticks, with the time since it last was. This is
+ * each strand's own slow life: ageing, its pulse fading, soil uptake into its
+ * run's pool, thickening, and health, which answers to its share of the pool.
+ */
+function tendRuns(net: Network, economy: StrandEconomy, world: NetworkWorld, now: number): void {
+  const nodes = net.nodes;
+  const deepDrink = net.evolution.learned.includes('deep-drink') ? 1.2 : 1;
+  const mineralWeave = net.evolution.learned.includes('mineral-weave') ? 1.2 : 1;
+  const healing = net.evolution.learned.includes('living-sheath') ? 0.025 : 0.015;
+  const mending = Boolean(net.evolution.active.mend);
+  const phase = economy.tick % TEND_SLICES;
+  for (let id = phase; id < economy.built; id += TEND_SLICES) {
+    const s = economy.segOf[id]!;
+    if (s < 0) continue;
+    const node = nodes[id]!;
+    if (!node.alive) continue;
+    tendStrand(net, economy.segments[s]!, node, world, now, { deepDrink, mineralWeave, healing, mending });
+  }
+}
+
+function tendStrand(
+  net: Network, segment: Segment, node: HyphaNode, world: NetworkWorld, now: number,
+  rates: { deepDrink: number; mineralWeave: number; healing: number; mending: boolean }
+): void {
+  const since = now - (node.tendedAt ?? now);
+  node.tendedAt = now;
+  if (since <= 0) return;
+  const strands = segment.members.length;
+  node.age += since;
+  node.pulse = Math.max(0, node.pulse - since * 0.9);
+  // Everything that passes through a run passes through each of its strands.
+  node.flow = segment.flow / strands;
+
+  if (rates.mending && node.connected && node.health < 1) {
+    const repair = Math.min(1 - node.health, since * 0.08, segment.carbon / strands / 2);
+    node.health += repair;
+    segment.carbon -= repair * 2;
+    node.pulse = 1;
+  }
+  if (node.connected) {
+    const cell = world.cellOf(node);
+    if (cell) takeFromSoil(node, cell, since, segment, strands, rates.deepDrink, rates.mineralWeave);
+  }
+  thickenStrand(node, world, since);
+
+  if (!node.connected) {
+    node.health -= since * 0.055 * (1 + (1 - node.thickness));
+    if (node.health <= 0) killNode(net, world, node, 0);
+    return;
+  }
+  if (segment.carbon / strands <= 0.02) {
+    node.health -= since * 0.03;
+    if (node.health <= 0) killNode(net, world, node, 0.5);
+  } else {
+    node.health = Math.min(1, node.health + since * rates.healing);
   }
 }
 
@@ -1234,17 +1386,29 @@ const FOUNDER_DRAW = 3;
  * second. Carbon is moved, never made. A colony that is
  * truly spent has nothing spare, and dies back from its edges instead.
  */
-function feedFounder(net: Network, dt: number): void {
+function feedFounder(net: Network, economy: StrandEconomy, dt: number): void {
   const root = net.nodes[net.rootId];
   if (!root?.alive || root.carbon >= FOUNDER_FLOOR) return;
   let need = Math.min(FOUNDER_FLOOR - root.carbon, FOUNDER_DRAW * dt);
-  for (const node of net.nodes) {
+  // Nearest the founder first: the body's entities in root-first order.
+  for (const entity of economy.order) {
     if (need <= 0) break;
-    if (!node.alive || !node.connected || node === root) continue;
-    const spare = node.carbon - (node.isTip ? 0.6 : 0.3);
-    if (spare <= 0) continue;
-    const take = Math.min(spare, need);
-    node.carbon -= take;
+    let take: number;
+    if (entity >= 0) {
+      const node = net.nodes[entity]!;
+      if (!node.alive || !node.connected || node === root) continue;
+      const spare = node.carbon - (node.isTip ? 0.6 : 0.3);
+      if (spare <= 0) continue;
+      take = Math.min(spare, need);
+      node.carbon -= take;
+    } else {
+      const segment = economy.segments[-entity - 1]!;
+      if (segment.alive <= 0) continue;
+      const spare = segment.carbon - 0.3 * segment.members.length;
+      if (spare <= 0) continue;
+      take = Math.min(spare, need);
+      segment.carbon -= take;
+    }
     root.carbon += take;
     need -= take;
   }
@@ -1269,6 +1433,17 @@ export function lyseNode(net: Network, world: NetworkWorld, node: HyphaNode): vo
 function killNode(net: Network, world: NetworkWorld, node: HyphaNode, organicReturn: number): void {
   node.alive = false;
   if (node.isTip) net.tipCount = Math.max(0, net.tipCount - 1);
+  // A strand inside a run takes its share of the pool with it. A junction
+  // with strands beyond it cuts them off. Either way the graph must be
+  // rebuilt; a dead end or a tip simply stops trading.
+  const economy = economyOf(net);
+  const s = segmentIndexOf(economy, node.id);
+  if (s >= 0) {
+    economy!.segments[s]!.alive--;
+    economy!.stale = true;
+  } else if (node.children.some((id) => net.nodes[id]?.alive)) {
+    markStrandsStale(net);
+  }
   const cell = world.cellOf(node);
   if (cell) {
     cell.occupancy = Math.max(0, cell.occupancy - 0.3);
@@ -1311,7 +1486,7 @@ function feederAt(net: Network, gx: number, gy: number, wantWater: number, wantN
     // Prefer a strand in this patch that can actually pay for the day's growth.
     // Any strand will do when none can, so that a starving patch drains visibly
     // rather than the body simply refusing to notice it.
-    if (node.water >= wantWater && node.nitrogen >= wantNitrogen && d < bestDist) {
+    if (heldBy(net, node, 'water') >= wantWater && heldBy(net, node, 'nitrogen') >= wantNitrogen && d < bestDist) {
       bestDist = d;
       best = node;
     }
@@ -1350,11 +1525,11 @@ function progressFruiting(net: Network, ctx: StepContext): void {
   const wantNitrogen = ECON.fruitNitrogenDraw * ctx.dt;
   const feeder = feederAt(net, fruit.gx, fruit.gy, wantWater, wantNitrogen, fruit.spatial);
   const fed = Boolean(
-    feeder && feeder.water >= wantWater && feeder.nitrogen >= wantNitrogen
+    feeder && heldBy(net, feeder, 'water') >= wantWater && heldBy(net, feeder, 'nitrogen') >= wantNitrogen
   );
   if (fed && feeder) {
-    feeder.water -= wantWater;
-    feeder.nitrogen -= wantNitrogen;
+    drawHeld(net, feeder, 'water', wantWater);
+    drawHeld(net, feeder, 'nitrogen', wantNitrogen);
   }
 
   if (!fed) {
@@ -1399,17 +1574,29 @@ export function updateTotals(net: Network): void {
   let nitrogen = 0;
   let living = 0;
   let starving = 0;
-  for (const node of net.nodes) {
-    if (!node.alive) continue;
-    living++;
-    if (!node.connected) continue;
-    carbon += Math.max(0, node.carbon);
-    water += Math.max(0, node.water);
-    nitrogen += Math.max(0, node.nitrogen);
-    // "Starving" means below working reserve, not merely nearly empty: the
-    // point of the gate is that a network under-supplied anywhere is not
-    // running a surplus worth banking.
-    if (node.carbon < 0.7) starving++;
+  // "Starving" means below working reserve, not merely nearly empty: the
+  // point of the gate is that a network under-supplied anywhere is not
+  // running a surplus worth banking.
+  const count = (node: HyphaNode, c: number, w: number, n: number, strands: number): void => {
+    living += strands;
+    if (!node.connected) return;
+    carbon += Math.max(0, c);
+    water += Math.max(0, w);
+    nitrogen += Math.max(0, n);
+    if (c / strands < 0.7) starving += strands;
+  };
+  const economy = economyOf(net);
+  if (economy?.pooled) {
+    forEachJunction(net, economy, (node) => count(node, node.carbon, node.water, node.nitrogen, 1));
+    for (const segment of economy.segments) {
+      if (segment.alive <= 0) continue;
+      // Pools are shared by all members, the dead ones' shares included until the rebuild.
+      const k = segment.members.length;
+      const scale = segment.alive / k;
+      count(net.nodes[segment.members[0]!]!, segment.carbon * scale, segment.water * scale, segment.nitrogen * scale, segment.alive);
+    }
+  } else {
+    for (const node of net.nodes) if (node.alive) count(node, node.carbon, node.water, node.nitrogen, 1);
   }
   net.carbon = carbon;
   net.water = water;
@@ -1554,7 +1741,7 @@ function restingOf(net: Network, id: number | undefined): boolean {
  * none), it sprouts one from the strand of its own nearest the destination,
  * paid for like any fork, from the colony's shared tip allowance.
  */
-function sproutGroups(net: Network, ctx: StepContext): void {
+function sproutGroups(net: Network, economy: StrandEconomy, ctx: StepContext): void {
   const groups = net.groups!;
   // The colony at large (id 0) is steered like any subcluster: a circle that
   // took all its tips must not leave it unable to grow.
@@ -1565,12 +1752,12 @@ function sproutGroups(net: Network, ctx: StepContext): void {
   for (let i = groups.length; i >= 0; i--) {
     const group = i === groups.length ? colony : groups[i]!;
     const member = (node: HyphaNode) => (group.id === 0 ? !groupById(net, node.group) : node.group === group.id);
-    let strands = 0, tips = 0;
-    for (const node of net.nodes) {
-      if (!node.alive || !member(node)) continue;
-      strands++;
-      if (node.isTip) tips++;
-    }
+    // Strands are counted when the economy is built; tips are always junctions.
+    let strands = economy.groupStrands.get(group.id) ?? 0, tips = 0;
+    forEachJunction(net, economy, (node) => {
+      if (node.isTip && member(node)) tips++;
+    });
+    if (tips > strands) strands = tips;
     // A group whose strands have all died has nothing left to steer.
     if (strands === 0) { if (group.id !== 0) groups.splice(i, 1); continue; }
     const target = group.waypoints[0];
@@ -1579,7 +1766,7 @@ function sproutGroups(net: Network, ctx: StepContext): void {
     let best: HyphaNode | null = null, bestDistance = Infinity;
     for (const node of net.nodes) {
       if (!node.alive || !node.connected || node.isTip || !member(node)) continue;
-      if (node.carbon < ECON.parentReserveFloor + 0.5 || !ctx.world.passableFrom(node, 0, 0)) continue;
+      if (heldBy(net, node, 'carbon') < ECON.parentReserveFloor + 0.5 || !ctx.world.passableFrom(node, 0, 0)) continue;
       const distance = Math.hypot(target.gx - node.gx, target.gy - node.gy,
         ctx.world.spatialGrowth ? (target.lateral ?? node.y) - node.y : 0);
       if (distance < bestDistance) { best = node; bestDistance = distance; }
@@ -1631,6 +1818,7 @@ function retireTipFor(net: Network, forGroup: number): boolean {
   youngest.targetGy = youngest.gy;
   youngest.ordered = false;
   net.tipCount = Math.max(0, net.tipCount - 1);
+  economyOf(net)?.settled.push(youngest.id);
   return true;
 }
 
@@ -1690,6 +1878,8 @@ export function createGroupWhere(
   }
   const id = Math.max(0, ...net.groups.map((g) => g.id)) + 1;
   net.groups.push({ id, waypoints: [], resting: false, sproutAt: 0 });
+  // Subcluster strand counts are taken when the economy is built.
+  markStrandsStale(net);
   let tips = 0;
   for (const node of selected) {
     node.group = id;
@@ -1706,6 +1896,7 @@ export function createGroupWhere(
 export function dissolveGroup(net: Network, world: NetworkWorld, id: number): boolean {
   if (!groupById(net, id)) return false;
   net.groups = net.groups!.filter((g) => g.id !== id);
+  markStrandsStale(net);
   for (const node of net.nodes) {
     if (node.group !== id) continue;
     delete node.group;
@@ -1814,6 +2005,8 @@ export function tryBond(
 
   const candidate = bondCandidate(net, world, tree, tip);
   if (!candidate || candidate.distanceCm > reach || candidate.availableCarbon < ECON.bondCharge) return false;
+  // The new junction leaves its run at the next step.
+  markStrandsStale(net);
   const best = candidate.node;
   const path: HyphaNode[] = [];
   for (let source: HyphaNode | undefined = best; source; source = source.parent >= 0 ? net.nodes[source.parent] : undefined) path.push(source);
@@ -1914,6 +2107,8 @@ export function layCord(net: Network, route: readonly number[]): number {
   const plan = planCord(net, route);
   if (plan.fresh === 0) return 0;
   if (!payColonyFund(net, { carbon: plan.cost, water: 0, nitrogen: 0 })) return 0;
+  // Cords widen their runs' narrowest pipes.
+  markStrandsStale(net);
   for (const id of route.slice(0, plan.affordable)) {
     const node = net.nodes[id]!;
     node.pulse = 1;
@@ -1930,6 +2125,8 @@ export function makeCord(net: Network, nodeId: number): boolean {
   if (!node || !node.alive) return false;
   if (node.reinforced) return false;
   if (node.carbon < ECON.cordCharge) return false;
+  // A cord widens its run's narrowest pipe.
+  markStrandsStale(net);
   node.carbon -= ECON.cordCharge;
   node.thickness = 0.9;
   node.reinforced = true;

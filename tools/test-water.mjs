@@ -9,7 +9,7 @@ import { stripTypeScriptTypes } from 'node:module';
 const output = mkdtempSync(join(tmpdir(), 'mycelia-water-'));
 const started = performance.now();
 try {
-  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'network', 'sim']) {
+  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'segments', 'network', 'sim']) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '(.+?)'/g, "from '$1.mjs'"));
   }

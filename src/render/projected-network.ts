@@ -83,6 +83,8 @@ export class ProjectedNetwork {
           case 'groups': return target.groups?.map((group) => ({ ...group, waypoints: group.waypoints.map(shiftColumn) }));
           case 'blooms': return target.blooms.map(shiftColumn);
           case 'fruit': return target.fruit.active ? shiftColumn(target.fruit) : target.fruit;
+          // The strand economy (`segments.ts`) is kept against the real network.
+          case '__source': return target;
           default: return Reflect.get(target, property, receiver);
         }
       },

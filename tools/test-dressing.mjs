@@ -32,7 +32,7 @@ function check(name, fn) {
 
 try {
   const modules = [
-    'content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'network', 'sim', 'match', 'survey',
+    'content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'segments', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'network', 'sim', 'match', 'survey',
     'forest-dressing-layout', 'forest-floor-field',
   ];
   for (const name of modules) {
