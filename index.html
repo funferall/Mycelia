@@ -176,6 +176,14 @@
           </li>
         </ul>
         <p class="orders-note" id="order-note" role="status">Awaken the spore when you are ready.</p>
+        <!-- Grow through any edge of the stand in view: the side-on section only reaches west and east. -->
+        <div class="edge-crossing" id="edge-crossing" role="group" aria-label="Grow through a stand edge" hidden>
+          <span class="edge-crossing-label">Grow across an edge</span>
+          <button type="button" data-edge="north">North <span aria-hidden="true">↑</span></button>
+          <button type="button" data-edge="west"><span aria-hidden="true">←</span> West</button>
+          <button type="button" data-edge="east">East <span aria-hidden="true">→</span></button>
+          <button type="button" data-edge="south">South <span aria-hidden="true">↓</span></button>
+        </div>
         <!-- Offered when the frontier grows into another stand; the view never moves on its own. -->
         <button type="button" id="follow-frontier" class="journal-action follow-frontier" hidden></button>
         <!-- A mature fruiting body holds its spores until released, or until a gust takes them. -->

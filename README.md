@@ -63,8 +63,10 @@ When enough carbon is saved, **Fruit** raises a mushroom through the soil to
 the forest floor. A finished mushroom holds spores. Wait for a gust, then press
 **Release spores**: the wind carries them to another stand, where they found a
 new colony of your own. You can also grow straight across a stand's edge:
-click the soil beyond it with **Grow**, or use **Follow the frontier** to keep
-the camera on the growing edge.
+click the soil beyond either end of the section with **Grow**, or use the
+**Grow across an edge** compass under the orders, which also reaches the
+stands to the north and south. **Follow the frontier** keeps the camera on
+the growing edge.
 
 ![A mushroom rising from the network into the forest](docs/guide/fruiting.jpg)
 
@@ -137,11 +139,15 @@ Under **Opponent** in the side panel you choose who plays the rival:
 - an AI decision model (TypeSafe Jev, or OpenAI Decisions once it is
   available), which makes about four decisions a second.
 
+**Map** in the same panel switches to **four stands: a duel**, a 2 by 2
+forest where the rival starts in the opposite corner, so you meet it sooner
+(or open the game with `?map=4`, for example `?map=4&opponent=jev`).
+
 ### 6. Win the region
 
 A stand counts as yours when you hold more of its trees in partnership than
-the rival does. Hold **5 of the 9 stands** until the season changes, and the
-region is yours. If the rival does the same, you lose. **Survey the region**
+the rival does. Hold **5 of the 9 stands** (3 of 4 on the duel map) until the
+season changes, and the region is yours. If the rival does the same, you lose. **Survey the region**
 (`S`) lists what every stand holds.
 
 ![The regional survey: all nine stands and who holds them](docs/guide/survey.jpg)

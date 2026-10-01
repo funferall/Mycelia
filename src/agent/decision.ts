@@ -136,7 +136,8 @@ export function act(match: RegionalMatch, obs: Observation, answers: Record<stri
   if (growth?.order && stance !== 'withdraw' && confident(answers.growth, policy)) {
     const stand = match.stands[growth.order.standId];
     const net = stand?.sim[obs.owner as 'player' | 'rival'];
-    const key = `${growth.order.standId}:${growth.order.gx}:${growth.order.gy}`;
+    const target = growth.order.point;
+    const key = target ? `${growth.order.standId}:${Math.round(target.x)}:${Math.round(target.y)}` : `${growth.order.standId}:${growth.order.gx}:${growth.order.gy}`;
     const last = net ? lastGrowth.get(net) : undefined;
     if (last && last.key === key && match.time - last.at < REGROW_SECONDS) {
       // Already sent there recently: re-issuing would only reset the tips' progress.
@@ -147,7 +148,7 @@ export function act(match: RegionalMatch, obs: Observation, answers: Record<stri
       let ok = true;
       let text = growth.label;
       if (body && body.colony === net) {
-        const point = stand.sim.world.regionalSoil?.pointAt(growth.order.gx, growth.order.gy);
+        const point = target ?? stand.sim.world.regionalSoil?.pointAt(growth.order.gx, growth.order.gy);
         const result = point ? body.growAt(point, 'x', point.y) : { ok: false, message: 'That cell has no regional place.' };
         ok = result.ok;
         if (!ok) text = `${growth.label}: ${result.message}`;

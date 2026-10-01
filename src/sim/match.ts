@@ -72,8 +72,19 @@ export interface Colonization {
  * The regional victory (`CORE-05`, decided 28 September): hold this many
  * stands at once, then keep at least that many until the season turns. A
  * stand is held by whoever dominates it: strictly more bonded trees there.
+ * This is the nine-stand region's; any region needs a majority of its stands
+ * (`holdTilesFor`), so the four-stand duel needs three.
  */
 export const HOLD_TILES = 5;
+export const holdTilesFor = (stands: number) => Math.floor(stands / 2) + 1;
+
+/**
+ * Region sizes a match can be played on: the full nine-stand region, or a
+ * four-stand duel (2 by 2) where the rival starts across the diagonal, one
+ * stand edge from any stand the player could reach first.
+ */
+export type RegionSize = 9 | 4;
+const REGION_GRID: Record<RegionSize, [cols: number, rows: number]> = { 9: [3, 3], 4: [2, 2] };
 
 /** Where each side stands against the regional victory. */
 export interface RegionHold {
@@ -178,6 +189,8 @@ export class RegionalMatch {
   victory: RegionalVictory = 'playing';
   private holdClock = 0;
   readonly region: Region;
+  /** Stands a side must hold at once to take the region: a majority of them. */
+  readonly holdTiles: number;
   readonly stands: StandState[];
   readonly colonization: Colonization[] = [];
   readonly growthCrossings: GrowthCrossing[] = [];
@@ -223,9 +236,11 @@ export class RegionalMatch {
   private readonly sharedStands = new Set<number>();
   private readonly seedText: string;
 
-  constructor(seedText = 'raven-wood', foundingSimulation?: Simulation, options: { starts?: StartRule } = {}) {
+  constructor(seedText = 'raven-wood', foundingSimulation?: Simulation, options: { starts?: StartRule; stands?: RegionSize } = {}) {
     this.seedText = seedText;
-    this.region = createRegion(seedText, undefined, undefined, options.starts ?? 'drawn');
+    const [cols, rows] = REGION_GRID[options.stands ?? 9];
+    this.region = createRegion(seedText, cols, rows, options.starts ?? 'drawn');
+    this.holdTiles = holdTilesFor(this.region.stands.length);
     this.soil = new SoilVolume(this.region, hashString(`${seedText}:soil`));
     this.stands = this.region.stands.map((site) => ({
       site,
@@ -296,12 +311,12 @@ export class RegionalMatch {
     for (const side of ['player', 'rival'] as const) {
       const hold = this.hold[side];
       hold.tiles = dominance.filter((entry) => entry.holder === side).length;
-      if (hold.tiles >= HOLD_TILES) {
+      if (hold.tiles >= this.holdTiles) {
         if (hold.since === null) {
           hold.since = this.seasonIndex;
           hold.sinceTime = this.time;
           this.broadcast(side === 'player'
-            ? `You hold ${hold.tiles} stands. Keep at least ${HOLD_TILES} until the season turns to take the region.`
+            ? `You hold ${hold.tiles} stands. Keep at least ${this.holdTiles} until the season turns to take the region.`
             : `The rival holds ${hold.tiles} stands. Break its hold before the season turns.`);
         } else if (this.seasonIndex > hold.since) {
           this.victory = side === 'player' ? 'won' : 'lost';
@@ -314,8 +329,8 @@ export class RegionalMatch {
         hold.since = null;
         hold.sinceTime = null;
         this.broadcast(side === 'player'
-          ? `Your hold on the region broke: ${hold.tiles} of ${HOLD_TILES} stands.`
-          : `The rival's hold broke: ${hold.tiles} of ${HOLD_TILES} stands.`);
+          ? `Your hold on the region broke: ${hold.tiles} of ${this.holdTiles} stands.`
+          : `The rival's hold broke: ${hold.tiles} of ${this.holdTiles} stands.`);
       }
     }
   }
@@ -325,10 +340,10 @@ export class RegionalMatch {
     const hold = this.hold.player;
     if (this.victory === 'won') return `Region taken: ${hold.tiles} stands held.`;
     if (this.victory === 'lost') return 'The rival took the region.';
-    if (hold.since === null) return `Stands held: you ${hold.tiles}, rival ${this.hold.rival.tiles}; ${HOLD_TILES} needed.`;
+    if (hold.since === null) return `Stands held: you ${hold.tiles}, rival ${this.hold.rival.tiles}; ${this.holdTiles} needed.`;
     const season = SEASONS[this.seasonIndex % SEASONS.length]!;
     const left = Math.max(0, Math.ceil(season.seconds - this.seasonClock));
-    return `Holding ${hold.tiles} stands: keep ${HOLD_TILES} for ${left}s, until the season turns.`;
+    return `Holding ${hold.tiles} stands: keep ${this.holdTiles} for ${left}s, until the season turns.`;
   }
 
   /**
@@ -512,6 +527,41 @@ export class RegionalMatch {
     const spatial = this.ensureSpatialColony(origin, direction);
     this.spatial = spatial;
     return spatial.orderAcross(group);
+  }
+
+  /**
+   * Grow the player's colony in the stand in view through one of the stand's
+   * four edges. A colony still in its own transect becomes a regional body
+   * crossing that edge (as `growAcross`); a body that already spans stands is
+   * sent to the soil just past that edge's corridor, which the side-on view
+   * cannot click for north and south.
+   */
+  growThrough(direction: CrossingDirection, group = 0): { ok: boolean; message: string } {
+    const origin = this.activeStandId;
+    const site = this.region.stands[origin];
+    if (!site) return { ok: false, message: 'No stand is in view.' };
+    const beyond = direction === 'east' ? (site.sx < this.region.cols - 1 ? origin + 1 : null)
+      : direction === 'west' ? (site.sx > 0 ? origin - 1 : null)
+        : direction === 'south' ? (site.sy < this.region.rows - 1 ? origin + this.region.cols : null)
+          : (site.sy > 0 ? origin - this.region.cols : null);
+    if (beyond === null) return { ok: false, message: `This stand's ${direction} edge is the edge of the region.` };
+    const body = this.spatialForStand(origin);
+    if (!body) return this.growAcross(direction, group);
+    const point = this.seamPoint(origin, direction);
+    if (!point) return { ok: false, message: `No passable ground crosses the ${direction} edge here.` };
+    this.spatial = body;
+    return body.growAt(point, 'x', point.y, group);
+  }
+
+  /** A passable regional point just past a stand edge's corridor, or null. */
+  private seamPoint(source: number, direction: CrossingDirection): { x: number; y: number; z: number } | null {
+    let corridor: CrossingCorridor;
+    try { corridor = chooseCrossing(this.region, this.soil, source, direction); }
+    catch { return null; }
+    const x = corridor.alongIsX ? corridor.seam + corridor.sign * 3 : corridor.fixed;
+    const y = corridor.alongIsX ? corridor.fixed : corridor.seam + corridor.sign * 3;
+    const point = { x, y, z: elevationAtDepthCm(this.region, x, y, corridor.depthCm) };
+    return this.soil.passableAt(point.x, point.y, point.z) ? point : null;
   }
 
   private ensureSpatialColony(origin: number, direction?: CrossingDirection): CrossingMatch {
@@ -1192,13 +1242,9 @@ export class RegionalMatch {
           const direction: CrossingDirection = neighbour.sx > site.sx ? 'east'
             : neighbour.sx < site.sx ? 'west'
               : neighbour.sy > site.sy ? 'south' : 'north';
-          let corridor: CrossingCorridor;
-          try { corridor = chooseCrossing(this.region, this.soil, source, direction); }
-          catch { continue; }
-          const x = corridor.alongIsX ? corridor.seam + corridor.sign * 3 : corridor.fixed;
-          const y = corridor.alongIsX ? corridor.fixed : corridor.seam + corridor.sign * 3;
-          const point = { x, y, z: elevationAtDepthCm(this.region, x, y, corridor.depthCm) };
-          if (!this.soil.passableAt(point.x, point.y, point.z)) continue;
+          const point = this.seamPoint(source, direction);
+          if (!point) continue;
+          const { x, y } = point;
           let distance = Infinity;
           for (const node of body.colony.nodes) {
             if (!node.alive || !node.connected || body.standOf(node) !== source) continue;

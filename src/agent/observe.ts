@@ -13,6 +13,7 @@ import type { RegionalMatch } from '../sim/match';
 import type { HyphaNode, Network, Owner } from '../sim/network';
 import type { Vec3 } from '../sim/spatial';
 import { regionNetworks, type RegionNetwork } from '../sim/wildfire';
+import { standIdAt } from '../sim/spatial';
 
 export interface TargetCandidate {
   id: string;
@@ -24,8 +25,11 @@ export interface TargetCandidate {
 export interface GrowthCandidate {
   id: string;
   label: string;
-  /** null = no new order. */
-  order: { standId: number; gx: number; gy: number } | null;
+  /**
+   * null = no new order. `point` is a regional target for a colony that has
+   * grown into a regional body; it may lie in another stand.
+   */
+  order: { standId: number; gx: number; gy: number; point?: Vec3 } | null;
 }
 
 export interface Observation {
@@ -132,7 +136,27 @@ export function observe(match: RegionalMatch, owner: Owner): Observation {
       if (growth.length >= 6) return;
       growth.push({ id: `g${growth.length}`, label: `stand ${sid + 1}: ${label}`, order: { standId: sid, gx: Math.round(gx), gy: Math.round(gy) } });
     };
-    if (enemy && (owner === 'player' ? stand.rivalPresent : stand.sim.hasColony)) push('grow toward the enemy founding strand to attack', enemy.gx, enemy.gy);
+    const enemyHere = enemy && (owner === 'player' ? stand.rivalPresent : stand.sim.hasColony);
+    if (enemyHere) push('grow toward the enemy founding strand to attack', enemy.gx, enemy.gy);
+    // A regional body can go and find an enemy in another stand.
+    const body = (owner === 'rival' ? match.rivalSpatialColonies : match.spatialColonies).get(sid);
+    if (!enemyHere && body && body.colony === net && root.spatial && growth.length < 6) {
+      let nearest: { point: Vec3; d: number; standId: number } | null = null;
+      for (const entry of theirs) {
+        for (const node of entry.net.nodes) {
+          if (!node.alive || !node.spatial) continue;
+          const d = dist(node.spatial, root.spatial);
+          if (!nearest || d < nearest.d) nearest = { point: node.spatial, d, standId: standIdAt(match.region, node.spatial.x, node.spatial.y) ?? sid };
+        }
+      }
+      if (nearest) {
+        growth.push({
+          id: `g${growth.length}`,
+          label: `stand ${sid + 1}: go after the nearest enemy colony, in stand ${nearest.standId + 1}`,
+          order: { standId: sid, gx: Math.round(root.gx), gy: Math.round(root.gy), point: { ...nearest.point } },
+        });
+      }
+    }
     const trees = stand.sim.world.trees;
     const dead = trees.filter((t) => t.dead || t.burned).sort((a, b) => Math.abs(a.gx - root.gx) - Math.abs(b.gx - root.gx))[0];
     if (dead) push('grow toward dead or burned wood to feed on its remains', dead.gx, 6);

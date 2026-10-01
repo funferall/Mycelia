@@ -12,6 +12,10 @@ const LABEL: Record<ProviderId | 'bot', string> = {
  * Who plays the rival: the built-in controller, the offline heuristic agent, or a
  * System One model through the relay. `?opponent=jev|openai|local` picks at
  * load. The readout shows the latest decision, its latency and its actions.
+ *
+ * The map size sits here too, because it decides how soon the two meet: the
+ * four-stand duel (`?map=4`) puts the rival one stand from any neighbour of
+ * the player's. Changing it starts a new match on the same seed.
  */
 export class AgentUI {
   private readonly root = document.createElement('details');
@@ -27,8 +31,25 @@ export class AgentUI {
     this.root.innerHTML = `<summary>Opponent</summary>
       <label for="agent-provider">The rival is played by</label>
       <select id="agent-provider">${(['bot', 'local', 'jev', 'openai'] as const).map((id) => `<option value="${id}">${LABEL[id]}</option>`).join('')}</select>
-      <p class="agent-readout" aria-live="polite"></p>`;
-    this.select = this.root.querySelector('select')!;
+      <p class="agent-readout" aria-live="polite"></p>
+      <label for="map-size">Map</label>
+      <select id="map-size">
+        <option value="9">Nine stands</option>
+        <option value="4">Four stands: a duel</option>
+      </select>
+      <p class="agent-map-note">Changing the map starts a new match on the same forest.</p>`;
+    this.select = this.root.querySelector('#agent-provider')!;
+    const map = this.root.querySelector<HTMLSelectElement>('#map-size')!;
+    map.value = String(match.region.stands.length === 4 ? 4 : 9);
+    map.addEventListener('change', () => {
+      const params = new URLSearchParams(location.search);
+      if (map.value === '4') params.set('map', '4');
+      else params.delete('map');
+      // Keep the opponent across the new match.
+      if (this.select.value === 'bot') params.delete('opponent');
+      else params.set('opponent', this.select.value);
+      location.search = params.toString();
+    });
     this.readout = this.root.querySelector('.agent-readout')!;
     const panel = document.querySelector('.living-panel');
     (panel ?? document.body).append(this.root);

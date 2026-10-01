@@ -326,8 +326,11 @@ export class Game {
     this.seedText = seedText;
     this.sim = new Simulation(seedText);
     // `?start=best` keeps the earlier single best start, for fixtures only.
-    const starts = new URLSearchParams(location.search).get('start') === 'best' ? 'best' : 'drawn';
-    this.match = new RegionalMatch(seedText, this.sim, { starts });
+    const params = new URLSearchParams(location.search);
+    const starts = params.get('start') === 'best' ? 'best' : 'drawn';
+    // `?map=4` plays the four-stand duel; the nine-stand region is the default.
+    const stands = params.get('map') === '4' ? 4 : 9;
+    this.match = new RegionalMatch(seedText, this.sim, { starts, stands });
     this.region = this.match.region;
     const home = this.region.stands[this.region.foundingStand];
     this.sceneOrigin = { x: (home?.sx ?? 0) * TILE_SIZE, y: (home?.sy ?? 0) * TILE_SIZE };
@@ -954,6 +957,48 @@ export class Game {
     if (!result.ok || !this.match.spatial) return result;
     this.attachSpatialFixture(this.match.spatial);
     return result;
+  }
+
+  /**
+   * Grow the colony in the stand in view through one of the stand's edges.
+   * West and east can also be reached by a Grow click past the section's
+   * ends; north and south only from here.
+   */
+  growAcrossEdge(direction: CrossingDirection): { ok: boolean; message: string } {
+    const id = this.match.activeStandId;
+    if (!this.match.stands[id]?.sim.hasColony && !this.match.spatialForStand(id)) {
+      return { ok: false, message: 'Go to a stand that holds your colony to grow across its edge.' };
+    }
+    let result: { ok: boolean; message: string };
+    try {
+      result = this.match.growThrough(direction, this.liveGroup());
+    } catch (error) {
+      return { ok: false, message: `No passable stand edge was found: ${String(error)}` };
+    }
+    if (!result.ok || !this.match.spatial) return result;
+    this.attachSpatialFixture(this.match.spatial);
+    this.sound.chime('grow');
+    return result;
+  }
+
+  /** Offer the edge compass where the player has a colony, with only the edges that lead somewhere. */
+  private syncEdgeCrossing(): void {
+    const panel = document.querySelector<HTMLElement>('#edge-crossing');
+    if (!panel) return;
+    const id = this.match.activeStandId;
+    const site = this.region.stands[id];
+    const mine = Boolean(this.match.stands[id]?.sim.hasColony || this.match.spatialForStand(id));
+    panel.hidden = !site || !mine || !this.awakened;
+    if (panel.hidden || !site) return;
+    const open: Record<CrossingDirection, boolean> = {
+      north: site.sy > 0,
+      south: site.sy < this.region.rows - 1,
+      west: site.sx > 0,
+      east: site.sx < this.region.cols - 1,
+    };
+    for (const button of panel.querySelectorAll<HTMLButtonElement>('button[data-edge]')) {
+      button.disabled = !open[button.dataset.edge as CrossingDirection];
+    }
   }
 
   /** Re-read the colony: new growth, a cut strand, a stand just reached. */
@@ -2299,6 +2344,7 @@ export class Game {
     this.sporeFlights.update(dt, this.stage.rig.surfaceBlend > 0.3);
     if (this.markerClock > 0.1) {
       this.syncSporeButton();
+      this.syncEdgeCrossing();
       this.markerClock = 0;
       this.updateMarkers(this.journey);
       // The survey is a record of the whole region, so it is refreshed on the
@@ -2443,6 +2489,9 @@ export class Game {
     sectionAction('#section-return', () => this.returnToForest());
     sectionAction('#follow-frontier', () => this.followFrontier());
     sectionAction('#release-spores', () => this.releaseSpores());
+    for (const button of document.querySelectorAll<HTMLButtonElement>('#edge-crossing button[data-edge]')) {
+      button.addEventListener('click', () => this.ui.setNote(this.growAcrossEdge(button.dataset.edge as CrossingDirection).message));
+    }
     sectionAction('#section-surface', () => this.surfaceHere());
     document.querySelector<HTMLSelectElement>('#section-stand')?.addEventListener('change', (event) => {
       const id = Number((event.target as HTMLSelectElement).value);

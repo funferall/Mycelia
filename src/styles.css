@@ -1034,6 +1034,16 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .primary-intents .order-key, .primary-intents .order-hint, .primary-intents .order::before, .primary-intents .order::after, .primary-intents #rest span { display: none; }
 .primary-intents .is-on, .primary-intents #rest[aria-pressed='true'] { color: var(--amber); border-bottom-color: var(--amber); }
 #order-note { font: 14px/1.45 var(--serif); color: var(--ink-dim); margin: 16px 0; min-height: 2.9em; }
+.edge-crossing { display: grid; grid-template-columns: 1fr 1fr; grid-template-areas: 'label label' 'north north' 'west east' 'south south'; gap: 2px 12px; margin: 0 0 14px; }
+.edge-crossing[hidden] { display: none; }
+.edge-crossing-label { grid-area: label; font: italic 13px var(--serif); color: var(--ink-dim); }
+.edge-crossing button { padding: 6px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; color: var(--ink); font: 15px var(--serif); text-align: center; cursor: pointer; }
+.edge-crossing button:hover:not(:disabled), .edge-crossing button:focus-visible { color: var(--amber); border-bottom-color: var(--amber); }
+.edge-crossing button:disabled { color: var(--ink-dim); opacity: 0.45; cursor: default; }
+.edge-crossing [data-edge='north'] { grid-area: north; }
+.edge-crossing [data-edge='west'] { grid-area: west; }
+.edge-crossing [data-edge='east'] { grid-area: east; }
+.edge-crossing [data-edge='south'] { grid-area: south; }
 .follow-frontier { color: var(--ink); border-top: 1px solid var(--rule); font-style: italic; }
 .release-spores { color: var(--ink); }
 .release-spores small { color: var(--ink-dim); font-size: 13px; margin-left: 10px; }
@@ -1235,3 +1245,4 @@ button:focus-visible, canvas:focus-visible { outline: 2px solid var(--paper); ou
 .agent-controls label { display: block; margin: 8px 0 4px; font: italic 13px var(--serif); color: var(--ink-dim); }
 .agent-controls select { width: 100%; }
 .agent-readout { min-height: 3.2em; margin: 8px 0 0; font: 12px var(--mono); color: var(--ink-dim); line-height: 1.45; }
+.agent-map-note { margin: 6px 0 0; font: italic 12px var(--serif); color: var(--ink-dim); }
