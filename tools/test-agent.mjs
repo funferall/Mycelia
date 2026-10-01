@@ -21,11 +21,13 @@ const { observe } = await load('src/agent/observe');
 const { questions, act, heuristicAnswers } = await load('src/agent/decision');
 const { AgentController, LocalProvider } = await load('src/agent/controller');
 const { validate, decide, normaliseOpenAI, JEV_URL, available } = await load('server/decide');
+const { orderWaypoint, steeringClaimed } = await load('src/sim/network');
 globalThis.performance ??= { now: () => Date.now() };
 
 /** A real match with a front: spores land in the rival's stand and grow at it. */
 function contactMatch() {
-  const m = new RegionalMatch('contact-run', undefined, { starts: 'best' });
+  // A rival large enough to hold a front for the minute the agent plays it.
+  const m = new RegionalMatch('raven-wood', undefined, { starts: 'best' });
   const R = m.region.rivalStand;
   for (let i = 0; i < 300; i++) m.step(1 / 60);
   m.found(m.stands[R], m.stands[m.region.foundingStand], { carbon: 120, water: 20, nitrogen: 10 }, 0);
@@ -33,7 +35,9 @@ function contactMatch() {
   const rival = m.stands[R].sim.rival;
   const target = rival.nodes[rival.rootId].spatial;
   m.contact.bots.clear();
-  for (let t = 0; t < 120 && !m.contact.frontsOf('rival').length; t++) {
+  // Grow until the front gives the agent real choices: a spore can land so
+  // close that a front opens at once, with only its founder in reach.
+  for (let t = 0; t < 120 && observe(m, 'rival').targets.length < 2; t++) {
     if (t % 5 === 0) body.growAt({ ...target }, 'x', target.y);
     for (let i = 0; i < 60; i++) m.step(1 / 60);
   }
@@ -129,6 +133,42 @@ const { m, R } = contactMatch();
   agent.release();
 }
 {
+  // The rival's own strategy re-aims at the nearest root every 4 s. An agent's
+  // growth order must stand against it until the agent may re-send it.
+  const net = m.stands[R].sim.rival;
+  // The player's body stops pressing the front, so the war does not decide this.
+  const attacker = m.spatialColonies.get(R).colony;
+  attacker.resting = true;
+  attacker.waypoints.length = 0;
+  net.resting = false;
+  const obs = observe(m, 'rival');
+  const option = obs.growth.find((g) => g.order && /deeper/.test(g.label)) ?? obs.growth.find((g) => g.order);
+  assert(option, 'a growth option to order');
+  const at = (o) => `${o.gx},${o.gy}`;
+  const aimed = () => net.waypoints[0] ? at(net.waypoints[0]) : 'none';
+  // The previous check's growth order still holds the steering: let it lapse.
+  for (let i = 0; i < 25 * 60 && steeringClaimed(net); i++) m.step(1 / 60);
+  assert(!steeringClaimed(net), 'the earlier claim has lapsed');
+  // Control: the same order given without the agent is re-aimed by the strategy.
+  orderWaypoint(net, option.order.gx, option.order.gy, m.stands[R].sim.world);
+  for (let i = 0; i < 9 * 60; i++) m.step(1 / 60);
+  const unclaimed = aimed();
+  assert.notEqual(unclaimed, at(option.order), 'without the agent, the rival\'s strategy re-aims its growth');
+  const answers = { stance: { type: 'choice', choice: 'expand', confidence: 1 }, growth: { type: 'choice', choice: option.id, confidence: 1 } };
+  const done = act(m, obs, answers);
+  assert(done.some((d) => d.kind === 'grow' && d.ok), `the agent's growth order is given (${JSON.stringify(done)})`);
+  assert(steeringClaimed(net), 'the order claims the rival\'s steering');
+  for (let i = 0; i < 9 * 60; i++) m.step(1 / 60);
+  assert(!net.extinct && net.nodes[net.rootId].alive, 'the rival lived through the hold, so the hold was tested');
+  assert.equal(aimed(), at(option.order), 'the strategy leaves the agent\'s order standing');
+  // The claim runs on the colony's own clock and lapses when the order may be re-sent.
+  net.evolution.age += 20;
+  assert(!steeringClaimed(net), 'the claim lapses when the agent may re-send');
+  net.evolution.age -= 20;
+  attacker.resting = false;
+  console.log(`PASS an agent's growth order stands against the rival's own strategy for 20 s (without the agent it was re-aimed to ${unclaimed} within 9 s; with it, held at ${at(option.order)})`);
+}
+{
   // The relay: validation, Jev mapping, and failure modes, against a fake fetch.
   assert(!validate({ provider: 'x', state: {}, questions: {} }).ok);
   assert(!validate({ provider: 'jev', state: {}, questions: { a: { type: 'choice', criteria: { only: null } } } }).ok, 'a choice needs two options');
@@ -150,6 +190,29 @@ const { m, R } = contactMatch();
   assert.equal(res.body.answers.stance.type, 'choice');
   assert.equal(res.body.answers.losing.noul, 0.2);
   assert.equal(res.body.usage.input_tokens, 321);
+  // Jev's documented 429/529: one short retry, then the failure goes back to the game.
+  const statuses = [429, 200];
+  let calls429 = 0, waited = 0;
+  const busyFetch = async (url, init) => {
+    calls429++;
+    const status = statuses.shift() ?? 529;
+    return status === 200 ? fakeFetch(url, init) : { ok: false, status, text: async () => 'slow down', json: async () => ({}) };
+  };
+  const retried = await decide({ provider: 'jev', state: {}, questions: qs }, { TYPESAFE_API_KEY: 'k' }, busyFetch, Date.now, async (ms) => { waited += ms; });
+  assert.equal(retried.status, 200, 'a rate-limited call is retried once');
+  assert.equal(calls429, 2);
+  assert.equal(waited, 200);
+  statuses.push(529, 529);
+  calls429 = 0;
+  const gaveUp = await decide({ provider: 'jev', state: {}, questions: qs }, { TYPESAFE_API_KEY: 'k' }, busyFetch, Date.now, async () => {});
+  assert.equal(gaveUp.status, 529, 'and only once');
+  assert.equal(calls429, 2);
+  // A Score answer keeps Jev's legend.
+  const scoreQs = { pace: { type: 'score', instructions: 'how hard?', criteria: ['gently', 'firmly', 'all out'] } };
+  const scored = await decide({ provider: 'jev', state: {}, questions: scoreQs }, { TYPESAFE_API_KEY: 'k' },
+    async () => ({ ok: true, status: 200, text: async () => '', json: async () => ({ model: 'jev', answers: { pace: { score: 2, legend: 'all out', confidence: 0.6 } } }) }));
+  assert.equal(scored.body.answers.pace.legend, 'all out');
+  assert.equal(scored.body.answers.pace.type, 'score');
   const none = await decide({ provider: 'jev', state: {}, questions: qs }, {}, fakeFetch);
   assert.equal(none.status, 503, 'no key, no call');
   const preview = await decide({ provider: 'openai', state: {}, questions: qs }, { OPENAI_API_KEY: 'k' }, fakeFetch);

@@ -1976,6 +1976,23 @@ export function orderWaypoint(net: Network, gx: number, gy: number, world?: Netw
 
 export const BOND_REACH_CM = 3.5 * GRID.cmPerRow;
 
+/**
+ * Colony age until which an outside controller (an agent player) steers a
+ * network's growth. A built-in strategy still bonds roots in reach and
+ * fruits meanwhile, but does not redirect growth over the claimed order.
+ */
+const steeringClaims = new WeakMap<Network, number>();
+
+/** An outside controller has just given this network a growth order. */
+export function claimSteering(net: Network, seconds: number): void {
+  steeringClaims.set(net, net.evolution.age + seconds);
+}
+
+/** Whether an outside controller's growth order still stands. */
+export function steeringClaimed(net: Network): boolean {
+  return (steeringClaims.get(net) ?? -Infinity) > net.evolution.age;
+}
+
 /** The nearest unbonded junction and the carbon on its connected route home. */
 export function bondCandidate(
   net: Network,

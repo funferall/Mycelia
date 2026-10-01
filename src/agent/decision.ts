@@ -6,7 +6,7 @@
  */
 import { CHEMICALS, CHEMICAL_ORDER, type Chemical } from '../sim/contact';
 import type { RegionalMatch } from '../sim/match';
-import { orderWaypoint, type Network } from '../sim/network';
+import { orderWaypoint, claimSteering, type Network } from '../sim/network';
 import type { Observation } from './observe';
 
 /** The provider-neutral question format (TypeSafe Jev's). */
@@ -128,10 +128,26 @@ export function act(match: RegionalMatch, obs: Observation, answers: Record<stri
     if (last && last.key === key && match.time - last.at < REGROW_SECONDS) {
       // Already sent there recently: re-issuing would only reset the tips' progress.
     } else if (stand && net && !net.extinct) {
-      lastGrowth.set(net, { key, at: match.time });
-      net.waypoints.length = 0;
-      orderWaypoint(net, growth.order.gx, growth.order.gy, stand.sim.world);
-      done.push({ kind: 'grow', text: growth.label, ok: true });
+      // A colony that has grown into a regional body is ordered through the
+      // body, at the regional point the stand's cell stands for.
+      const body = (obs.owner === 'rival' ? match.rivalSpatialColonies : match.spatialColonies).get(growth.order.standId);
+      let ok = true;
+      let text = growth.label;
+      if (body && body.colony === net) {
+        const point = stand.sim.world.regionalSoil?.pointAt(growth.order.gx, growth.order.gy);
+        const result = point ? body.growAt(point, 'x', point.y) : { ok: false, message: 'That cell has no regional place.' };
+        ok = result.ok;
+        if (!ok) text = `${growth.label}: ${result.message}`;
+      } else {
+        net.waypoints.length = 0;
+        orderWaypoint(net, growth.order.gx, growth.order.gy, stand.sim.world);
+      }
+      if (ok) {
+        lastGrowth.set(net, { key, at: match.time });
+        // The order stands against the colony's own strategy until it may be re-sent.
+        claimSteering(net, REGROW_SECONDS);
+      }
+      done.push({ kind: 'grow', text, ok });
     }
   }
   return done;

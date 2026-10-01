@@ -1,7 +1,7 @@
 import { ECON, GRID, SEASONS } from './content';
 import { STAND_SIZE, createRegion, downwindStands, type Region, type StandSite, type StartRule } from './region';
 import { Simulation, type MatchOutcome } from './sim';
-import { payColonyFund, markConnectivity, startFruiting, createNetwork, type Owner } from './network';
+import { payColonyFund, markConnectivity, startFruiting, createNetwork, steeringClaimed, type Owner } from './network';
 import { heldBy } from './segments';
 import { CrossingMatch, chooseCrossing, type CrossingCorridor, type CrossingDirection } from './crossing';
 import { SoilVolume, seasonalWaterTableOffsetCm } from './soil-volume';
@@ -1152,6 +1152,9 @@ export class RegionalMatch {
         continue;
       }
       const dominance = this.standDominance();
+      // An agent playing the rival steers its growth while its order stands;
+      // roots already in reach are still bonded.
+      const steered = steeringClaimed(body.colony);
       let soughtRoot = false;
       for (const id of body.reachedStandIds().sort((a, b) => a - b)) {
         const held = dominance[id]!;
@@ -1164,11 +1167,11 @@ export class RegionalMatch {
           soughtRoot = true;
           break;
         }
-        this.pursueRoot(body, id, tip);
+        if (!steered) this.pursueRoot(body, id, tip);
         soughtRoot = true;
         break;
       }
-      if (soughtRoot) continue;
+      if (soughtRoot || steered) continue;
       // Nothing left to court: drop a root order that has been given up on,
       // and carry on toward (or pick) a seam into new ground.
       const pursuit = this.rivalPursuit.get(stand.site.id);
