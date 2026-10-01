@@ -30,6 +30,8 @@ export interface Answer {
   probabilities?: Record<string, number> | number[];
   confidence?: number;
   score?: number;
+  /** Score answers: Jev's description of the chosen level. */
+  legend?: unknown;
   noul?: number;
 }
 
@@ -61,6 +63,13 @@ export interface DecideEnv {
 type Fetch = (input: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>;
 
 export const JEV_URL = 'https://api.typesafe.ai/v1/systemone';
+/**
+ * Jev answers 429 (rate limit) or 529 (overload) when it wants a retry with
+ * backoff. The game asks about four times a second and falls back to its
+ * offline heuristic on failure, so one short retry is all that is worth it.
+ */
+export const JEV_RETRY_MS = 200;
+const RETRY_STATUSES = new Set([429, 529]);
 /** Jev accepts at most 255 options for a Choice and 2 to 10 Score levels. */
 export const LIMITS = { choiceOptions: 255, scoreLevels: [2, 10] as const, questions: 64, stateChars: 60000 };
 
@@ -94,15 +103,23 @@ export function available(env: DecideEnv): Record<Provider, boolean> {
   return { jev: Boolean(env.TYPESAFE_API_KEY), openai: Boolean(env.OPENAI_API_KEY && env.OPENAI_DECISIONS_URL) };
 }
 
-export async function decide(request: DecideRequest, env: DecideEnv, fetchFn: Fetch, now: () => number = () => Date.now()): Promise<{ status: number; body: DecideResponse | { error: string } }> {
+export async function decide(
+  request: DecideRequest, env: DecideEnv, fetchFn: Fetch, now: () => number = () => Date.now(),
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<{ status: number; body: DecideResponse | { error: string } }> {
   const started = now();
   if (request.provider === 'jev') {
     if (!env.TYPESAFE_API_KEY) return { status: 503, body: { error: 'Jev is not configured: set TYPESAFE_API_KEY on the server.' } };
-    const res = await fetchFn(JEV_URL, {
+    const call = () => fetchFn(JEV_URL, {
       method: 'POST',
       headers: { authorization: `Bearer ${env.TYPESAFE_API_KEY}`, 'content-type': 'application/json' },
       body: JSON.stringify({ state: request.state, model: env.TYPESAFE_MODEL ?? 'jev-latest', questions: request.questions }),
     });
+    let res = await call();
+    if (RETRY_STATUSES.has(res.status)) {
+      await wait(JEV_RETRY_MS);
+      res = await call();
+    }
     if (!res.ok) return { status: res.status, body: { error: `Jev answered ${res.status}: ${(await res.text()).slice(0, 300)}` } };
     const data = (await res.json()) as { model?: string; answers?: Record<string, Answer>; usage?: DecideResponse['usage'] };
     const answers: Record<string, Answer> = {};

@@ -57,7 +57,7 @@ function duel(options = {}) {
   const host = {
     time: 0,
     region: { cols: 3, rows: 3 },
-    stands: [{ site: { id: 0 }, rivalPresent: true, sim: { hasColony: true, player, rival, world: w } }],
+    stands: [{ site: { id: 0 }, rivalPresent: true, sim: { hasColony: true, rivalEnabled: true, player, rival, world: w } }],
     spatialColonies: new Map(),
   };
   const messages = [];
@@ -88,7 +88,7 @@ const living = (net) => net.nodes.filter((n) => n.alive).length;
   const w = world();
   const player = chain('player', { x: 10, y: 20, z: 50 }, 1, 10);
   const rival = chain('rival', { x: 120, y: 20, z: 50 }, 1, 10);
-  const host = { time: 0, region: { cols: 3, rows: 3 }, stands: [{ site: { id: 0 }, rivalPresent: true, sim: { hasColony: true, player, rival, world: w } }], spatialColonies: new Map() };
+  const host = { time: 0, region: { cols: 3, rows: 3 }, stands: [{ site: { id: 0 }, rivalPresent: true, sim: { hasColony: true, rivalEnabled: true, player, rival, world: w } }], spatialColonies: new Map() };
   const war = new ContactWar(host, 'apart');
   const before = JSON.stringify([player.nodes, rival.nodes]);
   for (let i = 0; i < 40; i++) { host.time += 0.25; war.step(0.25); }

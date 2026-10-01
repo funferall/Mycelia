@@ -30,6 +30,7 @@ import {
   tryBond,
   type HyphaNode,
   type Network,
+  steeringClaimed,
 } from './network';
 import { forEachMovedStrand, heldBy } from './segments';
 import { hashString, mulberry32, type Rng } from './rng';
@@ -159,7 +160,10 @@ export class Simulation {
    * it, holding what the spore carried and nothing more.
    */
   foundColony(kit: FoundingKit): void {
-    const anchor = startingGround(this.world);
+    // Spores landing where the rival already lives found away from its
+    // founder: two colonies starting on one cell would open at war.
+    const rivalRoot = this.rivalEnabled && !this.rival.extinct ? this.rival.nodes[this.rival.rootId] : undefined;
+    const anchor = startingGround(this.world, rivalRoot?.alive ? { gx: rivalRoot.gx, gy: rivalRoot.gy } : undefined);
     const colony = createNetwork(
       'player',
       PLAYER_PALETTE.label,
@@ -408,7 +412,8 @@ export class Simulation {
         if (!next || score < next.score) next = { gx: tip.gx, gy: tip.gy, score };
       }
     }
-    if (next && (this.rival.waypoints[0]?.gx !== next.gx || this.rival.waypoints[0]?.gy !== next.gy)) {
+    // An agent playing the rival steers its growth while its order stands.
+    if (next && !steeringClaimed(this.rival) && (this.rival.waypoints[0]?.gx !== next.gx || this.rival.waypoints[0]?.gy !== next.gy)) {
       orderWaypoint(this.rival, next.gx, next.gy, this.world);
     }
   }
@@ -619,11 +624,35 @@ export class Simulation {
  * far enough that the player has to grow a little to reach it, but close enough
  * that the first symbiosis is an early act rather than a long expedition.
  */
-function startingGround(world: World): { gx: number; gy: number } {
-  const tree = world.trees[Math.floor(world.trees.length / 2)] ?? world.trees[0];
+function startingGround(world: World, avoid?: { gx: number; gy: number }): { gx: number; gy: number } {
+  const middle = Math.floor(world.trees.length / 2);
+  const tree = world.trees[middle] ?? world.trees[0];
   if (!tree || tree.rootTips.length === 0) {
     return { gx: Math.floor(GRID.cols / 2), gy: 6 };
   }
+  if (!avoid) return groundBeside(world, tree);
+  // Ground already held by a founder: the same rule beside another tree, the
+  // nearest to the stand's middle that keeps clear of it, or else the farthest.
+  const order = world.trees
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => t.rootTips.length > 0)
+    .sort((a, b) => Math.abs(a.i - middle) - Math.abs(b.i - middle) || a.i - b.i);
+  let farthest: { gx: number; gy: number } | null = null;
+  let farthestDistance = -1;
+  for (const { t } of order) {
+    const at = groundBeside(world, t);
+    const distance = Math.hypot(at.gx - avoid.gx, at.gy - avoid.gy);
+    if (distance >= FOUNDER_CLEARANCE) return at;
+    if (distance > farthestDistance) { farthest = at; farthestDistance = distance; }
+  }
+  return farthest ?? groundBeside(world, tree);
+}
+
+/** Cells a landing spore keeps between its founder and a founder already in the stand. */
+const FOUNDER_CLEARANCE = 24;
+
+/** Beside a tree's shallowest root tip, as `startingGround` places a founder. */
+function groundBeside(world: World, tree: World['trees'][number]): { gx: number; gy: number } {
   // Shallowest tip: the one nearest the surface, so the spore is not buried in
   // bedrock and still has soil above it to grow into.
   let best = tree.rootTips[0] as (typeof tree.rootTips)[number];
