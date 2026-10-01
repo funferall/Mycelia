@@ -41,7 +41,7 @@ try {
     writeFileSync(join(output, `${name}.mjs`), compiled);
   }
   const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
-  const { rootSystem } = await load('root-architecture');
+  const { rootSystem, grownRoots } = await load('root-architecture');
   const { GRID } = await load('content');
   const { RegionalMatch } = await load('match');
 
@@ -90,6 +90,73 @@ try {
       // Every root drawn before, the tip roots included, is untouched.
       assert.deepEqual(after.ribbons.slice(0, system.ribbons.length), system.ribbons, species);
       assert.equal(after.ribbons.length, system.ribbons.length + 1, species);
+    }
+  });
+
+  check('maturity never changes the layout: a tree is laid out once, full-grown', () => {
+    for (const { tree, system } of systems.slice(0, 12)) {
+      assert.deepEqual(rootSystem({ ...tree, maturity: 0.2 }, GRID.cols, GRID.rows), system);
+      assert.deepEqual(rootSystem({ ...tree, maturity: 1 }, GRID.cols, GRID.rows), system);
+    }
+  });
+
+  check('a full-grown tree draws its whole layout', () => {
+    for (const { system } of systems.slice(0, 12)) {
+      const grown = grownRoots(system, 1);
+      assert.deepEqual(grown.ribbons, system.ribbons);
+      assert.deepEqual(grown.fines, system.fines);
+    }
+  });
+
+  const length = (ribbons) => ribbons.reduce((sum, r) => {
+    for (let i = 1; i < r.length; i++) sum += Math.hypot(r[i].x - r[i - 1].x, r[i].depth - r[i - 1].depth);
+    return sum;
+  }, 0);
+  check('growing never moves a drawn point; roots only extend, a little at a time', () => {
+    for (const species of ['oak', 'birch', 'hemlock']) {
+      const { system } = systems.find((s) => s.tree.species === species);
+      const full = length(system.ribbons);
+      let before = grownRoots(system, 0.3);
+      for (let g = 0.31; g <= 1.0001; g += 0.01) {
+        const after = grownRoots(system, g);
+        const kept = new Set(after.ribbons.flatMap((r) => r.map((p) => `${p.x},${p.depth}`)));
+        for (const ribbon of before.ribbons) {
+          // Every point but a growing end stays exactly where it was drawn.
+          for (const p of ribbon.slice(0, -1)) assert.ok(kept.has(`${p.x},${p.depth}`), `${species} point ${p.x},${p.depth} moved at growth ${g.toFixed(2)}`);
+        }
+        const grew = length(after.ribbons) - length(before.ribbons);
+        assert.ok(grew >= -1e-9 && grew < full * 0.03, `${species} grew ${grew.toFixed(2)} of ${full.toFixed(0)} cells in one step at ${g.toFixed(2)}`);
+        before = after;
+      }
+    }
+  });
+
+  check('at any age every drawn root is attached: to the stem base or to a drawn root', () => {
+    for (const { tree, system } of systems.slice(0, 18)) {
+      for (const g of [0, 0.4, 0.75]) {
+        const { ribbons } = grownRoots(system, g);
+        ribbons.forEach((ribbon, i) => {
+          const [first] = ribbon;
+          const atBase = Math.abs(first.x - tree.gx - 0.5) < 2 && first.depth <= 2.5;
+          const onRoot = ribbons.some((other, j) => j !== i && other.some((p) => Math.abs(p.x - first.x) < 1e-6 && Math.abs(p.depth - first.depth) < 1e-6));
+          assert.ok(atBase || onRoot, `tree ${tree.id} (${tree.species}) root ${i} floats at growth ${g}: starts ${first.x.toFixed(2)},${first.depth.toFixed(2)}`);
+        });
+      }
+    }
+  });
+
+  check('a new tip changes nothing until its root grows in, then reaches it', () => {
+    for (const species of ['oak', 'birch', 'hemlock']) {
+      const { tree, system } = systems.find((s) => s.tree.species === species);
+      const grown = { ...tree, rootTips: [...tree.rootTips, { id: tree.rootTips.length, gx: tree.gx + 3, gy: 20, bondedTo: null }] };
+      const after = rootSystem(grown, GRID.cols, GRID.rows);
+      const done = tree.rootTips.map(() => 1);
+      assert.deepEqual(grownRoots(after, 0.6, [...done, 0]), grownRoots(system, 0.6, done), `${species}: a tip that has not grown draws nothing`);
+      const half = length(grownRoots(after, 0.6, [...done, 0.75]).ribbons);
+      const whole = grownRoots(after, 0.6, [...done, 1]);
+      assert.ok(half < length(whole.ribbons), `${species}: the tip's root grows in`);
+      const end = whole.ribbons[whole.ribbons.length - 1].at(-1);
+      assert.ok(Math.abs(end.x - (tree.gx + 3.5)) < 1e-9 && Math.abs(end.depth - 20.5) < 1e-9, `${species}: grown in, it ends on the tip`);
     }
   });
 

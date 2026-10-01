@@ -3,7 +3,7 @@ import { GRID, SPECIES, type SeasonId } from '../sim/content';
 import { mulberry32 } from '../sim/rng';
 import type { Tree, World } from '../sim/world';
 import { makeGlowTexture } from './textures';
-import { rootSystem } from './root-architecture';
+import { grownRoots, rootSystem, type RootSystem } from './root-architecture';
 
 /**
  * Everything above the soil line, plus the roots that reach down into it.
@@ -24,6 +24,25 @@ const SEASON_FOLIAGE: Record<SeasonId, THREE.Color> = {
   winter: new THREE.Color('#0c0b08'),
 };
 
+/**
+ * Drawn roots follow a tree's maturity at most this fast (maturity per second
+ * of play), slower than the simulation matures a tree in full light, so the
+ * section grows quietly instead of in visible steps.
+ */
+const ROOT_GROWTH_PER_SECOND = 0.0015;
+/** Seconds for a new tip's root to grow in from the root it leaves. */
+const TIP_ROOT_SECONDS = 8;
+/** A change in drawn maturity this small is not worth rebuilding the roots for. */
+const ROOT_REDRAW_STEP = 0.002;
+
+/** A tree's drawn root growth: its eased maturity and each tip root's progress. */
+interface RootGrowth {
+  growth: number;
+  tips: number[];
+  /** The growth last drawn into the root geometry. */
+  drawn: number;
+}
+
 const BONDED = new THREE.Color('#ffd489');
 const UNBONDED = new THREE.Color('#bcae86');
 
@@ -43,8 +62,11 @@ export class ForestView {
   private readonly foliageMesh: THREE.InstancedMesh;
   private readonly rootLines: THREE.LineSegments;
   private readonly rootRibbons: THREE.Mesh;
-  /** Root tips drawn into the current root geometry; a new tip rebuilds it. */
-  private rootTipsDrawn = -1;
+  /** Each tree's fixed root layout, laid out again only when it gains a tip. */
+  private readonly rootLayouts = new WeakMap<Tree, { tips: number; system: RootSystem }>();
+  private readonly rootGrowth = new WeakMap<Tree, RootGrowth>();
+  /** Seconds since the root geometry was last rebuilt. */
+  private rootClock = 0;
   private readonly tipPoints: THREE.Points;
   private readonly tipCapacity: number;
   private readonly rng: () => number;
@@ -263,19 +285,55 @@ export class ForestView {
   }
 
   update(dt: number): void {
+    this.growRoots(dt);
     this.refreshAccumulator += dt;
     if (this.refreshAccumulator < 0.4) return;
     this.refreshAccumulator = 0;
     this.refresh();
-    // Trees extend new tips as they mature; the root that reaches one is drawn then.
-    if (this.world.trees.reduce((n, t) => n + t.rootTips.length, 0) !== this.rootTipsDrawn) this.buildRoots();
+  }
+
+  /** A tree's drawn root growth, starting where the tree stands now. */
+  private growthOf(tree: Tree): RootGrowth {
+    let state = this.rootGrowth.get(tree);
+    if (!state) {
+      state = { growth: tree.maturity, tips: tree.rootTips.map(() => 1), drawn: -1 };
+      this.rootGrowth.set(tree, state);
+    }
+    return state;
   }
 
   /**
-   * Draw every tree's root system. Deterministic per tree, so a rebuild for one
-   * new tip leaves every existing root exactly where it was.
+   * Ease each tree's drawn roots toward its maturity, grow new tips' roots in,
+   * and rebuild the geometry when the change would show: smoothly (20 times a
+   * second) while a tip's root is growing, otherwise every half second at most.
+   */
+  private growRoots(dt: number): void {
+    let tipGrowing = false;
+    let moved = false;
+    for (const tree of this.world.trees) {
+      const state = this.growthOf(tree);
+      // Trees extend new tips as they mature; the root that reaches one grows in.
+      while (state.tips.length < tree.rootTips.length) state.tips.push(0);
+      state.tips.length = tree.rootTips.length;
+      for (let k = 0; k < state.tips.length; k++) {
+        if (state.tips[k]! >= 1) continue;
+        state.tips[k] = Math.min(1, state.tips[k]! + dt / TIP_ROOT_SECONDS);
+        tipGrowing = true;
+      }
+      if (state.growth < tree.maturity) state.growth = Math.min(tree.maturity, state.growth + ROOT_GROWTH_PER_SECOND * dt);
+      if (Math.abs(state.growth - state.drawn) >= ROOT_REDRAW_STEP) moved = true;
+    }
+    this.rootClock += dt;
+    if ((tipGrowing && this.rootClock >= 0.05) || (moved && this.rootClock >= 0.5)) this.buildRoots();
+  }
+
+  /**
+   * Draw every tree's root system: its fixed layout, revealed as far as the
+   * tree has grown. Growing only extends roots along their own paths, so no
+   * drawn root ever jumps to a new shape.
    */
   private buildRoots(): void {
+    this.rootClock = 0;
     const positions: number[] = [];
     const colours: number[] = [];
     const indices: number[] = [];
@@ -285,10 +343,16 @@ export class ForestView {
     const colour = new THREE.Color();
     const toX = (x: number) => x - GRID.cols / 2;
     const toY = (depth: number) => GRID.rows / 2 - depth;
-    let tips = 0;
     for (const tree of this.world.trees) {
-      tips += tree.rootTips.length;
-      const system = rootSystem(tree, GRID.cols, GRID.rows);
+      let layout = this.rootLayouts.get(tree);
+      if (!layout || layout.tips !== tree.rootTips.length) {
+        // Tips are laid out last and in order, so a new one adds a root and moves none.
+        layout = { tips: tree.rootTips.length, system: rootSystem(tree, GRID.cols, GRID.rows) };
+        this.rootLayouts.set(tree, layout);
+      }
+      const state = this.growthOf(tree);
+      state.drawn = state.growth;
+      const system = grownRoots(layout.system, state.growth, state.tips);
       for (const ribbon of system.ribbons) {
         const start = positions.length / 3;
         for (let i = 0; i < ribbon.length; i++) {
@@ -329,7 +393,6 @@ export class ForestView {
     fines.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
     this.rootLines.geometry.dispose();
     this.rootLines.geometry = fines;
-    this.rootTipsDrawn = tips;
   }
 
   private refreshAccumulator = 0;

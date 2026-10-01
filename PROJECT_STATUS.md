@@ -426,7 +426,7 @@ of persistent state, not separate copies of a colony or its resources.
 | MODE-01 | Planned | Standard cultivation-under-pressure mode | One concealed `Armillaria` infection center, one or two competing mutualists, a decomposer benefiting from death, and seasonal/weather pressure. Tune around defense, triage, and eventual fruiting rather than total extermination. |
 | MODE-02 | Planned | Chill mode | No aggressive root pathogen, slower or non-hostile competitors, gentler extremes, no forced tree-loss clock, and optional continued play after fruiting. Preserve the full growth, trade, season, and forest-feedback systems. |
 | SCENARIO-01 | Planned | Ecological crisis scenarios | Author scenario identities such as The Black Cords, The Withering Hemlocks, The Fallen Giant, First Claim, The Hollow Stand, and After Fire. Introduce one pressure system clearly before combining many. |
-| ROOT-01 | Partial | Species- and site-driven root generator | `src/render/root-architecture.ts` replaces the generic tip-to-trunk lines with seeded species architectures scaled by maturity. Its proportions come from the Kutschera and Lichtenegger excavation drawings (Wageningen UR "Root System Drawings", coll13), which were studied for form only and are not shipped: contact wurzelforschung.at before any use of the scans. It routes a drawn root to every simulation tip without moving any, and is drawn as tapered ribbons plus fine-root hairlines in `src/render/forest.ts`. Remaining: it is presentation, not simulation-owned; soil horizons, hardness, drainage, water table, slope and channels do not yet shape it. |
+| ROOT-01 | Partial | Species- and site-driven root generator | `src/render/root-architecture.ts` replaces the generic tip-to-trunk lines with seeded species architectures. **Grows smoothly (1 October):** each tree is laid out once at full size and the drawing reveals that fixed layout as the tree matures (`grownRoots`): roots extend along their own paths and thicken, branches emerge as their parent passes them, hairs sprout behind the growing end, and a new tip's root grows in over 8 s from the root it leaves. Drawn maturity follows the simulation's at most 0.0015 a second, so a tree's roots take about five minutes to reach full size. Before, roots were laid out at the tree's current size and redrawn only when some tree gained a tip, so the whole stand periodically jumped into new shapes. Its proportions come from the Kutschera and Lichtenegger excavation drawings (Wageningen UR "Root System Drawings", coll13), which were studied for form only and are not shipped: contact wurzelforschung.at before any use of the scans. It routes a drawn root to every simulation tip without moving any, and is drawn as tapered ribbons plus fine-root hairlines in `src/render/forest.ts`. Remaining: it is presentation, not simulation-owned; soil horizons, hardness, drainage, water table, slope and channels do not yet shape it. |
 | ROOT-02 | Partial | Northern red oak architecture | Drawn: a heart root after *Quercus robur* 1355, with 6â€“8 shallow laterals, a lower oblique layer, a stout tap to 45% of rooting depth, and sinkers fanning to deep tips with fine brushes. Remaining, planned: | Strong early central descent where soil permits, durable spreading structural laterals, and deeper sinkers/fine-root zones. Gameplay: costly deep access, drought resilience, high-value long-term partner. Avoid guaranteeing a taproot where hardpan or saturation prevents one. |
 | ROOT-03 | Partial | Yellow birch architecture | Drawn: a plate after *Betula pendula* 1362, with 7â€“10 long sinuous laterals in the top ~5 rows, a flared base, no tap, and short droppers. Remaining, planned: | Extensive irregular laterals, commonly shallow but able to penetrate deeply on favorable sites; follow old channels and allow root grafts. Gameplay: many accessible tips and flexible routes, with grafts also creating infection corridors. |
 | ROOT-04 | Partial | Eastern hemlock architecture | Drawn, after its European relatives *Abies alba* 1256 and *Picea abies* 1255: flattened plate laterals, a short tap, and near-vertical sinkers from the laterals. Remaining, planned: | Shallow, wide-spreading roots concentrated in cool moist upper soil and duff. Gameplay: accessible surface partnership and moisture retention, with strong drought, injury, and windthrow vulnerability. |
@@ -2734,6 +2734,35 @@ either foundation.
   remain unverified. Wind changes speed but the ordinary front keeps its
   chosen heading; the hurricane adds a region-wide ember sweep rather than
   localized spot ignitions. Background tree loss remains a presentation hash.
+
+### 1 October 2026: roots grow smoothly instead of jumping (`ROOT-01`)
+
+- **Cause:** `rootSystem` laid each tree out at `0.65 + maturity * 0.45`,
+  but `ForestView` redrew roots only when a tree in the stand gained a tip.
+  Maturity creeps up continuously, and a different size changes every
+  root's point count and so every later random draw. Measured headless: from
+  maturity 0.70 to 0.72, 13 of 24 oak roots, 14 of 32 birch and 20 of 29
+  hemlock changed shape, moving 1.8 to 4.8 cells on average; from 0.70 to
+  0.85, 5.8 to 9.2 cells.
+- **Now:** layouts are always full size (`FULL_SIZE`) and cached per tree;
+  `grownRoots(system, growth, tipGrowth)` reveals them, as described in
+  `ROOT-01`. Simulation maturity, tips and bonding are unchanged.
+- **`node tools/test-roots.mjs`: 11 checks pass over 76 trees**, 5 new:
+  maturity never changes the layout; a full-grown tree draws exactly its
+  layout; from growth 0.30 to 1 in steps of 0.01 no drawn point moves except
+  growing ends, and each step adds under 3% of the full length; at growth 0,
+  0.4 and 0.75 every drawn root starts at the stem base or on a drawn root;
+  a new tip draws nothing until its root grows in and ends on the tip.
+- **Browser** (`raven-wood`, underground, `vite preview`, scratch script):
+  with every tree set to maturity 1, 360 s of frames rebuilt the roots 123
+  times and the geometry never shrank (18,492 to 20,286 ribbon indices); the
+  same shapes, extended, in screenshots at 0 s and 360 s. A tip added by hand
+  grew its root in over 20 rebuilds. A rebuild takes 1.2 ms. No console
+  errors. The starting view keeps the earlier density and character; the
+  individual root shapes differ once, because layouts are now made at full
+  size.
+- `npm run build`, `node tools/test-sim.mjs` and
+  `node tools/test-underground-view.mjs` pass.
 
 ### 1 October 2026: live Jev against the current rival (`AGENT-01`)
 
