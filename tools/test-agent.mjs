@@ -56,7 +56,14 @@ function contactMatch() {
   const qs = questions(obs);
   assert(validate({ provider: 'jev', state: obs.state, questions: qs }).ok, 'questions pass the relay limits');
   assert(!qs.target, 'no target question without targets');
-  console.log(`PASS observation of a quiet opening: ${obs.growth.length} growth options, state ${text.length} chars (~${Math.round(text.length / 4)} tokens), ${Object.keys(qs).length} questions`);
+  // No front, nothing to hold or withdraw from: only growth stances are offered,
+  // and a stance that was not offered does not stop growth.
+  assert.equal(obs.fronts, 0);
+  assert.deepEqual(Object.keys(qs.stance.criteria).sort(), ['attack', 'expand']);
+  const option = obs.growth.find((g) => g.order);
+  const grew = act(m, obs, { stance: { type: 'choice', choice: 'withdraw', confidence: 1 }, growth: { type: 'choice', choice: option.id, confidence: 1 } });
+  assert(grew.some((d) => d.kind === 'grow' && d.ok), `an out-of-set withdraw does not stall growth (${JSON.stringify(grew)})`);
+  console.log(`PASS observation of a quiet opening: ${obs.growth.length} growth options, state ${text.length} chars (~${Math.round(text.length / 4)} tokens), ${Object.keys(qs).length} questions; only expand and attack offered`);
 }
 
 const { m, R } = contactMatch();
@@ -92,6 +99,7 @@ const { m, R } = contactMatch();
   assert(shaky.some((d) => d.kind === 'skip' && /confidence/.test(d.text)));
   const pulling = act(m, obs, { stance: { type: 'choice', choice: 'withdraw', confidence: 0.9 }, chemical: { type: 'choice', choice: 'oxalate', confidence: 0.9 }, target: { type: 'choice', choice: 't0', confidence: 0.9 } });
   assert(pulling.some((d) => d.kind === 'skip' && /withdraw/.test(d.text)));
+  assert.deepEqual(Object.keys(questions(obs).stance.criteria).sort(), ['attack', 'expand', 'hold', 'withdraw'], 'a front offers every stance');
   const bogus = act(m, obs, { chemical: { type: 'choice', choice: 'napalm', confidence: 1 }, target: { type: 'choice', choice: 't99', confidence: 1 } });
   assert.equal(bogus.length, 0, 'out-of-set answers do nothing');
   assert.equal(m.contact.casts.length, before, 'nothing was cast');

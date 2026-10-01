@@ -34,6 +34,8 @@ export interface Observation {
   state: Record<string, unknown>;
   targets: TargetCandidate[];
   growth: GrowthCandidate[];
+  /** Fronts this owner is fighting on. With none, there is no fight to press or lose. */
+  fronts: number;
   /** Chemicals ready now and affordable somewhere near a front (a hint for the model; the cast still validates). */
   ready: Chemical[];
 }
@@ -161,5 +163,5 @@ export function observe(match: RegionalMatch, owner: Owner): Observation {
     growth_options: Object.fromEntries(growth.map((g) => [g.id, g.label])),
     season_time: round(match.time),
   };
-  return { owner, time: match.time, state, targets, growth, ready };
+  return { owner, time: match.time, state, targets, growth, fronts: fronts.length, ready };
 }

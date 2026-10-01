@@ -32,12 +32,22 @@ export const STANCES = {
 } as const;
 export type Stance = keyof typeof STANCES;
 
+/**
+ * With no front open there is nothing to hold or withdraw from. Offered the
+ * full set anyway, Jev read a won fight against a larger enemy as losing and
+ * withdrew, which stops all growth (live, 1 October).
+ */
+export const QUIET_STANCES = {
+  expand: 'No front is open: put resources into growth.',
+  attack: 'No front is open: grow toward the enemy to start a fight.',
+} as const;
+
 export function questions(obs: Observation): Record<string, Question> {
   const q: Record<string, Question> = {
     stance: {
       type: 'choice',
       instructions: 'You play this fungal colony. Given the state, which stance should it take for the next second?',
-      criteria: { ...STANCES },
+      criteria: obs.fronts > 0 ? { ...STANCES } : { ...QUIET_STANCES },
     },
     chemical: {
       type: 'choice',
@@ -102,7 +112,10 @@ const REGROW_SECONDS = 20;
 /** Turn answers into orders. Deterministic given the match, observation and answers. */
 export function act(match: RegionalMatch, obs: Observation, answers: Record<string, Answer>, policy: Policy = DEFAULT_POLICY): Executed[] {
   const done: Executed[] = [];
-  const stance = (answers.stance?.choice ?? 'hold') as Stance;
+  // Only a stance that was offered counts; with no front, holding is expanding.
+  const offered: Record<string, string> = obs.fronts > 0 ? STANCES : QUIET_STANCES;
+  const picked = answers.stance?.choice;
+  const stance: Stance = picked !== undefined && picked in offered ? picked as Stance : obs.fronts > 0 ? 'hold' : 'expand';
   const chemical = answers.chemical?.choice as Chemical | 'none' | undefined;
   const chosen = obs.targets.length === 1 ? obs.targets[0] : obs.targets.find((t) => t.id === answers.target?.choice);
   if (chemical && chemical !== 'none' && CHEMICALS[chemical] && chosen) {

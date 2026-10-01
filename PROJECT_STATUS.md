@@ -420,7 +420,7 @@ of persistent state, not separate copies of a colony or its resources.
 | ADV-03 | Partial | Rival mycorrhizal fungi | **1 October:** player spores landing in a stand the rival lives in no longer found on the rival's founding cell (both used `startingGround`, so every such colony opened at war on one cell and one founder fell within seconds); they found beside the nearest other tree at least 24 cells from the rival's founder (`FOUNDER_CLEARANCE`), or the farthest. Observed, not investigated: on `raven-wood` (both the 29 September commit and this tree) the rival rests at 46 strands for about 90 s, then grows to about 3,400-3,800 strands and 2,300-3,200 carbon by 180 s. The built-in rival is now a mutualist with the player's initial reserve, growth allowance and root-bond rules. Its deterministic controller seeks free fine-root tips, earns carbon through tree trade, banks earned surplus to fruit, promotes the same network into a regional body, and claims trees after crossing. First colonizer priority applies per root tip; different colonies can bond different tips of one tree. The controller tracks progress toward each target every 4 s think: after three thinks without a centimetre of progress it routes over the top through shallow soil (row 4), and after three more it gives that root tip (or seam) up until the season turns. Remaining: on `raven-wood` the rival crosses into a stream-corridor stand whose trees all lie beyond the channel, and giving up one tip at a time takes minutes there (`test:regional-play` 'rival bonds a tree after crossing' still fails); it needs a reachability check before choosing a target. Also ecologically distinct strategies, host allocation of carbon by trade value, adaptation choices, agent-provider coordination, natural full-match balance and browser QA. |
 | ADV-04 | Planned | Mycoparasitic fungus | Rare direct predator tracks, coils around, and digests exposed fungal hyphae. Fine exploratory growth is vulnerable; reinforced cords and redundant paths resist or route around attack. Use sparingly after `Armillaria` and root competition are proven. |
 | ADV-05 | Planned | Saprotroph competitor | The former decomposer placeholder was replaced with the mutualist rival (`ADV-03`). The decomposer trait and deadwood decay rules remain available for a future distinct species, but no saprotroph opponent currently starts in a match. |
-| AGENT-01 | Partial | Agent players (System One) | `src/agent/*`, `server/decide.ts`, `functions/api/decide.ts`, `src/ui/agent.ts`: an agent plays the rival in real time by answering typed questions (Jev format) over a compact observation, with confidence-gated actions through the ordinary orders; a key-holding relay for TypeSafe Jev and OpenAI Decisions; an offline heuristic fallback. **Brought up to date 1 October** with the mutualist rival (`ADV-03`, 29 September), which had broken it: the rival's own strategy re-aims its growth every 4 s, so an agent's growth order was overwritten within seconds. An agent growth order now claims the network's steering for 20 s (`claimSteering`, the agent's re-send window); meanwhile `Simulation.stepRivalDrama` and `RegionalMatch.stepRivalStrategy` still bond roots in reach and fruit but do not redirect growth. A rival that has become a regional body is ordered through the body (`growAt` at the stand cell's regional point) instead of a stand-local waypoint in the wrong world. The relay retries Jev's documented 429/529 once after 200 ms and types the Score answer's `legend`; its request and answer shapes were checked against https://docs.typesafe.ai/api on 1 October and match. Live Jev was not re-run (no key in this environment). Remaining: a live Jev run against the current rival, OpenAI preview schema, order log for replays, agent-versus-agent, fruiting and spores questions, steering for rival bodies grown into stands other than their origin. See the agent-players major plan. |
+| AGENT-01 | Partial | Agent players (System One) | `src/agent/*`, `server/decide.ts`, `functions/api/decide.ts`, `src/ui/agent.ts`: an agent plays the rival in real time by answering typed questions (Jev format) over a compact observation, with confidence-gated actions through the ordinary orders; a key-holding relay for TypeSafe Jev and OpenAI Decisions; an offline heuristic fallback. **Brought up to date 1 October** with the mutualist rival (`ADV-03`, 29 September), which had broken it: the rival's own strategy re-aims its growth every 4 s, so an agent's growth order was overwritten within seconds. An agent growth order now claims the network's steering for 20 s (`claimSteering`, the agent's re-send window); meanwhile `Simulation.stepRivalDrama` and `RegionalMatch.stepRivalStrategy` still bond roots in reach and fruit but do not redirect growth. A rival that has become a regional body is ordered through the body (`growAt` at the stand cell's regional point) instead of a stand-local waypoint in the wrong world. The relay retries Jev's documented 429/529 once after 200 ms and types the Score answer's `legend`; its request and answer shapes were checked against https://docs.typesafe.ai/api on 1 October and match. **Live Jev run against the current rival (1 October):** reliable (about 3.8 decisions a second, 0 failures, median 180 ms) and, after a stance fix, as strong as the offline heuristic against an unattended player. Jev withdrew whenever no front was open, which blocked all growth; with no front the stance question now offers only expand and attack (`QUIET_STANCES`), and a stance that was not offered falls back to expand. Remaining: against the placeholder bot Jev keeps choosing attack and grows at the enemy founding strand, and 2 of 3 runs ended with the rival cut back to 7 strands (the heuristic, which grows toward trees between fights, kept 76 to 168); an agent cast limit was tried and made both agents lose fronts, so it was not kept. Also: OpenAI preview schema, order log for replays, agent-versus-agent, fruiting and spores questions, steering for rival bodies grown into stands other than their origin. See the agent-players major plan. |
 | ADV-07 | Partial | Contact war (direct network fighting) | `src/sim/contact.ts`: fronts where strands of different owners touch, supply-limited passive fighting, overgrowth, severing, elimination, and six mouse-aimed chemicals as deterministic orders (Q W E light, A D C heavy); hotbar, front alert and Z jump in the game; first-pass soil effects. Remaining: C3 art and sound, C4 map pulse and control groups, C6 balance. See the contact-war major plan. |
 | ADV-06 | Planned | Defensive counterplay | Add early sensing, tree provisioning, cord reinforcement, defensive enzymes, root quarantine, deliberate branch sacrifice, rerouting, occupation of vulnerable tips, and escape by early fruiting. Each response needs a cost and visible consequence. |
 | MODE-01 | Planned | Standard cultivation-under-pressure mode | One concealed `Armillaria` infection center, one or two competing mutualists, a decomposer benefiting from death, and seasonal/weather pressure. Tune around defense, triage, and eventual fruiting rather than total extermination. |
@@ -1448,7 +1448,9 @@ The outcome is either deadlock or replacement.
   - up to 6 growth options: toward the enemy founding strand, toward dead
     or burned wood, toward a living tree, deeper, or hold.
 - **Questions** (`src/agent/decision.ts`), all in one request:
-  - `stance` (attack / hold / withdraw / expand);
+  - `stance` (attack / hold / withdraw / expand while a front is open;
+    only expand / attack when none is, because live Jev otherwise withdrew
+    from a won fight and stopped growing);
   - `chemical` (none plus whichever of the six are off cooldown);
   - `target`;
   - `growth`;
@@ -1461,7 +1463,9 @@ The outcome is either deadlock or replacement.
     and the spread-out chemical choice then only needs confidence 0.15.
     Live, Jev's chemical confidence sat at 0.2 to 0.45 while strike was
     about 0.85, so gating on the chemical alone withheld sensible casts.
-  - Stance limits what is allowed: a withdrawing colony may only barrage.
+  - Stance limits what is allowed: a withdrawing colony may only barrage
+    and does not grow. A stance that was not offered counts as hold at a
+    front and expand away from one.
   - Out-of-set answers do nothing.
   - An identical growth order is not re-sent within 20 s.
 - **Controller** (`src/agent/controller.ts`).
@@ -2730,6 +2734,53 @@ either foundation.
   remain unverified. Wind changes speed but the ordinary front keeps its
   chosen heading; the hurricane adds a region-wide ember sweep rather than
   localized spot ignitions. Background tree loss remains a presentation hash.
+
+### 1 October 2026: live Jev against the current rival (`AGENT-01`)
+
+Live calls to `jev-1.13.0` with the key in `.env.local`, after the segment
+economy and agent catch-up merges (PRs #1 and #2). Each run starts from the
+`test-agent` front fixture (`raven-wood`, rival stand 4, a player spore grown
+at the rival) and plays 30 s of game time in real time, 60 Hz steps, the agent
+asking every 250 ms of wall clock. A scratch harness drove `AgentController`
+with the relay's own `decide` and real `fetch`; it is not in the repo.
+
+- **Reliability:** 112 to 114 decisions per run (3.8 Hz), 0 failures; median
+  latency 172 to 188 ms, p90 207 to 247 ms, worst 581 ms; first call 390 to
+  525 ms. About 1,600 to 1,950 input tokens per decision (not the ~1,215
+  estimated), roughly $0.95 an hour at 3.8 Hz.
+- **Before the fix, against an unattended player:** Jev answered `withdraw`
+  in 94 of 114 decisions once its front was cleared, which blocks growth.
+  The rival went from 46 to 55 strands, killing 50 and losing 2; the offline
+  heuristic grew it to 75. Probed on the cleared state (81 killed, 4 lost),
+  Jev put `losing` at 0.63 to 0.71 and `withdraw` at about 0.42, apparently
+  reading the enemy's 375 strands against its 82.
+- **After the fix** (no front: only expand and attack are offered):
+  unattended, two Jev runs killed 81 and 98 and lost 2 and 4, ending at 109
+  and 108 strands; the heuristic in the same setup killed 65, lost 2 and
+  ended at 111.
+- **Against the placeholder bot playing the player**, with the fix: three Jev
+  runs killed 74, 64 and 75 and lost 26, 22 and 5, ending at 7, 7 and 77
+  strands; founding strand alive in all three. The heuristic killed 80 and 79,
+  lost 7 and 11, and ended at 168 and 76. Jev chose attack in 106 to 114
+  decisions and grew only toward the enemy founding strand.
+- **Cast limit tried and dropped:** a minimum gap between an agent's casts at
+  one front (1 s and 2 s) made both agents lose fronts. The heuristic against
+  the bot fell to 56 and 57 killed, 29 and 30 lost, 7 strands left; Jev with
+  a gap was eliminated in 4 of 4 runs against the bot and in both 2 s runs
+  unattended. Kills pay carbon back through overgrowth, so fewer casts lose
+  supply.
+- **In the browser** (`vite preview`, `?opponent=jev`, Begin clicked, 45 s
+  of wall clock on the headless renderer, which reached 7.6 s of game time):
+  70 decisions, all `expand`, a growth order toward the nearest tree, no
+  console errors. One request hit the 2.5 s relay timeout during page load
+  and fell back to the heuristic.
+- **`node tools/test-agent.mjs`: 8 checks pass**, including new ones: a quiet
+  opening offers only expand and attack, an out-of-set `withdraw` does not
+  stall growth, and a front offers all four stances.
+  **`node tools/test-contact.mjs`: 11 pass. `node tools/test-segments.mjs`:
+  5 pass. `node tools/test-agent-view.mjs` passes** with the relay reporting
+  `{"jev":true,"openai":false}`. `tsc --noEmit` and `npm run build` pass. The
+  rest of the headless suite was not re-run.
 
 ### 1 October 2026: agent players brought up to date (`AGENT-01`, `ADV-03`, `ADV-07`)
 
