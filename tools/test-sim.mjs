@@ -30,6 +30,7 @@ const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
 const { Simulation } = await load('sim');
 const { RegionalMatch } = await load('match');
 const { createNetwork, makeCord, spawnTip, startFruiting, stepNetwork } = await load('network');
+const { heldBy, markStrandsStale } = await load('segments');
 const { createWorld } = await load('world');
 const { ECON, GRID } = await load('content');
 const { mulberry32 } = await load('rng');
@@ -63,6 +64,7 @@ function sever(net, node) {
   const parent = net.nodes[node.parent];
   if (parent) parent.children = parent.children.filter((id) => id !== node.id);
   node.parent = -1;
+  markStrandsStale(net);
 }
 
 /**
@@ -117,9 +119,10 @@ const results = [];
     'the regression seed reaches an oak with a locally poor strand');
   const label = deriveJourney(sim).roots.find((root) => root.treeId === target.tree.id);
   assert.equal(label?.state, 'bondable', 'the label predicts a funded bond');
-  const carbonBefore = sim.player.nodes.reduce((total, node) => total + node.carbon, 0);
+  // Exact holdings: a strand inside a run holds its share of the run's pool.
+  const carbonBefore = sim.player.nodes.reduce((total, node) => total + heldBy(sim.player, node, 'carbon'), 0);
   assert.equal(sim.orderBondTip(target.tree.id, target.tip.id).ok, true);
-  const carbonAfter = sim.player.nodes.reduce((total, node) => total + node.carbon, 0);
+  const carbonAfter = sim.player.nodes.reduce((total, node) => total + heldBy(sim.player, node, 'carbon'), 0);
   assert.ok(Math.abs(carbonBefore - carbonAfter - ECON.bondCharge) < 1e-8,
     'the connected network pays exactly one bond charge');
   assert.equal(target.tip.bondedTo, nearest.node.id, 'the closest free strand owns the junction');
@@ -164,7 +167,7 @@ if (process.argv.includes('--bond-only')) {
   parent.carbon = 5;
   parent.water = 4;
   parent.nitrogen = 3;
-  const child = spawnTip(net, parent, Math.PI / 2, rng, true);
+  const child = spawnTip(net, parent, Math.PI / 2, rng);
   assert.ok(child, 'a fork should be produced when the parent can afford it');
   assert.equal(parent.carbon + child.carbon, 5, 'a new tip takes its carbon out of the parent');
   assert.equal(parent.water + child.water, 4, 'water is transferred, never minted');
@@ -173,7 +176,7 @@ if (process.argv.includes('--bond-only')) {
 
   // A parent too poor to pay produces a lean child rather than a free one.
   parent.carbon = ECON.parentReserveFloor;
-  const lean = spawnTip(net, parent, 0, rng, true);
+  const lean = spawnTip(net, parent, 0, rng);
   assert.equal(lean.carbon, 0, 'a broke parent produces a broke child');
   assert.ok(parent.carbon >= 0, 'a parent is never driven into debt');
 
@@ -234,6 +237,7 @@ if (process.argv.includes('--bond-only')) {
   step(sim, 20);
   assert.ok(sim.player.nodes[0].alive, 'the founder starts alive');
   sim.player.nodes[0].alive = false;
+  markStrandsStale(sim.player);
   step(sim, 1);
   assert.equal(
     sim.player.nodes.some((node) => node.alive && node.connected),

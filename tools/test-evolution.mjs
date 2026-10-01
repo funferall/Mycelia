@@ -11,6 +11,7 @@ for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume
 }
 const load = name => import(pathToFileURL(join(output, `${name}.mjs`)));
 const { createNetwork, markConnectivity, stepNetwork, startFruiting } = await load('network');
+const { markStrandsStale } = await load('segments');
 const { createWorld } = await load('world');
 const { mulberry32 } = await load('rng');
 const { ADAPTATIONS, adaptationState, learnAdaptation, invokePower, powerState } = await load('evolution');
@@ -73,6 +74,7 @@ console.log('PASS uptake, recovery, paid healing and fixed-step power clocks');
 const cut = fresh(); cut.resting = true; cut.evolution.active.mend = 20;
 const child = cut.nodes[1]; child.health = .4;
 cut.nodes[0].children = cut.nodes[0].children.filter(id => id !== child.id);
+markStrandsStale(cut);
 tick(cut); assert(child.health < .4);
 cut.nodes[0].alive = false;
 for (const tech of ADAPTATIONS) assert.notEqual(adaptationState(cut, tech.id), 'Ready to learn');

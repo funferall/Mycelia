@@ -34,6 +34,7 @@ try {
   const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
   const { RegionalMatch } = await load('match');
   const { updateTotals } = await load('network');
+  const { markStrandsStale } = await load('segments');
   const { learnAdaptation } = await load('evolution');
   const DT = 1 / 60;
 
@@ -217,6 +218,7 @@ try {
     const parent = body.colony.nodes[body.colony.nodes[link].parent];
     parent.children = parent.children.filter((c) => c !== link);
     body.colony.nodes[link].parent = -1;
+    markStrandsStale(body.colony);
     for (let i = 0; i < 60; i++) m.step(DT);
     assert.equal(body.colony.nodes[link].connected, false, 'cut from the root, the joined piece is severed again');
   });

@@ -1,6 +1,6 @@
 # Mycelia â€” authoritative project status and feature log
 
-Last updated: 30 September 2026.
+Last updated: 1 October 2026.
 
 This is the **single source of truth for implementation status, current
 priorities, verification, and future work**. Read this file before changing the
@@ -530,49 +530,71 @@ Ecological references supporting this direction:
 | PERF-01 | Partial | Measured performance budget | `tools/profile-forest.mjs` measures opening and 180-second steward-grown forest samples, draw calls, triangles and renderer resource counts on stated hardware, backend and preset. Readback forces GPU-process completion; its cost is included. First sample, 19 September, 960Ã—640 normal preset on SwiftShader software rendering with a 13th Gen Intel i7-13700HX and 16 GiB: opening median 723.6 ms / p95 777.3 ms and a mature forest median 752.0 ms / p95 809.1 ms, both 183 draw calls and 322,014 triangles. A current fast SwiftShader browser sample advanced 30 seconds of a two-colony 3D simulation in 5.61 seconds without rendering those ticks. Remaining: hardware-GPU measurements, a real rendered 4Ã— mature-match budget, network-ceiling budgets and byte-accurate GPU memory. |
 | PERF-02 | Partial | Scalable surface quality | An explicit opt-in fast QA preset (`?qa=fast`, `--qa fast`) halves the drawing-buffer resolution, disables antialiasing and baked tree-shadow decals, and bypasses bloom and postprocessing while preserving the CSS viewport, all nine stands, simulation, selection, camera transitions and input. Normal remains the shipping default. Authored tiers are chosen at runtime from projected size (`ASSET-03`): 0 LOD0 / 57 LOD1 / 18 LOD2 at the region overview and 44 / 31 / 0 at the closest forest framing, identical at normal and fast presets. Living authored wood and foliage are batched region-wide (`ASSET-03`), which took 150 authored parts to 12 draw calls. Remaining: production quality tiers chosen from profiling, foliage and weather tiers, and hardware-GPU frame-time budgets. Production JS is 783.73 kB (209.03 kB gzip), plus the opt-in 1.14 kB test bench with the Vite chunk-size warning. The botanical living trees cost 1,568â€“1,596 triangles at LOD0, 800â€“810 at LOD1 and 266â€“298 at LOD2; triangle counts alone are not a frame-time budget. |
 | PERF-03 | Partial | Optimization pass alongside new tech and UI scope | Requested 27 September: treat performance as required work for the tech-tree growth (`TECH-04/05`), randomized starts (`MAP-16`) and continuing surface scope, not as a later rescue. Do a measured pass before and after each of those lands: capture hardware-GPU frame time (not only SwiftShader), a rendered 4Ã— mature-match budget, draw calls, triangles and renderer resource counts, and close the existing `PERF-01/02` gaps. Keep the tech-tree view out of the per-frame budget while closed, prefer one overlay plus a shared icon atlas over many textures or draw calls, watch UI DOM/CSS cost, and re-check the fast QA preset and production bundle size. `PERF-01/02` evidence describes the pre-change tree; `PERF-03` requires fresh measurements. **28 September:** simulation 2.8x faster at ~4,400 nodes (800 to 282 CPU-ms per simulated second, interleaved A/B), bit-identical results. Changes: shared-soil cell views resolve their voxel once and are replaced by the plain record, integer-cell elevations are memoized, and passability checks its cache first; unmoved nodes skip regional re-projection; the soil volume re-sorts changed cells only when new ones appear; transport precomputes per-node inputs into reusable typed arrays and runs its sweeps on arrays; flood and drought write only real changes. Real-GPU testing now exists: `--gpu`/`MYCELIA_GPU=1` for any browser tool, and `npm run check:gpu` prints the WebGL renderer and real frame rates (it forces the discrete GPU on laptops). RTX 4060 Laptop: 60 fps in both views with 72 or 4,923 strands at 1x; at 4x with 4,923 strands, 21 fps forest and 4.7 fps underground. That 4x case is the remaining bottleneck (CPU per frame multiplied by speed), not the GPU. Players on software WebGL now see a notice explaining how to enable hardware acceleration. The section viewer now retains four nearby soil meshes and skips unchanged frame rebuilds; this allocation reduction has no measured frame-time result yet. **30 September:** the network economy now runs on runs of strands (`PERF-04`), 5.7-6.0x less simulation CPU on the measured colonies; the RTX 4060 numbers above predate it and need re-measuring. |
-| PERF-04 | Partial | Segment economy: strands are drawing and routing, runs carry the stats | Requested 30 September: a growing network lagged because every strand carried full stats and was traded, harvested, thickened and decayed 60 times per game-second. **Stage 1 implemented 30 September.** `src/sim/segments.ts` finds *runs* (maximal chains of living strands with one living child, no tip, no tree bond, not the founder) and treats everything else as a *junction*. During `stepNetwork` each run's carbon, water and nitrogen are pooled on one segment (`poolStrands`) and shared evenly back at the end (`spreadStrands`), so outside a step every strand still holds its own stores and fire, drought, flood, contact, UI and tests read and write them unchanged. Transport, respiration and upkeep run over junctions and segments only; a run is one pipe as wide as its narrowest strand and keeps what its strands would each keep. Tips, forks, bonds and the founder trade every tick exactly as before. Per-strand ageing, pulse, soil uptake, thickening, mend and health are tended in slices, each strand once every 8 ticks with the time since (`tendedAt`), so per-cell damage, soil depletion and taper are unchanged. The run structure is rebuilt after a non-leaf death, a bond, a cord, a group change or fusion, and every 8 ticks; new tips join the trading order without a rebuild. Connectivity is re-marked only on a rebuild. Regional position refresh (`crossing.ts` step, `Simulation.syncRegionalPositions` after a step) now visits only tips and strands that settled that step. Each strand's `load` is its run's narrowest-pipe load scaled to its own pipe, so a cord still reads as relieving a busy strand. Rendering: `HyphaeMesh` uploads only the slots written each frame instead of its whole 24,000-instance buffer, and reuses freed slots from a list instead of a linear scan. **Evidence (current tree, 30 September, 4-core Intel Xeon 2.8 GHz, headless Node, fed colony on `raven-wood`, 300 s growth, sequential runs):** branched colony (tree bonds forced so the frontier reaches 90 tips) 4,506 strands at 63.3 CPU-ms per simulated second vs 362 ms on the previous commit with 4,617 strands (5.7x); long unbranched colony 1,342 strands at 10.2 ms vs 60.7 ms with 1,385 (6.0x). A 708-strand colony trades as 19 entities with 698 strands in 9 runs. Strand-mesh GPU upload in the underground view (SwiftShader, `qa=fast`, 300 s fed growth): 67 KB per frame vs 1,844 KB before. `test-sim` journeys match the previous commit's outcomes (2/2/2 blooms; 354/375/354 s vs 354/375/355 s; 206/7/189 living strands vs 196/7/190). New `npm run test:segments` (5 checks: run membership, strand stores outside a step, exact pool/spread conservation, tending coverage, a death splitting a run) passes. Headless suite on this tree: 21 of 25 pass; `test-agent`, `test-contact`, `test-storm` and `test-regional-play` fail at the same assertions and lines on the previous commit. `test-cords-view` now taps a strand not covered by a root's Bond label (the colony's shape shifted one under the old tap point); it and `test-underground-view`, `test-subcluster-merge-view` end at the same console-error assertion as on the previous commit (an external resource blocked by this container's TLS proxy, and a 404), and `test-subclusters-view` and `test-colonies-view` fail at the same section assertions as on the previous commit. Remaining: hardware-GPU and rendered 4x frame times on the player's machine; see the segment economy plan under Current priorities for stages 2-4. |
+| PERF-04 | Partial | Segment economy: strands are drawing and routing, runs carry the stats; no strand cap | Requested 30 September: a growing network lagged because every strand carried full stats and was traded, harvested, thickened and decayed 60 times per game-second. Strand cap removal requested 1 October. **Current design (`src/sim/segments.ts`, `src/sim/network.ts`).** *Runs* are maximal chains of living strands with one living child and no tip, tree bond or founder role; everything else is a *junction*. Each run's carbon, water and nitrogen live in one persistent pool; transport, respiration and upkeep run over junctions and runs only, a run being one pipe as wide as its narrowest strand that keeps what its strands would each keep. Tips, forks, bonds and the founder trade every tick as before. Each run strand is tended in a slice (every 8 ticks, stretching to at most 64 for colonies above about 12,000 strands so a tick tends about 1,500): ageing, pulse, soil uptake into the pool, thickening, mend and health with the exact time since, and its own store fields are rewritten as a display copy; anything written to those fields directly is taken into the pool then (`syncMember`), and `heldBy`/`drawHeld` give and take exact amounts (contact, drought, fire, rival fruiting, storm cost, tech readiness, cords and bonds use them). Bulk strand-by-strand payment (`payColonyFund`, `tryBond`, `makeCord`, fusion) calls `releaseStrands` first. Settled tips fold into the run behind them at the end of a step; a full rebuild happens only after a death inside a run or with strands beyond it, a bond, a cord, a subcluster change or a fusion, and every 600 ticks; connectivity is re-marked on rebuild and every 60 ticks. `MAX_NODES` and the crowding surcharge on growth are gone; the 90-tip frontier remains. Regional positions are refreshed only for tips and settled strands; the soil volume caches each changed voxel's fixed geometry and merges new voxels into its sorted list. Rendering: `HyphaeMesh` touches only new, growing and pulsing strands per frame, sweeps every 12 frames for deaths and a rolling redraw of settled strands, and uploads only coalesced runs of written slots; the regional reveal is not projected while hidden and reuses unmoved strands' projections; the cord overlay filters real strands before reading through the projection proxy. **Evidence (1 October, this tree, 4-core Intel Xeon 2.8 GHz).** Headless Node, fed `raven-wood` colony with tree bonds forced so the frontier stays at 90 tips, steady-state CPU-ms per simulated second: 8,125 strands 104.5, 18,856 strands 201.4, 30,030 strands 187.4; the 29 September commit took 362 ms for 4,617 strands and could not grow past its cap. Browser (SwiftShader, `qa=fast`, underground, simulation paused): strand-mesh sync 0.084 ms per frame at 4,243 strands vs 0.178 ms at 3,683 on the 29 September commit, 0.167 ms at 18,600; whole frame 3.78 ms vs 4.32 ms; given the same growth time the 29 September colony stops at 3,683 strands and this tree's reaches 18,600. `test-sim` journeys: 2/2/2 blooms at 361/375/354 s (29 September: 354/375/355 s). `npm run test:segments` (5 checks: run membership, pools vs exact shares vs totals, direct writes taken in and released exactly, tending coverage, a death splitting a run) passes. Headless suite on this tree: 21 of 25 pass; `test-agent`, `test-contact`, `test-storm` and `test-regional-play` fail at the same assertions as on the 29 September commit. Browser checks: `test-cords-view` and `test-underground-view` pass every functional step and end at the same console-error assertion as the 29 September commit (an external resource blocked by this container's TLS proxy, and a 404); `test-subclusters-view`, `test-colonies-view` and `test-regional-spatial-view` fail at the same lines as on that commit. Tests that summed strands' own fields or cut links by hand now use `heldBy`, `releaseStrands` and `markStrandsStale`; `test-cords-view` taps a strand not covered by a root's Bond label. Remaining: hardware-GPU and rendered 4x frame times on the player's machine; a long natural match without the cap; the stage gaps listed in the segment economy plan. |
 | QA-01 | Partial | Feature testing and direct scene fixtures | The crossing suite covers address-preserving promotion, free 3D lateral steering, a perpendicular stand-edge arrival, natural seam arrival and an independent paid spore daughter on shared soil. The regional-mature and section-view browser smokes cover section orders, empty and daughter tile access, switching, reveal, forest return, rebinding to the founding colony, an adjacent-section Grow click and a 30-second two-colony pacing sample. The regional-spatial browser smoke currently stops at the corner-start natural seam arrival; see the current verification record. The 11-check core simulation runner now copies the match's current contact dependency and passes on this tree. Remaining: repeated long-match rebase/input paths, contested same-tile contact, other broad-suite subdivision and hardware measurements. |
 | SAVE-01 | Deferred | Local save/resume | Requires versioned deterministic simulation state, RNG state, bloom history, and camera/view state. |
 | MULTI-01 | Deferred | Multiplayer | Do not begin before the single-player vertical slice and performance work are complete. |
 
 ## Current priorities
 
-### Major plan: segment economy (decided 30 September; stage 1 implemented 30 September)
+### Major plan: segment economy (decided 30 September; stages 1, 3 and 4 implemented 30 September - 1 October)
 
 **Goal.** A large network must not lag. Strands are drawing and routing; only
 junctions and runs of strands carry stats. Gameplay should feel the same:
 routes, bottlenecks, cords, starvation, per-cell damage and soil depletion keep
 their meaning. Feature record: `PERF-04`.
 
-**Decisions (user, 30 September).** Go with the segment model, judged by
-gameplay repercussions and performance. **Open:** whether long runs should stay
-as costly as today. Stage 1 keeps upkeep proportional to length (each strand in
-a run costs what it did), so balance is unchanged until the user decides.
+**Decisions (user, 30 September - 1 October).** Go with the segment model,
+judged by gameplay repercussions and performance. Remove the strand cap
+(1 October): `MAX_NODES` (5,200) and its crowding surcharge on growth are gone;
+a colony is limited by its 90-tip frontier and by paying upkeep for every
+strand. **Open:** whether long runs should stay as costly as today. Upkeep is
+still proportional to length, so balance is unchanged until the user decides.
+**Playtest risk:** without the cap, a colony in rich litter may earn more from
+decomposition per strand than its upkeep and keep growing through a long match;
+nothing in the headless suite plays long enough to show whether that happens.
 
 **Stages.**
 
-1. *Done.* Pooled runs inside each step, junction/segment transport, sliced
-   per-strand tending, dirty-range strand uploads (see `PERF-04` for evidence).
-2. *Next.* Measure on the player's hardware: `npm run check:gpu` at 1x and 4x
-   with a large colony, forest and underground, against the 28 September
-   RTX 4060 numbers in `PERF-03`. Profile what now dominates a 4x frame.
-3. Rendering split: bake settled strands into static geometry uploaded once,
-   and keep only tips and recently changed strands in the per-frame mesh; stop
-   `HyphaeMesh.sync` walking every node each frame; rebuild the regional
-   reveal's edge list only when the graph changes (it rebuilds string-keyed
-   edges four times a second today).
-4. Remaining whole-network passes: incremental run maintenance on tip commits
-   (a rebuild still happens every 8 ticks and after any non-leaf death, which
-   is O(strands)); contact's per-step bounding boxes; drought's per-step strand
-   loop; `sproutGroups`' candidate search; dead strands still stay in
-   `net.nodes` and count toward `MAX_NODES` (a gameplay decision before
-   compacting).
+1. *Done.* Runs, junction/segment transport, sliced per-strand tending,
+   dirty-range strand uploads (see `PERF-04` for evidence).
+2. *Waiting on the user's hardware.* `npm run check:gpu` at 1x and 4x with a
+   large colony, forest and underground, against the 28 September RTX 4060
+   numbers in `PERF-03`, and a long natural playtest without the cap.
+3. *Done.* The strand mesh touches only new strands, tips and pulsing strands
+   each frame; a sweep every 12 frames finds deaths and redraws a rolling
+   eighth of settled strands, so thickening and starving now show on quiet
+   strands (before, a quiet strand was redrawn only when pulsed). Uploads are
+   coalesced runs of written slots. The regional reveal is no longer projected
+   while hidden, reuses each strand's terrain projection unless its ends moved,
+   and reads stored regional positions. The cord overlay filters real strands
+   before reading through the projection proxy. Not done: separate static and
+   dynamic meshes (the dirty-slot uploads already avoid re-sending settled
+   strands); the reveal still rebuilds its geometry and string keys on refresh.
+4. *Done.* Runs persist and are maintained incrementally (settled tips fold in
+   at the end of a step; junction and order lists compact themselves); a full
+   rebuild happens only after a death inside a run or with strands beyond it, a
+   bond, a cord, a subcluster change or a fusion, plus every 600 ticks.
+   Connectivity is re-marked on rebuild and every 60 ticks. Pools persist
+   between steps (no per-tick gather/spread). Tending is bounded at about 1,500
+   strands per tick. Soil volume caches each changed voxel's fixed geometry and
+   merges new voxels into its sorted list instead of re-sorting. Not done:
+   dead strands stay in `net.nodes` (ids are referenced throughout the game;
+   whole-array loops skip them cheaply, and memory is a few hundred bytes per
+   strand); contact's 4 Hz bounding boxes and drought's per-step loop still
+   visit every strand; `sproutGroups`' candidate search is still O(strands)
+   while a group waits to sprout.
 
 **Known behavioural differences, accepted.** Stores within a run are even
 rather than graded along it; a run moves as much as its narrowest strand allows
 (as a chain did), but a jam part-way along one run is not visible separately;
-per-strand health, ageing and soil uptake advance in 8-tick slices (at most
-0.13 game-seconds late); a strand's `load` is derived from its run's.
+per-strand health, ageing and soil uptake advance in slices (every 8 ticks, at
+most 0.13 game-seconds late, up to 64 ticks for colonies above about 12,000
+strands); a strand's `load` is derived from its run's. A run strand's own
+`carbon`/`water`/`nitrogen` fields are a display copy up to one slice old:
+exact values come from `heldBy`, and code that moves stores strand by strand
+calls `releaseStrands` first. Code that edits parent/child links directly must
+call `markStrandsStale`, or connectivity catches up within 60 ticks.
 
 ### Major plan: regional spread (decided 28 September; phases A to E implemented 29 September)
 
@@ -2063,8 +2085,8 @@ region has become volumetric.
   boundary changes the node's spatial index bucket, not its colony, parent,
   ownership or resource inventory. RegionalMatch becomes the coordinator;
   local Simulation instances must stop independently stepping portions of
-  the same colony. `MAX_NODES` and tip capacity remain per colony, not multiplied
-  by the number of occupied stands.
+  the same colony. Tip capacity remains per colony, not multiplied by the
+  number of occupied stands (there is no strand cap since 1 October, `PERF-04`).
 - Retain parent/children as an acyclic growth tree initially. Parent links
   may span stands and use stable references. Derive the visible seam/portal
   record from a real edge intersection; it is not a second node, reservoir or

@@ -1,5 +1,6 @@
 import { GRID, SPECIES } from './content';
 import { markConnectivity, payColonyFund, updateTotals, witherNode, type Network } from './network';
+import { drawHeld, heldBy } from './segments';
 import { updateMoisture, type Tree } from './world';
 import { regionNetworks, type FireHost } from './wildfire';
 import type { StandState } from './match';
@@ -212,8 +213,10 @@ export class Drought {
         if (!node.alive || node.gy * GRID.cmPerRow >= DROUGHT.shallowCm) continue;
         const cell = world.cellOf(node);
         if (!cell || cell.water >= DROUGHT.parched || cell.streamNear >= DROUGHT.bank) continue;
-        node.water = Math.max(0, node.water - dt * 0.25 * severity);
-        if (node.water > 0.01) continue;
+        const water = heldBy(net, node, 'water');
+        const dried = Math.min(Math.max(0, water), dt * 0.25 * severity);
+        drawHeld(net, node, 'water', dried);
+        if (water - dried > 0.01) continue;
         tally.dryStrands += dt;
         // The root holds on longest; it is the colony, not a strand.
         node.health -= dt * 0.03 * severity * (node.id === net.rootId ? 0.3 : 1);

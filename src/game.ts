@@ -972,9 +972,9 @@ export class Game {
     return this.reveal;
   }
 
-  /** Project every colony of the player's through the forest floor. */
+  /** Project every colony of the player's through the forest floor, while it is shown. */
   private refreshReveal(): void {
-    if (!this.reveal) return;
+    if (!this.reveal || !this.revealEnabled) return;
     const camera = this.stage.rig.camera;
     camera.updateMatrixWorld();
     this.reveal.setEdges(this.allColonyEdges(), camera.position.distanceTo(this.stage.rig.target));
@@ -3633,9 +3633,16 @@ export class Game {
         }
         overlay.setCords(segments, this.section.spec.id);
       } else if (!this.section && net) {
-        // Drawn through the transect's projection of the colony.
-        const shown = this.belowView().viewSim.player;
-        for (const node of shown.nodes) {
+        // Drawn through the transect's projection of the colony. Most strands
+        // are neither cords nor bottlenecks, so the real strands are filtered
+        // first and only those are read through the projection.
+        const below = this.belowView();
+        const shown = below.viewSim.player;
+        const real = below.player?.source.nodes ?? shown.nodes;
+        for (let i = 0; i < real.length; i++) {
+          const candidate = real[i]!;
+          if (!candidate.reinforced && !busy(candidate.load)) continue;
+          const node = shown.nodes[i]!;
           if (!node.alive || node.parent < 0) continue;
           const parent = shown.nodes[node.parent];
           if (!parent?.alive) continue;

@@ -31,7 +31,7 @@ import {
   type HyphaNode,
   type Network,
 } from './network';
-import { forEachMovedStrand } from './segments';
+import { forEachMovedStrand, heldBy } from './segments';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
 import { REMAINS, belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, stepHydration, stepRemains, updateMoisture, updateSoil, type Tree, type World } from './world';
@@ -565,7 +565,7 @@ export class Simulation {
     const node = nearestNode(this.player, gx, gy, 3);
     if (!node) return { ok: false, message: 'No strand of mine there.' };
     if (node.reinforced) return { ok: false, message: 'Already a cord.' };
-    if (node.carbon < ECON.cordCharge) {
+    if (heldBy(this.player, node, 'carbon') < ECON.cordCharge) {
       return { ok: false, message: 'Not enough carbon at that strand.' };
     }
     makeCord(this.player, node.id);

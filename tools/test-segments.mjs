@@ -1,7 +1,8 @@
 /**
  * Headless checks for the strand economy (`PERF-04`, `src/sim/segments.ts`):
- * runs of strands pool their stores during a step and share them back after,
- * so the game outside a step still sees every strand's own stores.
+ * runs of strands keep their stores in one pool; a strand's own fields are a
+ * copy refreshed when it is tended, and anything written to them directly is
+ * taken into the pool rather than lost.
  *
  *   node tools/test-segments.mjs
  */
@@ -19,7 +20,7 @@ for (const file of readdirSync(new URL('../src/sim/', import.meta.url)).filter((
 const load = (name) => import(pathToFileURL(join(out, name + '.mjs')));
 const { RegionalMatch } = await load('match');
 const { updateTotals } = await load('network');
-const { economyOf, TEND_SLICES, heldBy, poolStrands, spreadStrands } = await load('segments');
+const { economyOf, TEND_SLICES, heldBy, syncMember, releaseStrands } = await load('segments');
 
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`PASS ${name}`); };
@@ -61,37 +62,45 @@ check('runs hold only plain struts, and most of a grown colony is in one', () =>
   assert.ok(economy.order.length < strands / 3, 'far fewer trading entities than strands');
 });
 
-check('outside a step every strand holds its own stores, and totals agree', () => {
+check('totals, exact shares and the strands\' own copies agree', () => {
   const match = grown(60);
   const net = match.active.sim.player;
-  match.step(1 / 60);
+  // A full turn of slices writes every strand's copy at least once.
+  for (let i = 0; i < TEND_SLICES; i++) match.step(1 / 60);
   const economy = economyOf(net);
-  assert.equal(economy.pooled, false, 'pools exist only inside a step');
-  for (const node of living(net)) {
-    for (const key of ['carbon', 'water', 'nitrogen']) assert.equal(heldBy(net, node, key), node[key]);
-  }
-  const before = { carbon: net.carbon, water: net.water, nitrogen: net.nitrogen };
+  const exact = (key) => net.nodes.reduce((v, n) => v + (n.alive && n.connected ? Math.max(0, heldBy(net, n, key)) : 0), 0);
   updateTotals(net);
   for (const key of ['carbon', 'water', 'nitrogen']) {
-    assert.ok(Math.abs(before[key] - net[key]) < 1e-6, `${key} totals from pools match totals from strands`);
+    assert.ok(Math.abs(exact(key) - net[key]) < 1e-6, `${key}: totals from the pools match the strands' exact shares`);
+  }
+  for (const segment of economy.segments) {
+    const share = segment.carbon / segment.members.length;
+    for (const id of segment.members) {
+      assert.ok(Math.abs(heldBy(net, net.nodes[id], 'carbon') - share) < 1e-9, 'every strand in a run holds an equal share');
+    }
   }
 });
 
-check('a write to a strand between steps is carried into its run, and shared back exactly', () => {
+check('a write to a strand is taken into its run, never lost, and released exactly', () => {
   const match = grown(60);
   const net = match.active.sim.player;
   const economy = economyOf(net);
   const segment = economy.segments.find((s) => s.members.length > 4);
   assert.ok(segment, 'a run to feed');
   const members = segment.members.map((id) => net.nodes[id]);
-  const sum = () => members.reduce((v, n) => v + n.carbon, 0);
+  const exactSum = () => members.reduce((v, n) => v + heldBy(net, n, 'carbon'), 0);
+  const before = exactSum();
   members[2].carbon += 0.5;
-  const written = sum();
-  poolStrands(net, economy);
-  assert.ok(Math.abs(segment.carbon - written) < 1e-9, 'the pool holds what the strands held, the gift included');
-  spreadStrands(net, economy);
-  assert.ok(Math.abs(sum() - written) < 1e-9, 'sharing back conserves the pool');
-  assert.ok(members.every((n) => Math.abs(n.carbon - written / members.length) < 1e-9), 'every strand holds an equal share');
+  assert.ok(Math.abs(exactSum() - before - 0.5) < 1e-9, 'the write counts at once');
+  syncMember(economy, segment, members[2]);
+  assert.ok(Math.abs(segment.carbon - before - 0.5) < 1e-9, 'tending takes it into the pool');
+  assert.ok(Math.abs(exactSum() - before - 0.5) < 1e-9, 'and it is not counted twice');
+  members[4].carbon -= 0.2;
+  releaseStrands(net);
+  const released = members.reduce((v, n) => v + n.carbon, 0);
+  assert.ok(Math.abs(released - before - 0.3) < 1e-9, 'releasing writes every strand its exact share');
+  assert.ok(members.every((n) => Math.abs(n.carbon - released / members.length) < 1e-9), 'an equal share each');
+  assert.equal(economyOf(net), undefined, 'released strands hold their own stores until the next step');
 });
 
 check('every strand in a run is tended within one full turn of slices', () => {

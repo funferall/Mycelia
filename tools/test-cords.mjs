@@ -33,6 +33,7 @@ try {
   const load = (name) => import(pathToFileURL(join(output, `${name}.mjs`)).href);
   const { Simulation } = await load('sim');
   const { cordRoute, planCord, layCord, cordBudget, markConnectivity, CORD_RESERVE } = await load('network');
+  const { heldBy, releaseStrands } = await load('segments');
   const { ECON } = await load('content');
   const DT = 1 / 60;
 
@@ -56,7 +57,8 @@ try {
     markConnectivity(sim.player);
     return sim;
   };
-  const connectedCarbon = (net) => net.nodes.reduce((sum, n) => sum + (n.alive && n.connected ? n.carbon : 0), 0);
+  // Exact holdings: a strand inside a run holds its share of the run's pool.
+  const connectedCarbon = (net) => net.nodes.reduce((sum, n) => sum + (n.alive && n.connected ? heldBy(net, n, 'carbon') : 0), 0);
   const farthestTip = (net) => {
     let best = null;
     let depth = -1;
@@ -128,6 +130,8 @@ try {
     const route = cordRoute(net, farthestTip(net).id);
     // Leave enough for exactly two strands above the reserve.
     const spare = CORD_RESERVE + ECON.cordCharge * 2 + 0.1;
+    // A bulk write to the strands' own stores: hand them back to the strands first.
+    releaseStrands(net);
     const total = connectedCarbon(net);
     for (const node of net.nodes) if (node.alive && node.connected) node.carbon *= spare / total;
     const plan = planCord(net, route);
