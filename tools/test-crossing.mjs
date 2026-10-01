@@ -31,7 +31,7 @@ function check(name, fn) {
 }
 
 try {
-  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'match', 'survey']) {
+  for (const name of ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'segments', 'network', 'sim', 'crossing', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'match', 'survey']) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '(.+?)'/g, "from '$1.mjs'"));
   }
@@ -41,7 +41,6 @@ try {
   const { buildSurvey } = await load('survey');
   const { ECON, GRID, MAX_TIPS } = await load('content');
   const {
-    MAX_NODES,
     bondedJunction,
     createNetwork,
     holdsAnyBond,
@@ -51,6 +50,7 @@ try {
     updateTotals,
     tryBond,
   } = await load('network');
+  const { heldBy } = await load('segments');
   const { createStandWorld, entryCostFor } = await load('world');
   const { mulberry32 } = await load('rng');
   const { elevationAtDepthCm, segmentStands, traverseSegment, vec3 } = await load('spatial');
@@ -109,7 +109,6 @@ try {
     assert.equal(match.colonies.length, 1);
     assert.equal(match.colony.rootId, 0);
     assert.equal(match.colony.tipCeiling, ceilingBefore, 'a boundary is not a second frontier budget');
-    assert.ok(match.colony.nodes.length < MAX_NODES);
 
     const portals = match.portals();
     assert.ok(portals.length >= 1, 'a real edge spans the seam');
@@ -160,8 +159,7 @@ try {
     assert.equal(parentCost.cost, parentExpected.cost, 'the origin side is priced by the same rule');
     assert.equal(parentCost.stratum.id, parentExpected.stratum.id);
     // The ordinary length-based price is the one charged.
-    const pressure = 1 + Math.pow(match.colony.nodes.length / MAX_NODES, 4) * 14;
-    const entryTotal = expected.cost * ECON.growthPerCm * ECON.entryCharge * pressure;
+    const entryTotal = expected.cost * ECON.growthPerCm * ECON.entryCharge;
     assert.ok(entryTotal > 0 && Number.isFinite(entryTotal));
     assert.ok(entryTotal < ECON.colonyFund.carbon * 0.5, 'one centimetre is not a colony tax');
   });
@@ -221,8 +219,9 @@ try {
       let nitrogen = 0;
       for (const node of match.colony.nodes) {
         if (!node.alive) continue;
-        water += node.water;
-        nitrogen += node.nitrogen;
+        // Exact holdings: a strand inside a run holds its share of the run's pool.
+        water += heldBy(match.colony, node, 'water');
+        nitrogen += heldBy(match.colony, node, 'nitrogen');
       }
       return { water, nitrogen };
     };

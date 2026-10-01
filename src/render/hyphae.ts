@@ -13,6 +13,12 @@ export function nodePosition(node: HyphaNode, out: THREE.Vector3): THREE.Vector3
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Frames between passes over the whole network. */
+const SWEEP_FRAMES = 12;
+/** Passes it takes the rolling refresh to redraw every settled strand once. */
+const REFRESH_SWEEPS = 8;
+/** Dirty slots closer than this are uploaded as one range. */
+const UPLOAD_GAP = 64;
 /** The player's selected subcluster. */
 const SELECTED = new THREE.Color('#9fe6ff');
 const FLOW_COOL = new THREE.Color('#ff9a3c');
@@ -38,10 +44,14 @@ export interface HyphaeOptions {
 /**
  * One network, drawn as instanced segments.
  *
- * Committed strands never move, so only growing tips need their matrix rebuilt
- * per frame; new nodes claim a free instance slot when they are created. That
- * keeps a large network cheap enough to animate at 60fps while still letting
- * every filament exist as real geometry rather than a texture.
+ * Committed strands never move, so a frame touches only what changes: new
+ * strands claim a free instance slot, and growing tips and freshly pulsed
+ * strands are rewritten. Every `SWEEP_FRAMES` frames one pass over the whole
+ * network finds deaths and new pulses and refreshes a rolling share of the
+ * settled strands, so thickening and starving still show. Only the slots
+ * written are sent to the GPU, not the whole instance buffer. That keeps a
+ * large network cheap enough to animate at 60fps while still letting every
+ * filament exist as real geometry rather than a texture.
  */
 export class HyphaeMesh {
   readonly group = new THREE.Group();
@@ -54,6 +64,18 @@ export class HyphaeMesh {
   private slotOf: Int32Array;
   private nodeOf: Int32Array;
   private slotCount = 0;
+  /** Slots below `slotCount` given back by dead strands, reused before new ones. */
+  private freeSlots: number[] = [];
+  /** Slots written since the last upload. */
+  private dirty: number[] = [];
+  /** The network last drawn, and how many of its nodes have been seen. */
+  private source: Network | null = null;
+  private seen = 0;
+  /** Strands rewritten every frame: growing tips and pulsing strands. */
+  private active = new Set<number>();
+  private sweepClock = 0;
+  /** Next slot of the rolling refresh of settled strands. */
+  private refreshAt = 0;
   private readonly tipCapacity: number;
 
   private readonly dummy = new THREE.Object3D();
@@ -165,8 +187,8 @@ export class HyphaeMesh {
       old.getColorAt(i, c);
       replacement.setColorAt(i, c);
     }
-    replacement.instanceMatrix.needsUpdate = true;
-    if (replacement.instanceColor) replacement.instanceColor.needsUpdate = true;
+    this.markDirty(0);
+    this.markDirty(Math.max(0, this.slotCount - 1));
 
     this.group.remove(old);
     this.group.add(replacement);
@@ -184,63 +206,156 @@ export class HyphaeMesh {
     this.slotOf.fill(-1);
     this.nodeOf.fill(-1);
     this.slotCount = 0;
+    this.freeSlots = [];
+    this.dirty = [];
+    this.source = null;
+    this.seen = 0;
+    this.active.clear();
+    this.sweepClock = 0;
+    this.refreshAt = 0;
     this.mesh.count = 0;
     this.tips.geometry.setDrawRange(0, 0);
   }
 
   sync(net: Network): void {
+    if (net !== this.source) {
+      this.reset();
+      this.source = net;
+    }
     const nodes = net.nodes;
-    this.ensureNodeCapacity(nodes.length);
+    const count = nodes.length;
+    this.ensureNodeCapacity(count);
 
-    let living = 0;
-    for (const node of nodes) {
-      if (node.parent < 0) continue;
+    // New strands since the last frame.
+    if (count > this.seen) {
+      this.growInstances(this.slotCount + count - this.seen);
+      for (let id = this.seen; id < count; id++) {
+        const node = nodes[id]!;
+        if (node.parent < 0 || !node.alive) continue;
+        this.place(nodes, node);
+        this.active.add(id);
+      }
+      this.seen = count;
+    }
+
+    // Now and then, the whole network: deaths, new pulses, and a rolling share
+    // of settled strands redrawn so thickening and starving show. A selection
+    // change recolours everything at once.
+    if (this.recolor || ++this.sweepClock >= SWEEP_FRAMES) this.sweep(nodes, this.recolor);
+    this.recolor = false;
+
+    // Only gliding tips and freshly pulsed strands change shape between frames.
+    for (const id of this.active) {
+      const node = nodes[id]!;
+      const slot = this.slotOf[id] as number;
       if (!node.alive) {
-        const slot = this.slotOf[node.id];
-        if (slot !== undefined && slot >= 0) this.hideSlot(slot);
+        if (slot >= 0) this.hideSlot(slot);
+        this.active.delete(id);
         continue;
       }
-      living++;
-    }
-    this.growInstances(living);
-
-    for (const node of nodes) {
-      if (node.parent < 0 || !node.alive) continue;
-      if ((this.slotOf[node.id] as number) >= 0) continue;
-      const slot = this.claimSlot();
-      if (slot < 0) continue;
-      this.slotOf[node.id] = slot;
-      this.nodeOf[slot] = node.id;
-      const parent = nodes[node.parent];
-      if (parent) this.writeSegment(node, parent, slot);
-    }
-
-    // Only gliding tips and freshly pulsed strands change shape between frames,
-    // unless the selection changed and every strand needs its colour again.
-    const all = this.recolor;
-    this.recolor = false;
-    for (const node of nodes) {
-      if (!node.alive || node.parent < 0) continue;
-      if (!all && !node.isTip && node.pulse <= 0.02) continue;
-      const slot = this.slotOf[node.id] as number;
       const parent = nodes[node.parent];
       if (slot >= 0 && parent) this.writeSegment(node, parent, slot);
+      if (!node.isTip && node.pulse <= 0.02) this.active.delete(id);
     }
 
     this.mesh.count = this.slotCount;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.upload();
     this.syncTips(nodes);
   }
 
-  private claimSlot(): number {
-    for (let slot = 0; slot < this.capacity; slot++) {
-      if ((this.nodeOf[slot] as number) === -1) {
-        if (slot + 1 > this.slotCount) this.slotCount = slot + 1;
-        return slot;
+  /** Give a living strand a slot and draw it. */
+  private place(nodes: HyphaNode[], node: HyphaNode): void {
+    const slot = this.claimSlot();
+    if (slot < 0) return;
+    this.slotOf[node.id] = slot;
+    this.nodeOf[slot] = node.id;
+    const parent = nodes[node.parent];
+    if (parent) this.writeSegment(node, parent, slot);
+  }
+
+  private sweep(nodes: HyphaNode[], all: boolean): void {
+    this.sweepClock = 0;
+    for (let id = 0; id < this.seen; id++) {
+      const node = nodes[id]!;
+      if (node.parent < 0) continue;
+      const slot = this.slotOf[id] as number;
+      if (!node.alive) {
+        if (slot >= 0) this.hideSlot(slot);
+        continue;
+      }
+      // A strand a view had hidden (outside its band) can come back.
+      if (slot < 0) {
+        this.growInstances(this.slotCount + 1);
+        this.place(nodes, node);
+        continue;
+      }
+      if (all) {
+        const parent = nodes[node.parent];
+        if (parent) this.writeSegment(node, parent, slot);
+      } else if (node.isTip || node.pulse > 0.02) {
+        this.active.add(id);
       }
     }
-    return -1;
+    if (all || this.slotCount === 0) return;
+    const share = Math.ceil(this.slotCount / REFRESH_SWEEPS);
+    if (this.refreshAt >= this.slotCount) this.refreshAt = 0;
+    const end = Math.min(this.slotCount, this.refreshAt + share);
+    for (let slot = this.refreshAt; slot < end; slot++) {
+      const id = this.nodeOf[slot] as number;
+      if (id < 0) continue;
+      const node = nodes[id]!;
+      const parent = nodes[node.parent];
+      if (node.alive && parent) this.writeSegment(node, parent, slot);
+    }
+    this.refreshAt = end;
+  }
+
+  /**
+   * Send only the slots written since the last upload to the GPU, as a few
+   * runs of neighbouring slots rather than one span from the lowest to the
+   * highest, which a tip at each end of the buffer would make the whole thing.
+   */
+  private upload(): void {
+    const dirty = this.dirty;
+    if (dirty.length === 0) return;
+    dirty.sort((a, b) => a - b);
+    const matrix = this.mesh.instanceMatrix;
+    const color = this.mesh.instanceColor;
+    matrix.clearUpdateRanges();
+    color?.clearUpdateRanges();
+    let from = dirty[0]!;
+    let to = from;
+    const flush = (): void => {
+      matrix.addUpdateRange(from * 16, (to - from + 1) * 16);
+      color?.addUpdateRange(from * 3, (to - from + 1) * 3);
+    };
+    for (let i = 1; i < dirty.length; i++) {
+      const slot = dirty[i]!;
+      // Close gaps: one larger upload beats many tiny ones.
+      if (slot - to <= UPLOAD_GAP) {
+        to = Math.max(to, slot);
+        continue;
+      }
+      flush();
+      from = to = slot;
+    }
+    flush();
+    matrix.needsUpdate = true;
+    if (color) color.needsUpdate = true;
+    dirty.length = 0;
+  }
+
+  private markDirty(slot: number): void {
+    this.dirty.push(slot);
+  }
+
+  private claimSlot(): number {
+    while (this.freeSlots.length > 0) {
+      const slot = this.freeSlots.pop()!;
+      if ((this.nodeOf[slot] as number) === -1) return slot;
+    }
+    if (this.slotCount >= this.capacity) return -1;
+    return this.slotCount++;
   }
 
   private hideSlot(slot: number): void {
@@ -252,10 +367,13 @@ export class HyphaeMesh {
     const occupant = this.nodeOf[slot] as number;
     if (occupant >= 0) this.slotOf[occupant] = -1;
     this.nodeOf[slot] = -1;
+    this.freeSlots.push(slot);
+    this.markDirty(slot);
   }
 
   private writeSegment(node: HyphaNode, parent: HyphaNode, slot: number): void {
     if (slot >= this.capacity) return;
+    this.markDirty(slot);
     nodePosition(node, this.a);
     nodePosition(parent, this.b);
     this.mid.copy(this.a).add(this.b).multiplyScalar(0.5);
@@ -298,7 +416,9 @@ export class HyphaeMesh {
     const pos = this.tips.geometry.getAttribute('position') as THREE.BufferAttribute;
     const col = this.tips.geometry.getAttribute('color') as THREE.BufferAttribute;
     let n = 0;
-    for (const node of nodes) {
+    // Every living tip is in the active set.
+    for (const id of this.active) {
+      const node = nodes[id]!;
       if (!node.alive || !node.isTip) continue;
       if (n >= this.tipCapacity) break;
       nodePosition(node, this.a);

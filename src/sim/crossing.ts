@@ -10,7 +10,7 @@
  *
  * - **One body.** Crossing a boundary changes a node's stand bucket. It does not
  *   found a colony, mint a root, or split the graph. There is one `Network`, one
- *   `MAX_NODES` budget and one set of stores on both sides of the seam.
+ *   tip allowance and one set of stores on both sides of the seam.
  * - **One economy.** Growth, harvest, transport, decay and tree trade are the
  *   same functions `Simulation` runs for a single stand (`stepNetwork`, and the
  *   shared tree-demand rules in `network.ts`). Nothing here re-implements them;
@@ -50,6 +50,7 @@ import {
   type HyphaNode,
   type Network,
 } from './network';
+import { forEachMovedStrand, heldBy, markStrandsStale, releaseStrands, strandsCurrent } from './segments';
 import {
   ASH_FRUIT_SPEED,
   createStandWorld,
@@ -555,6 +556,9 @@ export class CrossingMatch {
    */
   colonyEdges(): ColonyEdge[] {
     const edges: ColonyEdge[] = [];
+    // In regional coordinates every strand carries its position, kept current
+    // each step for whatever moved; the corridor fixture computes it.
+    const at = (node: HyphaNode): NodePosition => (this.regionalCoordinates && node.spatial) || this.nodePosition(node);
     for (const node of this.colony.nodes) {
       if (node.parent < 0) continue;
       const parent = this.colony.nodes[node.parent];
@@ -563,8 +567,8 @@ export class CrossingMatch {
         key: `${this.colonyId}:${parent.id}-${node.id}`,
         parent: parent.id,
         child: node.id,
-        from: this.nodePosition(parent),
-        to: this.nodePosition(node),
+        from: at(parent),
+        to: at(node),
         thickness: node.thickness,
         reinforced: node.reinforced,
         // A strand is "connected" only if both ends are: a cut parent leaves a
@@ -712,6 +716,10 @@ export class CrossingMatch {
     const a = this.colony;
     const b = other.colony;
     if (a === b || !a.nodes[mine]?.alive || !b.nodes[theirs]?.alive) return { nodes: 0, bonds: 0 };
+    // Strands are copied with their stores: every strand holds its exact share
+    // first, and both graphs' runs are found again at the next step.
+    releaseStrands(a);
+    releaseStrands(b);
     const offset = a.nodes.length;
     // Both graphs keep regional x as origin + column; y, lateral and depth are
     // already absolute, so only the along axis shifts.
@@ -729,6 +737,8 @@ export class CrossingMatch {
         wx: node.wx + dx,
         targetGx: node.targetGx + dx,
         group: 0,
+        // Tended on the other colony's clock; start afresh on ours.
+        tendedAt: undefined,
       };
       if (node.bondedTree >= 0) {
         const ref = other.view.treeRefAt(node.bondedTree);
@@ -1028,6 +1038,7 @@ export class CrossingMatch {
   cut(nodeId: number): boolean {
     const node = this.colony.nodes[nodeId];
     if (!node || !node.alive || node.parent < 0) return false;
+    markStrandsStale(this.colony);
     node.alive = false;
     node.health = 0;
     if (node.isTip) this.colony.tipCount = Math.max(0, this.colony.tipCount - 1);
@@ -1064,7 +1075,8 @@ export class CrossingMatch {
     });
     // 2. Per colony, in stable id order.
     for (const colony of this.colonies) {
-      markConnectivity(colony.net);
+      // Nothing has cut the network since its last step marked what the founder reaches.
+      if (!strandsCurrent(colony.net)) markConnectivity(colony.net);
       this.tradeTrees(colony, dt);
       // A body rising from burned ground in its flush fruits in any weather, faster.
       const fruit = colony.net.fruit;
@@ -1081,8 +1093,10 @@ export class CrossingMatch {
         log: (text) => this.log(text),
         dt,
       });
-      if (this.regionalCoordinates) for (const node of colony.net.nodes) {
-        node.spatial = this.nodePosition(node);
+      if (this.regionalCoordinates) {
+        // Only tips and strands that just settled have moved.
+        const place = (node: HyphaNode): void => { node.spatial = this.nodePosition(node); };
+        if (!forEachMovedStrand(colony.net, place)) for (const node of colony.net.nodes) place(node);
       }
       this.activateReached();
     }
@@ -1144,9 +1158,9 @@ export class CrossingMatch {
     for (const node of this.colony.nodes) {
       if (!node.alive) continue;
       living++;
-      carbon += node.carbon;
-      water += node.water;
-      nitrogen += node.nitrogen;
+      carbon += heldBy(this.colony, node, 'carbon');
+      water += heldBy(this.colony, node, 'water');
+      nitrogen += heldBy(this.colony, node, 'nitrogen');
     }
     return { carbon, water, nitrogen, living };
   }
@@ -1165,9 +1179,9 @@ export class CrossingMatch {
         node.standId,
         node.alive ? 1 : 0,
         node.connected ? 1 : 0,
-        node.carbon,
-        node.water,
-        node.nitrogen
+        heldBy(this.colony, node, 'carbon'),
+        heldBy(this.colony, node, 'water'),
+        heldBy(this.colony, node, 'nitrogen')
       );
     }
     parts.push(this.soil.hash(), this.time);

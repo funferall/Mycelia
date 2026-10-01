@@ -31,6 +31,7 @@ import {
   type HyphaNode,
   type Network,
 } from './network';
+import { forEachMovedStrand, heldBy } from './segments';
 import { hashString, mulberry32, type Rng } from './rng';
 import { communityThresholds, type StandSite } from './region';
 import { REMAINS, belowWaterTable, cellAt, createStandWorld, createWorld, idx, rowAtDepthCm, stepHydration, stepRemains, updateMoisture, updateSoil, type Tree, type World } from './world';
@@ -70,6 +71,8 @@ export class Simulation {
   regionalWeather: { rainfall: number; fruiting: boolean; fruitSpeed?: number } | null = null;
   /** Where each node was last projected into the regional volume (wx, wy, stand). */
   private readonly synced = new WeakMap<object, [number, number, number]>();
+  /** The stand each network was last fully synced in. */
+  private readonly syncedStand = new WeakMap<object, number>();
   readonly seed: number;
   readonly events: SimEvent[] = [];
   readonly runStartedAt = Date.now();
@@ -176,17 +179,15 @@ export class Simulation {
   }
 
   /** Keep the opening body's real XYZ positions while its flat UI stays local. */
-  syncRegionalPositions(includePlayer = true, includeRival = true): void {
+  syncRegionalPositions(includePlayer = true, includeRival = true, movedOnly = false): void {
     const projection = this.world.regionalSoil;
     if (!projection) return;
     const nets = [includePlayer ? this.player : null, includeRival ? this.rival : null];
-    for (const net of nets) {
-      if (!net) continue;
-      for (const node of net.nodes) {
+    const sync = (node: HyphaNode): void => {
       // Only growing tips move. A node already synced where it stands keeps its
       // point: the projection is pure, so recomputing it would change nothing.
       const last = this.synced.get(node);
-      if (last && last[0] === node.wx && last[1] === node.wy && last[2] === projection.standId) continue;
+      if (last && last[0] === node.wx && last[1] === node.wy && last[2] === projection.standId) return;
       this.synced.set(node, [node.wx, node.wy, projection.standId]);
       const point = projection.pointAt(node.wx - 0.5, node.wy - 0.5);
       if (point) {
@@ -196,7 +197,14 @@ export class Simulation {
         node.lateral = point.y;
         node.targetLateral = point.y;
       }
-      }
+    };
+    for (const net of nets) {
+      if (!net) continue;
+      // After a step, only tips and strands that just settled can have moved,
+      // once the whole network has been synced in this stand.
+      if (movedOnly && this.syncedStand.get(net) === projection.standId && forEachMovedStrand(net, sync)) continue;
+      for (const node of net.nodes) sync(node);
+      this.syncedStand.set(net, projection.standId);
     }
   }
 
@@ -246,7 +254,7 @@ export class Simulation {
     // volume. This stand still advances its weather and trees.
     if (!playerManagedByRegion) stepNetwork(this.player, ctx);
     if (this.rivalEnabled && !rivalManagedByRegion) stepNetwork(this.rival, ctx);
-    this.syncRegionalPositions(!playerManagedByRegion, !rivalManagedByRegion);
+    this.syncRegionalPositions(!playerManagedByRegion, !rivalManagedByRegion, true);
 
     this.stepTrees(dt, playerManagedByRegion, rivalManagedByRegion);
     // Charred remains decay into the soil; a decomposer's strands nearby double the pace.
@@ -557,7 +565,7 @@ export class Simulation {
     const node = nearestNode(this.player, gx, gy, 3);
     if (!node) return { ok: false, message: 'No strand of mine there.' };
     if (node.reinforced) return { ok: false, message: 'Already a cord.' };
-    if (node.carbon < ECON.cordCharge) {
+    if (heldBy(this.player, node, 'carbon') < ECON.cordCharge) {
       return { ok: false, message: 'Not enough carbon at that strand.' };
     }
     makeCord(this.player, node.id);

@@ -38,9 +38,9 @@ try {
     const far = tips[0];
     // A second tip well away from the first, for the drag.
     const other = tips.find((t) => Math.hypot(t.gx - far.gx, t.gy - far.gy) > 12) ?? tips[tips.length - 1];
-    const third = tips.find((t) => t !== far && t !== other && Math.hypot(t.gx - far.gx, t.gy - far.gy) > 6) ?? tips[1];
+    const thirds = tips.filter((t) => t !== far && t !== other && Math.hypot(t.gx - far.gx, t.gy - far.gy) > 6);
     const point = (n) => ({ id: n.id, gx: n.wx, gy: n.wy });
-    return { far: point(far), other: point(other), third: point(third), strands: net.nodes.filter((n) => n.alive).length };
+    return { far: point(far), other: point(other), thirds: (thirds.length ? thirds : [tips[1]]).map(point), strands: net.nodes.filter((n) => n.alive).length };
   });
   assert(seed.strands >= 60, `a colony worth braiding (${seed.strands})`);
 
@@ -87,7 +87,13 @@ try {
   assert(dragged.braid > afterDrag * 3, `every cord strand is drawn as a braid (${dragged.braid} pieces)`);
 
   // Tap a third strand: its route home is braided.
-  const third = await gridToPage(page, seed.third.gx, seed.third.gy);
+  // A root's Bond label can sit over a strand; tap one the label does not cover.
+  let third = null;
+  for (const candidate of seed.thirds) {
+    const at = await gridToPage(page, candidate.gx, candidate.gy);
+    if (await page.evaluate((p) => document.elementFromPoint(p.x, p.y)?.tagName === 'CANVAS', at)) { third = at; break; }
+  }
+  assert(third, 'a strand clear of labels to tap');
   await page.mouse.click(third.x, third.y);
   await frames(8);
   const afterTap = await reinforced();

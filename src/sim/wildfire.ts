@@ -1,6 +1,7 @@
 import { GRID } from './content';
 import { STAND_SIZE, type Region, type WindState } from './region';
 import { burnNode, markConnectivity, payColonyFund, updateTotals, type Network } from './network';
+import { drawHeld, heldBy } from './segments';
 import { ASH_FRUIT_SPEED, charRemains, treeHydration, type NetworkWorld, type Tree, type World } from './world';
 import { hashString, mulberry32 } from './rng';
 import { depthCmAt, standFrameOf, treeSpatialPosition } from './spatial';
@@ -608,7 +609,7 @@ export class Wildfire {
       return true;
     }
     node.health = Math.max(0.05, node.health - 0.55 * (1 - wet));
-    node.carbon *= 0.5;
+    drawHeld(net, node, 'carbon', heldBy(net, node, 'carbon') * 0.5);
     node.pulse = 1;
     tally.singed++;
     return false;

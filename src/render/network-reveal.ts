@@ -54,6 +54,8 @@ export interface ProjectedStrand {
   readonly key: string;
   readonly parent: number;
   readonly child: number;
+  /** The strand's two ends as last projected, so an unmoved strand is not projected again. */
+  readonly ends?: readonly [Vec3, Vec3];
   /** Terrain-hugging polyline in region coordinates, at the reveal's offset. */
   readonly points: Vec3[];
   /** Depth below the local ground at each sample, in centimetres. */
@@ -131,6 +133,7 @@ export function projectEdge(region: Region, edge: RevealEdge, samples = 8): Proj
     key: edge.key,
     parent: edge.parent,
     child: edge.child,
+    ends: [edge.from, edge.to],
     points,
     depthsCm,
     fromDepthCm: fromDepth,
@@ -141,6 +144,15 @@ export function projectEdge(region: Region, edge: RevealEdge, samples = 8): Proj
     standId: edge.standId,
     parentStandId: edge.parentStandId,
   };
+}
+
+/** Whether a projected strand was laid between the same two points as this edge. */
+function sameEnds(strand: ProjectedStrand, edge: RevealEdge): boolean {
+  const ends = strand.ends;
+  if (!ends) return false;
+  const [from, to] = ends;
+  return from.x === edge.from.x && from.y === edge.from.y && from.z === edge.from.z &&
+    to.x === edge.to.x && to.y === edge.to.y && to.z === edge.to.z;
 }
 
 export function projectEdges(region: Region, edges: readonly RevealEdge[], distance = Infinity): ProjectedStrand[] {
@@ -247,7 +259,24 @@ export class NetworkReveal {
 
   setEdges(edges: readonly RevealEdge[], cameraDistance = Infinity): void {
     this.samples = projectionSamples(cameraDistance);
-    this.strands = projectEdges(this.region, edges, cameraDistance);
+    // A strand whose ends have not moved keeps its projection: only growing
+    // tips and new strands are laid over the terrain again.
+    const known = new Map<string, ProjectedStrand>();
+    for (const strand of this.strands) known.set(strand.key, strand);
+    this.strands = edges.map((edge) => {
+      const was = known.get(edge.key);
+      if (!was || was.points.length !== Math.max(2, Math.min(64, Math.round(this.samples))) ||
+        !sameEnds(was, edge)) return projectEdge(this.region, edge, this.samples);
+      return {
+        ...was,
+        thickness: edge.thickness,
+        reinforced: edge.reinforced,
+        connected: edge.connected,
+        standId: edge.standId,
+        parentStandId: edge.parentStandId,
+        ends: [edge.from, edge.to],
+      };
+    });
     this.dirty = true;
   }
 

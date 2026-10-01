@@ -15,6 +15,7 @@
     "test:underground-view": "npm run build && node tools/test-underground-view.mjs",
     "check:gpu": "npm run build && node tools/check-gpu.mjs",
     "test:subclusters": "node tools/test-subclusters.mjs",
+    "test:segments": "node tools/test-segments.mjs",
     "test:subclusters-view": "npm run build && node tools/test-subclusters-view.mjs",
     "test:fruiting": "node tools/test-fruiting.mjs",
     "test:score-view": "npm run build && node tools/test-score-view.mjs",

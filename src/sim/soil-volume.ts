@@ -111,6 +111,12 @@ export interface SectionSpec {
 interface ChangedCell {
   key: VoxelKey;
   cell: SoilCell;
+  /**
+   * The voxel's depth below ground and its stretch of the water table before
+   * the season's offset: fixed by where it is, so worked out once.
+   */
+  depthCm?: number;
+  tableBase?: number;
 }
 
 const clamp = (value: number, low: number, high: number): number =>
@@ -271,9 +277,13 @@ export class SoilVolume {
 
   /** What a voxel's stored water relaxes toward: depth, material and rain. */
   private waterTarget(x: number, y: number, z: number, cell: SoilCell): number {
+    return this.waterTargetAt(Math.max(0, depthCmAt(this.region, x, y, z)), this.region.waterTableAt(x, y), cell);
+  }
+
+  /** `waterTarget` for a voxel whose depth and water-table base are already known. */
+  private waterTargetAt(depthCm: number, tableBase: number, cell: SoilCell): number {
     const base = STRATA[cell.stratum];
-    const depthCm = Math.max(0, depthCmAt(this.region, x, y, z));
-    const tableDepth = this.waterTableDepthCm(x, y);
+    const tableDepth = clamp(tableBase + this.environment.waterTableOffsetCm, 16, MAX_DEPTH_CM - 4);
     const belowTable = depthCm >= tableDepth;
     const proximity = belowTable ? 1 : Math.max(0, 1 - (tableDepth - depthCm) / 34);
     const rain = clamp(this.environment.rainfall, 0, 2.2);
@@ -299,7 +309,9 @@ export class SoilVolume {
       (key.iy + 0.5) * VOXEL_SIZE,
       (key.iz + 0.5) * VOXEL_SIZE
     );
-    this.changes.set(text, { key, cell });
+    const change = { key, cell };
+    this.changes.set(text, change);
+    this.fresh.push(change);
     return cell;
   }
 
@@ -428,7 +440,8 @@ export class SoilVolume {
     const mineralRate = Math.min(1, dt * ECON.soilMineralisation);
     const waterRate = Math.min(1, dt * 0.35);
     let visits = 0;
-    for (const { key, cell } of this.sortedChanges()) {
+    for (const change of this.sortedChanges()) {
+      const { key, cell } = change;
       visits++;
       if (cell.stratum !== 'bedrock') {
         const base = STRATA[cell.stratum];
@@ -440,10 +453,14 @@ export class SoilVolume {
           cell.nitrogen += (ceiling - cell.nitrogen) * mineralRate;
         }
       }
-      const x = (key.ix + 0.5) * VOXEL_SIZE;
-      const y = (key.iy + 0.5) * VOXEL_SIZE;
-      const z = (key.iz + 0.5) * VOXEL_SIZE;
-      const target = this.waterTarget(x, y, z, cell);
+      if (change.depthCm === undefined || change.tableBase === undefined) {
+        const x = (key.ix + 0.5) * VOXEL_SIZE;
+        const y = (key.iy + 0.5) * VOXEL_SIZE;
+        const z = (key.iz + 0.5) * VOXEL_SIZE;
+        change.depthCm = Math.max(0, depthCmAt(this.region, x, y, z));
+        change.tableBase = this.region.waterTableAt(x, y);
+      }
+      const target = this.waterTargetAt(change.depthCm, change.tableBase, cell);
       cell.water += (target - cell.water) * waterRate;
     }
     return visits;
@@ -451,19 +468,27 @@ export class SoilVolume {
 
   /**
    * Changed cells in canonical key order. Changes are only ever added, so the
-   * sorted list is rebuilt when the count grows rather than on every beat.
+   * cells new since the last call are sorted and merged into the list.
    */
   private sortedChanges(): ChangedCell[] {
-    if (this.sorted.length === this.changes.size) return this.sorted;
-    const entries = [...this.changes.values()];
-    entries.sort(
-      (a, b) =>
-        a.key.ix - b.key.ix || a.key.iy - b.key.iy || a.key.iz - b.key.iz
-    );
+    if (this.fresh.length === 0) return this.sorted;
+    // Only the cells changed since the last beat are sorted, then merged in.
+    const order = (a: ChangedCell, b: ChangedCell): number =>
+      a.key.ix - b.key.ix || a.key.iy - b.key.iy || a.key.iz - b.key.iz;
+    const fresh = this.fresh.sort(order);
+    const old = this.sorted;
+    const entries: ChangedCell[] = new Array(old.length + fresh.length);
+    let i = 0, j = 0, k = 0;
+    while (i < old.length && j < fresh.length) entries[k++] = order(old[i]!, fresh[j]!) <= 0 ? old[i++]! : fresh[j++]!;
+    while (i < old.length) entries[k++] = old[i++]!;
+    while (j < fresh.length) entries[k++] = fresh[j++]!;
     this.sorted = entries;
+    this.fresh = [];
     return entries;
   }
   private sorted: ChangedCell[] = [];
+  /** Cells changed since the sorted list was last brought up to date. */
+  private fresh: ChangedCell[] = [];
 
   /** A stable digest of everything the simulation has changed. */
   hash(): string {

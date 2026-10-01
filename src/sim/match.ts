@@ -2,6 +2,7 @@ import { ECON, GRID, SEASONS } from './content';
 import { STAND_SIZE, createRegion, downwindStands, type Region, type StandSite, type StartRule } from './region';
 import { Simulation, type MatchOutcome } from './sim';
 import { payColonyFund, markConnectivity, startFruiting, createNetwork, type Owner } from './network';
+import { heldBy } from './segments';
 import { CrossingMatch, chooseCrossing, type CrossingCorridor, type CrossingDirection } from './crossing';
 import { SoilVolume, seasonalWaterTableOffsetCm } from './soil-volume';
 import { hashString, mulberry32 } from './rng';
@@ -964,7 +965,7 @@ export class RegionalMatch {
     const bloom = parent.blooms[bloomIndex];
     // A held body needs a surviving supplied strand at release. No resurrection,
     // refund, or replay if the site has been severed during the countdown.
-    if (this.storm.phase === 'active' && bloom && !parent.nodes.some(n => n.alive && n.connected && n.water >= ECON.fruitWaterDraw && n.nitrogen >= ECON.fruitNitrogenDraw && (bloom.spatial && n.spatial ? Math.hypot(n.spatial.x-bloom.spatial.x,n.spatial.y-bloom.spatial.y,n.spatial.z-bloom.spatial.z) : Math.hypot(n.gx-bloom.gx,n.gy-bloom.gy)) <= 3)) return 'lost';
+    if (this.storm.phase === 'active' && bloom && !parent.nodes.some(n => n.alive && n.connected && heldBy(parent, n, 'water') >= ECON.fruitWaterDraw && heldBy(parent, n, 'nitrogen') >= ECON.fruitNitrogenDraw && (bloom.spatial && n.spatial ? Math.hypot(n.spatial.x-bloom.spatial.x,n.spatial.y-bloom.spatial.y,n.spatial.z-bloom.spatial.z) : Math.hypot(n.gx-bloom.gx,n.gy-bloom.gy)) <= 3)) return 'lost';
     const wind = this.wind;
     let budget = this.storm.phase === 'active' ? STORM.daughtersPerBloom : 1;
     let founded = 0;
@@ -1039,7 +1040,7 @@ export class RegionalMatch {
     if (!net.evolution.learned.includes('storm-crown')) return 'Learn Storm crown in the tech tree.';
     const bonds = new Set(net.nodes.filter(n => n.alive && n.connected && n.bondedTree >= 0).map(n => n.bondedTree));
     if (bonds.size < 2) return 'Keep two living root bonds.';
-    if (Object.entries(STORM.cost).some(([key,cost]) => net.nodes.reduce((v,n) => v + (n.alive && n.connected ? n[key as 'carbon' | 'water' | 'nitrogen'] : 0),0) < cost)) return 'Bank 80 carbon, 12 water and 6 nitrogen in connected strands.';
+    if (Object.entries(STORM.cost).some(([key,cost]) => net.nodes.reduce((v,n) => v + (n.alive && n.connected ? heldBy(net, n, key as 'carbon' | 'water' | 'nitrogen') : 0),0) < cost)) return 'Bank 80 carbon, 12 water and 6 nitrogen in connected strands.';
     return 'Ready to summon';
   }
 
@@ -1115,7 +1116,7 @@ export class RegionalMatch {
     if (net.surplus >= ECON.fruitThreshold) {
       for (const node of net.nodes) {
         if (!node.alive || !node.connected || node.gy > 12 ||
-          node.water <= ECON.fruitWaterDraw || node.nitrogen <= ECON.fruitNitrogenDraw) continue;
+          heldBy(net, node, 'water') <= ECON.fruitWaterDraw || heldBy(net, node, 'nitrogen') <= ECON.fruitNitrogenDraw) continue;
         const started = body
           ? body.fruitAt(body.nodePosition(node)).ok
           : Boolean(startFruiting(net, stand.sim.world, node.gx, node.gy));

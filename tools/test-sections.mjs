@@ -32,7 +32,7 @@ function check(name, fn) {
 }
 
 try {
-  const simModules = ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'network', 'sim', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'match', 'survey'];
+  const simModules = ['content', 'rng', 'region', 'world', 'spatial', 'soil-volume', 'segments', 'network', 'sim', 'shared-soil', 'wildfire', 'drought', 'flood', 'contact', 'match', 'survey'];
   for (const name of simModules) {
     const source = readFileSync(new URL(`../src/sim/${name}.ts`, import.meta.url), 'utf8');
     writeFileSync(join(output, `${name}.mjs`), stripTypeScriptTypes(source).replace(/from '([^']+)'/g, (_m, spec) => `from './${spec.split('/').pop()}.mjs'`));

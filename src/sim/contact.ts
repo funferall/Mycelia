@@ -17,6 +17,7 @@
  */
 import { ECON } from './content';
 import { lyseNode, updateTotals, type HyphaNode, type Network, type Owner } from './network';
+import { drawHeld, heldBy } from './segments';
 import { mulberry32, hashString } from './rng';
 import { standIdAt, type Vec3 } from './spatial';
 import type { NetworkWorld } from './world';
@@ -279,9 +280,9 @@ export class ContactWar {
       front.contacts++;
       fronts.set(key, front);
       // A strand fights with the carbon it holds; supply decides how long.
-      const spend = Math.min(Math.max(0, item.node.carbon - CONTACT.carbonFloor), CONTACT.passiveSpend * dt);
+      const spend = Math.min(Math.max(0, heldBy(item.entry.net, item.node, 'carbon') - CONTACT.carbonFloor), CONTACT.passiveSpend * dt);
       if (spend <= 0) continue;
-      item.node.carbon -= spend;
+      drawHeld(item.entry.net, item.node, 'carbon', spend);
       this.touched.add(item.entry.net);
       const share = (spend * CONTACT.passiveDamage) / enemies.length;
       for (const enemy of enemies) {
@@ -330,11 +331,11 @@ export class ContactWar {
     const { net, world } = target.entry;
     const node = target.node;
     if (by && by.node.alive) {
-      const taken = Math.max(0, node.carbon) * CONTACT.overgrowShare;
-      const room = Math.max(0, ECON.nodeCarbonCap - by.node.carbon);
+      const taken = Math.max(0, heldBy(net, node, 'carbon')) * CONTACT.overgrowShare;
+      const room = Math.max(0, ECON.nodeCarbonCap - heldBy(by.entry.net, by.node, 'carbon'));
       const gained = Math.min(taken, room);
-      by.node.carbon += gained;
-      node.carbon -= gained;
+      drawHeld(by.entry.net, by.node, 'carbon', -gained);
+      drawHeld(net, node, 'carbon', gained);
       by.entry.net.genetic += gained;
       this.touched.add(by.entry.net);
     }
@@ -419,10 +420,10 @@ export class ContactWar {
       for (const item of targets) {
         const falloff = 1 - 0.5 * (distance(item.point, point) / spec.radius);
         const amount = spec.damage * falloff / Math.pow(armourOf(item.node, item.entry.net), spec.armour) * this.shield(item);
-        if (chemical === 'ammonia' && item.node.nitrogen > 0) {
+        if (chemical === 'ammonia' && heldBy(item.entry.net, item.node, 'nitrogen') > 0) {
           // Knocked out into the soil, not destroyed.
-          const lost = item.node.nitrogen * 0.5;
-          item.node.nitrogen -= lost;
+          const lost = heldBy(item.entry.net, item.node, 'nitrogen') * 0.5;
+          drawHeld(item.entry.net, item.node, 'nitrogen', lost);
           const cell = item.entry.world.cellOf(item.node);
           if (cell) cell.nitrogen = Math.min(1, cell.nitrogen + lost * 0.05);
         }
